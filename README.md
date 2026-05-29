@@ -98,6 +98,7 @@ docs/guidelines/collaboration-preferences.md
 docs/guidelines/ai-coding-behavior.md
 docs/templates/agent-development-context.template.md
 docs/agents/
+scripts/check-agent-doc-format.py
 ```
 
 - `AGENTS.md`: 仓库级 AI Coding 入口、项目约束和本地规约索引。
@@ -106,3 +107,4 @@ docs/agents/
 - `docs/guidelines/ai-coding-behavior.md`: AI Coding 行为规约。
 - `docs/templates/agent-development-context.template.md`: Agent 开发上下文模板。
 - `docs/agents/`: 具体 Agent 的开发上下文文档目录。
+- `scripts/check-agent-doc-format.py`: Agent 开发上下文模板与具体 Agent 文档格式检查脚本。
