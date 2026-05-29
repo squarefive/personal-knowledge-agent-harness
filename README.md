@@ -88,3 +88,17 @@ Agent 回答问题时必须遵守：
 ## 项目状态
 
 当前处于初始化阶段。第一阶段重点是定义数据结构、工具接口和 Q&A 闭环，不急于扩展复杂能力。
+
+## 文档结构
+
+```text
+AGENTS.md
+README.md
+docs/templates/agent-development-context.template.md
+docs/agents/
+```
+
+- `AGENTS.md`: 仓库级 AI Coding 约束和协作规则。
+- `README.md`: 项目定位、第一版范围和最小知识资产闭环。
+- `docs/templates/agent-development-context.template.md`: Agent 开发上下文模板。
+- `docs/agents/`: 具体 Agent 的开发上下文文档目录。
