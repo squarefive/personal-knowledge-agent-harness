@@ -121,14 +121,14 @@ Agent 不得：
 
 只有这个闭环稳定后，才考虑扩展更多知识管理能力。
 
-## Agent 开发文档规则
+## 本地开发规约索引
 
-涉及具体 Agent 的新增、修改或重构时，必须先读取对应 Agent 开发上下文文档，并以该文档作为实现边界和验收依据。
+AI Coding 工具在本仓库工作时，必须读取并遵守以下本地规约：
 
-新开发 Agent 时，必须先基于 `docs/templates/agent-development-context.template.md` 生成对应的 Agent 开发上下文文档。具体 Agent 文档应保存到 `docs/agents/{{module_name}}.md`。
+- `docs/guidelines/collaboration-preferences.md`: 用户协作偏好，包括文档修改计划、代码修改计划、伪代码要求和提交偏好。
+- `docs/guidelines/ai-coding-behavior.md`: AI Coding 行为规约，包括先澄清再编码、简单优先、外科手术式修改和目标驱动验证。
+- `docs/templates/agent-development-context.template.md`: 具体 Agent 开发上下文模板。
 
-具体 Agent 开发上下文文档是该 Agent 的开发唯一真相。它用于约束该 Agent 的角色定位、能力边界、Harness 架构、可调用工具、上下文来源、核心业务流、数据模型和测试要求。
+涉及具体 Agent 的新增、修改或重构时，还必须读取对应的 `docs/agents/{{module_name}}.md`。
 
-如果实现前发现 Agent 文档与目标需求不一致，或需要调整 Agent 的角色边界、工具契约、数据模型、核心流程、外部依赖、权限规则等设计内容，必须先修改对应 Agent 文档，并将文档变更提交到本地 Git；在文档版本被锁定后，才能开始修改代码。
-
-禁止在同一次提交中混合 Agent 设计文档变更和对应代码实现变更，除非只是修正文档中的错别字、路径或示例。
+如果实现前发现具体 Agent 文档与目标需求不一致，或需要调整 Agent 的角色边界、工具契约、数据模型、核心流程、外部依赖、权限规则等设计内容，必须先修改对应 Agent 文档，并将文档变更提交到本地 Git；在文档版本被锁定后，才能开始代码实现。

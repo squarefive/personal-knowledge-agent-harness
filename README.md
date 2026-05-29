@@ -94,11 +94,15 @@ Agent 回答问题时必须遵守：
 ```text
 AGENTS.md
 README.md
+docs/guidelines/collaboration-preferences.md
+docs/guidelines/ai-coding-behavior.md
 docs/templates/agent-development-context.template.md
 docs/agents/
 ```
 
-- `AGENTS.md`: 仓库级 AI Coding 约束和协作规则。
+- `AGENTS.md`: 仓库级 AI Coding 入口、项目约束和本地规约索引。
 - `README.md`: 项目定位、第一版范围和最小知识资产闭环。
+- `docs/guidelines/collaboration-preferences.md`: 用户协作偏好。
+- `docs/guidelines/ai-coding-behavior.md`: AI Coding 行为规约。
 - `docs/templates/agent-development-context.template.md`: Agent 开发上下文模板。
 - `docs/agents/`: 具体 Agent 的开发上下文文档目录。
