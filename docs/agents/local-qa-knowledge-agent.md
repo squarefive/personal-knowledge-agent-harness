@@ -93,6 +93,15 @@ last_updated: "2026-05-30"
   - 将 DeepSeek 响应转换为统一的 LLMResponse。
   - 不包含 Agent 业务判断逻辑。
 
+- **CLI Runtime 职责**:
+  - 作为 `python -m personal_knowledge_agent` 的启动入口。
+  - 启动时加载 `.env` 和环境变量配置。
+  - 初始化 SQLite Store、KnowledgeTools、ToolDispatcher、DeepSeekClient 和 AgentLoop。
+  - 进入持续交互循环，读取用户输入并打印 Agent 回复。
+  - 支持 `/exit` 和 `/quit` 退出。
+  - 不直接操作 SQLite。
+  - 不绕过 AgentLoop 调用工具。
+
 - **Tools 职责**:
   - 作为 Agent 可执行动作的唯一入口。
   - 校验工具输入。
@@ -129,6 +138,8 @@ last_updated: "2026-05-30"
 | `src/personal_knowledge_agent/agent_loop.py` | Agent 最小循环 |
 | `src/personal_knowledge_agent/prompt_builder.py` | 构建运行时 system prompt |
 | `src/personal_knowledge_agent/llm_client.py` | DeepSeek 薄客户端 |
+| `src/personal_knowledge_agent/config.py` | 读取 `.env` 和环境变量，返回运行配置 |
+| `src/personal_knowledge_agent/__main__.py` | CLI 持续交互入口 |
 | `src/personal_knowledge_agent/tool_dispatcher.py` | 工具分发和错误包装 |
 | `src/personal_knowledge_agent/tools.py` | 四个知识库工具 |
 | `src/personal_knowledge_agent/schemas.py` | 轻量数据契约 |
@@ -305,6 +316,7 @@ last_updated: "2026-05-30"
   2. LLM 当前轮输出。
   3. 工具返回的结构化结果。
   4. Prompt Builder 生成的 system prompt。
+  5. `.env` 和环境变量提供的运行配置。
 
 - **长期记忆来源**:
   1. SQLite `qa_cards` 表。
@@ -314,6 +326,12 @@ last_updated: "2026-05-30"
   2. 未落库的对话上下文。
   3. 日志内容。
   4. DeepSeek 响应中未保存到 SQLite 的内容。
+  5. `.env` 中的运行配置。
+
+- **配置边界**:
+  1. `.env` 只保存运行配置，不是长期知识来源。
+  2. `DEEPSEEK_API_KEY` 不得进入 messages、tool result、SQLite 或日志。
+  3. `.env` 和 `.knowledge/` 应通过 `.git/info/exclude` 在本地忽略，不要求提交仓库级 `.gitignore`。
 
 - **上下文裁剪规则**:
   1. 第一版优先保留用户当前输入、最近一次 LLM tool call 和 tool result。
@@ -377,6 +395,27 @@ last_updated: "2026-05-30"
 - **用户可见反馈**:  
   有记录时列出卡片；无记录时说明本地知识库暂无 Q&A 卡片。
 
+### 5.4 CLI 持续交互
+
+1. 用户运行 `python -m personal_knowledge_agent`。
+2. CLI Runtime 调用配置加载器读取 `.env` 和环境变量。
+3. CLI Runtime 初始化 SQLite Store、KnowledgeTools、ToolDispatcher、DeepSeekClient 和 AgentLoop。
+4. CLI Runtime 进入循环并等待用户输入。
+5. 用户输入 Q&A 录入请求或问题。
+6. CLI Runtime 将输入交给 AgentLoop。
+7. AgentLoop 按 5.1 或 5.2 流程调用 LLM 和工具。
+8. CLI Runtime 打印 Agent 最终回答。
+9. 用户输入 `/exit` 或 `/quit` 时退出。
+
+- **成功条件**:  
+  用户无需手写初始化代码，即可在 CLI 中连续录入知识和提问。
+
+- **失败条件**:  
+  `.env` 或环境变量缺少 `DEEPSEEK_API_KEY`，或 DeepSeek / SQLite 初始化失败。
+
+- **用户可见反馈**:  
+  启动失败时输出明确错误；运行中工具或模型失败时展示 Agent 返回的失败说明。
+
 ---
 
 ## 6. 数据模型
@@ -430,8 +469,11 @@ CREATE TABLE IF NOT EXISTS qa_cards (
 | 检索结果不相关 | 候选卡片与用户问题无明显关系 | 不基于弱证据回答 | 说明没有足够可靠依据 |
 | 读取卡片失败 | `read_qa_card` 找不到 card_id 或数据库错误 | 不引用该卡片作为来源 | 说明来源读取失败 |
 | DeepSeek key 缺失 | 真实 LLM 调用时未设置 `DEEPSEEK_API_KEY` | 不调用真实 LLM | 说明缺少环境变量 |
+| 配置缺失 | `.env` 和环境变量中均没有 `DEEPSEEK_API_KEY` | CLI Runtime 不启动 Agent | 提示用户设置 `DEEPSEEK_API_KEY` |
 | LLM 调用失败 | DeepSeek API 请求失败 | 不编造工具结果或最终回答 | 说明模型调用失败，可稍后重试 |
 | 工具执行失败 | 工具抛错或返回 `ok: false` | 不声称动作成功 | 展示失败原因 |
+| CLI 输入为空 | 用户直接回车 | 不调用 AgentLoop | 继续等待输入 |
+| CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
 
 - **通用降级原则**:
   1. 工具失败时不得假装已完成。
@@ -447,6 +489,11 @@ CREATE TABLE IF NOT EXISTS qa_cards (
   5. SQLite Store 记录 schema 初始化、插入、搜索数量和数据库错误。
   6. 默认不记录完整 question、answer、prompt、messages。
 
+- **配置安全规则**:
+  1. `.env` 必须通过 `.git/info/exclude` 在本地忽略，不要求提交仓库级 `.gitignore`。
+  2. 不得把 `.env` 内容打印到日志。
+  3. 不得把 DeepSeek key 写入文档、测试快照或数据库。
+
 ---
 
 ## 8. 测试要求
@@ -458,11 +505,14 @@ CREATE TABLE IF NOT EXISTS qa_cards (
   4. `KnowledgeTools.save_qa_card` 能校验必填字段。
   5. `KnowledgeTools.read_qa_card` 对不存在 ID 返回结构化 not_found。
   6. `DeepSeekClient` 请求构造和响应解析使用 mock 测试。
+  7. `load_config` 能从 `.env` / 环境变量读取 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和 `KNOWLEDGE_DB_PATH`。
+  8. 缺少 `DEEPSEEK_API_KEY` 时返回明确错误。
 
 - **集成测试**:
   1. Agent Loop 能接收 fake LLM 的 tool call，执行工具并回填 tool result。
   2. Agent Loop 在 fake LLM 返回 final answer 时能直接结束。
   3. 保存后再搜索能召回同一张卡片。
+  4. CLI Runtime 能用 fake input / fake AgentLoop 跑一次输入和退出流程。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
