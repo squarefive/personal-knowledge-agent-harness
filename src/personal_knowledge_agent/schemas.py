@@ -61,6 +61,14 @@ class SessionSummary:
 
 
 @dataclass(frozen=True)
+class CompactRecord:
+    artifact_path: str
+    summary: str
+    relevance: str
+    must_keep: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ToolCall:
     id: str
     name: str
