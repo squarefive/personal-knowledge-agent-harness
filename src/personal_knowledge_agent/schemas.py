@@ -28,6 +28,19 @@ class SearchResult:
 
 
 @dataclass(frozen=True)
+class MemoryIndexEntry:
+    name: str
+    type: str
+    description: str
+    path: str
+
+
+@dataclass(frozen=True)
+class MemoryIndex:
+    entries: list[MemoryIndexEntry] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ToolCall:
     id: str
     name: str
