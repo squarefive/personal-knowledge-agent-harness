@@ -101,6 +101,8 @@ last_updated: "2026-05-30"
   - 启动时加载 `.env` 和环境变量配置。
   - 初始化 SQLite Store、KnowledgeTools、ToolDispatcher、DeepSeekClient 和 AgentLoop。
   - 进入持续交互循环，读取用户输入并打印 Agent 回复。
+  - 使用 `prompt-toolkit` 提供交互式输入，不使用裸 `input()` 作为主要输入方式。
+  - 输入层只负责采集用户输入，不做知识保存、检索或业务判断。
   - 支持 `/exit` 和 `/quit` 退出。
   - 实时接收 Agent Loop 事件。
   - 将事件交给 CLI Renderer 渲染。
