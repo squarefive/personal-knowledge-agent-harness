@@ -118,11 +118,19 @@ uv pip install -e .
 
 ### 3. 启动 Agent
 
+推荐使用启动脚本：
+
+```bash
+./run
+```
+
+也可以在激活虚拟环境后直接运行：
+
 ```bash
 pka
 ```
 
-也可以使用模块入口：
+或者使用模块入口：
 
 ```bash
 python -m personal_knowledge_agent
