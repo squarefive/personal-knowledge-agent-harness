@@ -94,7 +94,7 @@ last_updated: "2026-05-30"
   - 不包含 Agent 业务判断逻辑。
 
 - **CLI Runtime 职责**:
-  - 作为 `python -m personal_knowledge_agent` 的启动入口。
+  - 作为 `python -m personal_knowledge_agent` 和安装后 `pka` 命令的启动入口。
   - 启动时加载 `.env` 和环境变量配置。
   - 初始化 SQLite Store、KnowledgeTools、ToolDispatcher、DeepSeekClient 和 AgentLoop。
   - 进入持续交互循环，读取用户输入并打印 Agent 回复。
@@ -135,11 +135,12 @@ last_updated: "2026-05-30"
 
 | 路径 | 职责 |
 |---|---|
+| `pyproject.toml` | 声明项目依赖和 `pka` CLI script |
 | `src/personal_knowledge_agent/agent_loop.py` | Agent 最小循环 |
 | `src/personal_knowledge_agent/prompt_builder.py` | 构建运行时 system prompt |
 | `src/personal_knowledge_agent/llm_client.py` | DeepSeek 薄客户端 |
 | `src/personal_knowledge_agent/config.py` | 读取 `.env` 和环境变量，返回运行配置 |
-| `src/personal_knowledge_agent/__main__.py` | CLI 持续交互入口 |
+| `src/personal_knowledge_agent/__main__.py` | CLI 持续交互入口，供 `python -m personal_knowledge_agent` 和 `pka` 复用 |
 | `src/personal_knowledge_agent/tool_dispatcher.py` | 工具分发和错误包装 |
 | `src/personal_knowledge_agent/tools.py` | 四个知识库工具 |
 | `src/personal_knowledge_agent/schemas.py` | 轻量数据契约 |
@@ -397,7 +398,7 @@ last_updated: "2026-05-30"
 
 ### 5.4 CLI 持续交互
 
-1. 用户运行 `python -m personal_knowledge_agent`。
+1. 用户运行安装后的 `pka` 命令，或使用 `python -m personal_knowledge_agent` 模块入口。
 2. CLI Runtime 调用配置加载器读取 `.env` 和环境变量。
 3. CLI Runtime 初始化 SQLite Store、KnowledgeTools、ToolDispatcher、DeepSeekClient 和 AgentLoop。
 4. CLI Runtime 进入循环并等待用户输入。
@@ -415,6 +416,17 @@ last_updated: "2026-05-30"
 
 - **用户可见反馈**:  
   启动失败时输出明确错误；运行中工具或模型失败时展示 Agent 返回的失败说明。
+
+推荐本地使用方式：
+
+```bash
+uv venv
+uv pip install -e .
+. .venv/bin/activate
+pka
+```
+
+`pka` 启动后进入持续交互，用户可以连续录入 Q&A 或提问。
 
 ---
 
@@ -513,6 +525,7 @@ CREATE TABLE IF NOT EXISTS qa_cards (
   2. Agent Loop 在 fake LLM 返回 final answer 时能直接结束。
   3. 保存后再搜索能召回同一张卡片。
   4. CLI Runtime 能用 fake input / fake AgentLoop 跑一次输入和退出流程。
+  5. `pyproject.toml` 必须声明 `pka = "personal_knowledge_agent.__main__:main"` 或等价 script 入口。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。

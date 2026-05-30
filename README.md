@@ -85,6 +85,62 @@ Agent 回答问题时必须遵守：
 - 如果没有足够依据，直接说明“本地知识库中没有找到足够依据”
 - 可以给出下一步建议，例如建议用户补充一条 Q&A
 
+## 本地运行
+
+第一版提供一个持续交互 CLI。启动后可以连续录入 Q&A 或提问，Agent 会通过工具写入或检索本地 SQLite。
+
+### 1. 准备本地配置
+
+在项目根目录创建 `.env`：
+
+```bash
+DEEPSEEK_API_KEY=你的 DeepSeek Key
+DEEPSEEK_MODEL=deepseek-v4-flash
+KNOWLEDGE_DB_PATH=.knowledge/knowledge.db
+```
+
+`.env` 和 `.knowledge/` 应只保留在本地，不提交到 Git。可以把它们加入 `.git/info/exclude`：
+
+```text
+.env
+.knowledge/
+```
+
+### 2. 安装本地命令
+
+推荐使用项目虚拟环境，避免影响其他 Python 项目：
+
+```bash
+uv venv
+uv pip install -e .
+. .venv/bin/activate
+```
+
+### 3. 启动 Agent
+
+```bash
+pka
+```
+
+也可以使用模块入口：
+
+```bash
+python -m personal_knowledge_agent
+```
+
+### 4. 使用示例
+
+```text
+你> 帮我记一条知识：问题是本项目第一版做什么？答案是第一版只做本地 Q&A 保存、检索、回答和来源引用。
+Agent> 已保存... card_id: ...
+
+你> 本项目第一版做什么？
+Agent> 回答... 来源 card_id: ...
+
+你> /exit
+已退出。
+```
+
 ## 项目状态
 
 当前处于初始化阶段。第一阶段重点是定义数据结构、工具接口和 Q&A 闭环，不急于扩展复杂能力。
