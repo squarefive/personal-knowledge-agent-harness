@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from typing import Callable
 
+from prompt_toolkit import PromptSession
+
 from .agent_loop import AgentLoop
 from .cli_renderer import CliRenderer
 from .config import AgentConfig, load_config
@@ -27,6 +29,16 @@ def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] |
     return AgentLoop(llm=llm, tools=tools, dispatcher=dispatcher, event_sink=event_sink)
 
 
+def create_prompt_session() -> PromptSession:
+    return PromptSession()
+
+
+def prompt_user(session: PromptSession | None) -> str:
+    if session is None:
+        return input("你> ")
+    return session.prompt("你> ")
+
+
 def run_cli() -> int:
     renderer = CliRenderer(stream=sys.stdout)
     event_logger = AsyncJsonlLogger()
@@ -45,6 +57,7 @@ def run_cli() -> int:
     try:
         config = load_config()
         agent = create_agent(config, event_sink=handle_event)
+        prompt_session = create_prompt_session() if sys.stdin.isatty() else None
     except Exception as exc:
         print(f"启动失败：{exc}", file=sys.stderr)
         return 1
@@ -53,7 +66,7 @@ def run_cli() -> int:
     try:
         while True:
             try:
-                raw_input = input("你> ")
+                raw_input = prompt_user(prompt_session)
             except EOFError:
                 print("已退出。")
                 return 0

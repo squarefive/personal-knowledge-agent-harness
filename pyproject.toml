@@ -5,6 +5,7 @@ description = "Local Q&A knowledge agent harness"
 requires-python = ">=3.11"
 dependencies = [
   "python-dotenv>=1.0.0",
+  "prompt-toolkit>=3.0.0",
 ]
 
 [project.scripts]
