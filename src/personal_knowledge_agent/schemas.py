@@ -41,6 +41,18 @@ class MemoryIndex:
 
 
 @dataclass(frozen=True)
+class MemoryDocument:
+    name: str
+    type: str
+    description: str
+    path: str
+    updated_at: str
+    source_type: str
+    source_ref: str | None
+    content: str
+
+
+@dataclass(frozen=True)
 class ToolCall:
     id: str
     name: str
