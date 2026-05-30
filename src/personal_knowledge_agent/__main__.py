@@ -49,5 +49,9 @@ def run_cli() -> int:
         print(f"Agent> {answer}")
 
 
+def main() -> int:
+    return run_cli()
+
+
 if __name__ == "__main__":
-    raise SystemExit(run_cli())
+    raise SystemExit(main())

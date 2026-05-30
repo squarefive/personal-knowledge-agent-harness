@@ -1,3 +1,6 @@
+import tomllib
+from pathlib import Path
+
 from personal_knowledge_agent import __main__ as cli
 
 
@@ -28,3 +31,9 @@ def test_run_cli_reports_startup_error(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "启动失败：missing key" in captured.err
+
+
+def test_pyproject_declares_pka_script():
+    data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert data["project"]["scripts"]["pka"] == "personal_knowledge_agent.__main__:main"
