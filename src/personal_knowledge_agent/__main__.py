@@ -25,10 +25,17 @@ EXIT_COMMANDS = {"/exit", "/quit"}
 
 def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] | None = None) -> AgentLoop:
     store = SQLiteStore(config.knowledge_db_path)
-    tools = KnowledgeTools(store)
-    dispatcher = ToolDispatcher(tools)
     workspace_root = Path.cwd()
     session_store = SessionStore(workspace_root)
+    memory_index_store = MemoryIndexStore(workspace_root)
+    memory_store = MemoryStore(workspace_root)
+    tools = KnowledgeTools(
+        store,
+        memory_index_store=memory_index_store,
+        memory_store=memory_store,
+        session_store=session_store,
+    )
+    dispatcher = ToolDispatcher(tools)
     llm = DeepSeekClient(
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
@@ -37,8 +44,8 @@ def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] |
         llm=llm,
         tools=tools,
         dispatcher=dispatcher,
-        memory_index_store=MemoryIndexStore(workspace_root),
-        memory_store=MemoryStore(workspace_root),
+        memory_index_store=memory_index_store,
+        memory_store=memory_store,
         session_store=session_store,
         context_compactor=ContextCompactor(session_store),
         event_sink=event_sink,

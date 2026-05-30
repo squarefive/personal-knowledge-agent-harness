@@ -1,3 +1,7 @@
+from personal_knowledge_agent.memory_index import MemoryIndexStore
+from personal_knowledge_agent.memory_store import MemoryStore
+from personal_knowledge_agent.schemas import ToolCall
+from personal_knowledge_agent.session_store import SessionStore
 from personal_knowledge_agent.sqlite_store import SQLiteStore
 from personal_knowledge_agent.tool_dispatcher import ToolDispatcher
 from personal_knowledge_agent.tools import KnowledgeTools
@@ -96,3 +100,84 @@ def test_tool_dispatcher_display_output_keeps_unknown_tool_error(tmp_path):
     )
 
     assert display == {"ok": False, "error_code": "unknown_tool", "message": "missing"}
+
+
+def test_memory_tools_list_and_read_memory(tmp_path):
+    memory_dir = tmp_path / ".memory"
+    memory_dir.mkdir()
+    (memory_dir / "MEMORY.md").write_text(
+        "\n".join(
+            [
+                "# Memory Index",
+                "",
+                "| name | type | description | path |",
+                "|---|---|---|---|",
+                "| project-boundary | project | Project boundary | .memory/project-boundary.md |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (memory_dir / "project-boundary.md").write_text(
+        "\n".join(
+            [
+                "---",
+                'name: "project-boundary"',
+                'type: "project"',
+                'description: "Project boundary"',
+                'updated_at: "2026-05-31"',
+                'source_type: "user_decision"',
+                "---",
+                "",
+                "Q&A 和 Agent memory 分开。",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    tools = KnowledgeTools(
+        SQLiteStore(tmp_path / "knowledge.db"),
+        memory_index_store=MemoryIndexStore(tmp_path),
+        memory_store=MemoryStore(tmp_path),
+    )
+
+    index = tools.list_memory_index({"limit": 10})
+    memory = tools.read_memory({"name": "project-boundary"})
+
+    assert index["ok"] is True
+    assert index["entries"][0]["name"] == "project-boundary"
+    assert memory["ok"] is True
+    assert memory["memory"]["content"] == "Q&A 和 Agent memory 分开。"
+
+
+def test_update_session_memory_writes_current_session(tmp_path):
+    session_store = SessionStore(tmp_path)
+    tools = KnowledgeTools(
+        SQLiteStore(tmp_path / "knowledge.db"),
+        session_store=session_store,
+    )
+
+    result = tools.update_session_memory(
+        {
+            "current_goal": "设计 memory 管理",
+            "confirmed_decisions": ["Q&A 和 Agent memory 分开"],
+            "open_questions": ["如何确认候选"],
+            "next_steps": ["实现工具"],
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["path"] == ".session/current.md"
+    loaded = session_store.load_current()
+    assert loaded.current_goal == "设计 memory 管理"
+    assert loaded.confirmed_decisions == ["Q&A 和 Agent memory 分开"]
+
+
+def test_tool_dispatcher_handles_memory_tools(tmp_path):
+    tools = KnowledgeTools(
+        SQLiteStore(tmp_path / "knowledge.db"),
+        memory_index_store=MemoryIndexStore(tmp_path),
+    )
+    dispatcher = ToolDispatcher(tools)
+
+    result = dispatcher.execute(ToolCall(id="call_1", name="list_memory_index", arguments={"limit": 5}))
+
+    assert result == {"ok": True, "entries": []}
