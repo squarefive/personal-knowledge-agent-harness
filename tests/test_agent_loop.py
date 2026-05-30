@@ -1,4 +1,5 @@
 from personal_knowledge_agent.agent_loop import AgentLoop
+from personal_knowledge_agent.context_compactor import ContextCompactor
 from personal_knowledge_agent.memory_index import MemoryIndexStore
 from personal_knowledge_agent.memory_store import MemoryStore
 from personal_knowledge_agent.schemas import LLMResponse, SessionSummary, ToolCall
@@ -157,3 +158,41 @@ def test_agent_loop_injects_memory_context_using_session_summary(tmp_path):
     assert "本轮已加载的相关 Agent memory" in system_prompt
     assert "Q&A 知识库和 Agent memory 必须分开。" in system_prompt
     assert "current_goal: 继续 Agent memory 管理设计" in system_prompt
+
+
+def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path):
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(knowledge_tools)
+    session_store = SessionStore(tmp_path)
+    events = []
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        name="list_recent_cards",
+                        arguments={"limit": 5},
+                    )
+                ]
+            ),
+            LLMResponse(text="没有最近卡片。"),
+        ]
+    )
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        context_compactor=ContextCompactor(session_store, threshold_chars=1),
+        event_sink=events.append,
+    )
+
+    loop.run("列出最近卡片")
+
+    compact_events = [event for event in events if event.event_type == "context_compacted"]
+    assert len(compact_events) == 1
+    record = compact_events[0].payload["compact_record"]
+    assert record["artifact_path"].startswith(".session/artifacts/")
+    assert record["summary"]
+    assert record["relevance"]
+    assert (tmp_path / record["artifact_path"]).exists()

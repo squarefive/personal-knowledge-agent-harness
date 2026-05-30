@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import asdict
 from typing import Any, Callable
 
+from .context_compactor import ContextCompactor
 from .events import AgentEvent, new_run_id
 from .llm_client import DeepSeekClient
 from .memory_index import MemoryIndexStore
@@ -27,6 +29,7 @@ class AgentLoop:
         memory_index_store: MemoryIndexStore | None = None,
         memory_store: MemoryStore | None = None,
         session_store: SessionStore | None = None,
+        context_compactor: ContextCompactor | None = None,
         max_turns: int = 8,
         event_sink: EventSink | None = None,
     ):
@@ -36,6 +39,7 @@ class AgentLoop:
         self.memory_index_store = memory_index_store
         self.memory_store = memory_store
         self.session_store = session_store
+        self.context_compactor = context_compactor
         self.max_turns = max_turns
         self.event_sink = event_sink
 
@@ -98,6 +102,12 @@ class AgentLoop:
                 started_at = time.monotonic()
                 result = self.dispatcher.execute(tool_call)
                 duration_ms = int((time.monotonic() - started_at) * 1000)
+                compact_record = self._compact_tool_result(
+                    run_id=run_id,
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result=result,
+                )
                 display_output = self.dispatcher.display_output(tool_call.name, result)
                 self._emit(
                     run_id,
@@ -109,6 +119,15 @@ class AgentLoop:
                     duration_ms=duration_ms,
                     output=display_output,
                 )
+                if compact_record is not None:
+                    self._emit(
+                        run_id,
+                        "context_compacted",
+                        turn=turn,
+                        tool_name=tool_call.name,
+                        tool_call_id=tool_call.id,
+                        compact_record=asdict(compact_record),
+                    )
                 messages.append(
                     {
                         "role": "tool",
@@ -121,6 +140,23 @@ class AgentLoop:
         self._emit(run_id, "error", stage="agent_loop", message=answer)
         self._emit(run_id, "final_answer_generated", answer=answer)
         return answer
+
+    def _compact_tool_result(
+        self,
+        *,
+        run_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        result: dict[str, Any],
+    ):
+        if self.context_compactor is None:
+            return None
+        return self.context_compactor.compact_tool_result(
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            result_text=json.dumps(result, ensure_ascii=False),
+        )
 
     def _prepare_turn_context(
         self,

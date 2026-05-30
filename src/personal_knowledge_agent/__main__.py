@@ -9,6 +9,7 @@ from prompt_toolkit import PromptSession
 from .agent_loop import AgentLoop
 from .cli_renderer import CliRenderer
 from .config import AgentConfig, load_config
+from .context_compactor import ContextCompactor
 from .events import AgentEvent
 from .jsonl_logger import AsyncJsonlLogger
 from .llm_client import DeepSeekClient
@@ -27,6 +28,7 @@ def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] |
     tools = KnowledgeTools(store)
     dispatcher = ToolDispatcher(tools)
     workspace_root = Path.cwd()
+    session_store = SessionStore(workspace_root)
     llm = DeepSeekClient(
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
@@ -37,7 +39,8 @@ def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] |
         dispatcher=dispatcher,
         memory_index_store=MemoryIndexStore(workspace_root),
         memory_store=MemoryStore(workspace_root),
-        session_store=SessionStore(workspace_root),
+        session_store=session_store,
+        context_compactor=ContextCompactor(session_store),
         event_sink=event_sink,
     )
 
