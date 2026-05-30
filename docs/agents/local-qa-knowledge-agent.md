@@ -79,6 +79,9 @@ last_updated: "2026-05-30"
   - 调用 Tool Dispatcher 执行工具。
   - 将 tool result 回填 messages。
   - 在没有 tool calls 时返回最终回答。
+  - 在关键阶段产生结构化运行事件，包括 `user_input_received`、`llm_call_started`、`llm_call_finished`、`tool_call_started`、`tool_call_finished`、`evidence_checked`、`final_answer_generated` 和 `error`。
+  - 运行事件用于 CLI 实时展示和本地开发日志，不作为长期知识来源。
+  - 运行事件只描述可审计过程，不暴露模型完整思考链。
 
 - **Prompt Builder 职责**:
   - 运行时拼接短 system prompt。
@@ -99,8 +102,20 @@ last_updated: "2026-05-30"
   - 初始化 SQLite Store、KnowledgeTools、ToolDispatcher、DeepSeekClient 和 AgentLoop。
   - 进入持续交互循环，读取用户输入并打印 Agent 回复。
   - 支持 `/exit` 和 `/quit` 退出。
+  - 实时接收 Agent Loop 事件。
+  - 将事件交给 CLI Renderer 渲染。
+  - 将事件投递给 Async JSONL Logger。
+  - CLI 展示长文本时必须做确定性截断。
   - 不直接操作 SQLite。
   - 不绕过 AgentLoop 调用工具。
+
+- **CLI Renderer 职责**:
+  - 根据事件类型渲染用户可见输出。
+  - LLM 阶段展示阶段名、开始、结束和失败状态。
+  - Tool call 展示工具名和可展示输入字段。
+  - Tool result 展示工具名、状态、耗时和可展示输出字段。
+  - Final answer 展示最终回答和来源。
+  - 不展示原始 LLM messages、system prompt、API key、secret、完整内部 payload 或模型完整思考链。
 
 - **Tools 职责**:
   - 作为 Agent 可执行动作的唯一入口。
@@ -119,10 +134,26 @@ last_updated: "2026-05-30"
   - 第一版不引入向量库、外部知识库或后台任务。
 
 - **Logging 职责**:
-  - 使用 Python 标准库 `logging`。
-  - 记录 Agent Loop、LLM Client、Tool Dispatcher、Tools 和 SQLite Store 的关键事件。
-  - 不记录 API key、完整 headers 或默认完整 prompt/messages。
-  - 默认不记录完整 question 和 answer；只记录 card_id、工具名、结果数量、轮次、错误类型等调试信息。
+  - Async JSONL Logger 是 Agent run 过程的唯一结构化开发日志。
+  - 使用本地 JSONL 日志记录开发排查事件，默认写入 `.logs/agent.log`。
+  - 与 CLI Runtime 共用 Agent Loop 的结构化事件流。
+  - 日志完整记录用户原始输入，不截断。
+  - 工具 input/output 默认只记录工具契约中声明为可展示的字段。
+  - 日志中的工具可展示长文本不截断；CLI 展示时截断。
+  - 使用后台线程和 bounded queue 异步写入日志，Agent Loop 主流程只负责投递日志事件。
+  - 队列满时不得阻塞 Agent Loop，应丢弃日志事件并向 stderr 最多提示一次。
+  - 正常 `/exit` 或 `/quit` 时最多等待 2 秒 flush 日志队列。
+  - 日志写入失败不得影响 Agent 回答，应向 stderr 最多提示一次并停止继续写日志。
+  - Python 标准库 `logging` 仅保留底层库级异常和不可恢复错误，不承担 Agent loop trace 职责。
+  - 不记录 API key、完整 headers、完整 system prompt、完整 LLM messages、secret 或未声明为可展示的内部 payload。
+
+- **腐败代码清理原则**:
+  - 实现结构化事件流后，应删除与事件流重复的旧 logging 埋点。
+  - `agent_loop.py` 不再使用 `logger.info` 记录 start、tool_calls.detected、final_answer 等 Agent run trace。
+  - `tool_dispatcher.py` 不再使用 `logger.info` 记录 dispatch start/success 这类可由 tool_call_started/tool_call_finished 表达的事件。
+  - `tools.py` 不再使用 `logger.info` 记录 save/search/read/list success 这类可由 tool result 表达的事件。
+  - `sqlite_store.py` 不再使用 `logger.info` 记录 schema/search/recent/insert success 这类默认成功路径。
+  - 可以保留 `logger.exception` 或 `logger.error` 作为未预期底层异常兜底，但不得替代 Async JSONL Logger。
 
 - **禁止绕过的边界**:
   1. Agent Loop 不得直接操作 SQLite。
@@ -137,6 +168,9 @@ last_updated: "2026-05-30"
 |---|---|
 | `pyproject.toml` | 声明项目依赖和 `pka` CLI script |
 | `src/personal_knowledge_agent/agent_loop.py` | Agent 最小循环 |
+| `src/personal_knowledge_agent/events.py` | Agent run 结构化事件契约 |
+| `src/personal_knowledge_agent/cli_renderer.py` | CLI 实时事件渲染 |
+| `src/personal_knowledge_agent/jsonl_logger.py` | 异步 JSONL 开发日志 |
 | `src/personal_knowledge_agent/prompt_builder.py` | 构建运行时 system prompt |
 | `src/personal_knowledge_agent/llm_client.py` | DeepSeek 薄客户端 |
 | `src/personal_knowledge_agent/config.py` | 读取 `.env` 和环境变量，返回运行配置 |
@@ -189,6 +223,20 @@ last_updated: "2026-05-30"
 }
 ```
 
+- **可展示输入字段**:
+  - `question`
+  - `answer`
+  - `summary`
+  - `keywords`
+
+- **可展示输出字段**:
+  - `ok`
+  - `card_id`
+  - `source_type`
+  - `created_at`
+  - `error_code`
+  - `message`
+
 - **副作用**:  
   写入 SQLite `qa_cards` 表。
 
@@ -228,6 +276,22 @@ last_updated: "2026-05-30"
 }
 ```
 
+- **可展示输入字段**:
+  - `query`
+  - `limit`
+
+- **可展示输出字段**:
+  - `ok`
+  - `cards.card_id`
+  - `cards.question`
+  - `cards.summary`
+  - `cards.answer_snippet`
+  - `cards.score`
+  - `cards.source_type`
+  - `cards.created_at`
+  - `error_code`
+  - `message`
+
 - **副作用**:  
   无。
 
@@ -264,6 +328,22 @@ last_updated: "2026-05-30"
   }
 }
 ```
+
+- **可展示输入字段**:
+  - `card_id`
+
+- **可展示输出字段**:
+  - `ok`
+  - `card.card_id`
+  - `card.question`
+  - `card.answer`
+  - `card.summary`
+  - `card.keywords`
+  - `card.source_type`
+  - `card.created_at`
+  - `card.updated_at`
+  - `error_code`
+  - `message`
 
 - **副作用**:  
   无。
@@ -302,6 +382,20 @@ last_updated: "2026-05-30"
 }
 ```
 
+- **可展示输入字段**:
+  - `limit`
+
+- **可展示输出字段**:
+  - `ok`
+  - `cards.card_id`
+  - `cards.question`
+  - `cards.summary`
+  - `cards.keywords`
+  - `cards.source_type`
+  - `cards.created_at`
+  - `error_code`
+  - `message`
+
 - **副作用**:  
   无。
 
@@ -328,6 +422,12 @@ last_updated: "2026-05-30"
   3. 日志内容。
   4. DeepSeek 响应中未保存到 SQLite 的内容。
   5. `.env` 中的运行配置。
+  6. Agent run 事件和 JSONL 日志。
+
+- **运行 trace 边界**:
+  1. 第一版不把运行 trace 写入 SQLite。
+  2. SQLite 只保存 Q&A 知识卡片。
+  3. `.logs/agent.log` 只用于本地开发排查，不是长期知识来源。
 
 - **配置边界**:
   1. `.env` 只保存运行配置，不是长期知识来源。
@@ -428,6 +528,23 @@ pka
 
 `pka` 启动后进入持续交互，用户可以连续录入 Q&A 或提问。
 
+### 5.5 CLI 实时运行过程展示
+
+1. CLI Runtime 收到用户输入后生成本轮 `run_id`。
+2. Agent Loop 在收到输入、调用 LLM、收到 LLM 响应、调用工具、收到工具结果、判断证据和生成最终回答时产生结构化事件。
+3. CLI Renderer 在主线程实时渲染事件。
+4. Async JSONL Logger 在后台线程异步写入本地 `.logs/agent.log`。
+5. 最终回答仍必须符合来源要求；依据不足时仍必须明确拒答。
+
+- **成功条件**:  
+  用户能在 CLI 中实时看到 LLM 阶段、tool call、tool result、证据判断和最终回答；本地 JSONL 日志能记录同一批事件。
+
+- **失败条件**:  
+  CLI Renderer 渲染失败、日志队列满、日志写入失败或日志 flush 超时。
+
+- **用户可见反馈**:  
+  CLI Renderer 或 Logger 失败时向 stderr 输出简短提示，但不得影响 Agent 工具执行和最终回答。
+
 ---
 
 ## 6. 数据模型
@@ -486,6 +603,10 @@ CREATE TABLE IF NOT EXISTS qa_cards (
 | 工具执行失败 | 工具抛错或返回 `ok: false` | 不声称动作成功 | 展示失败原因 |
 | CLI 输入为空 | 用户直接回车 | 不调用 AgentLoop | 继续等待输入 |
 | CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
+| CLI Renderer 失败 | 渲染事件时发生异常 | 不影响工具执行和 Agent 最终回答 | 向 stderr 输出简短错误 |
+| 日志队列满 | Async JSONL Logger 队列达到上限 | 不阻塞 Agent Loop，丢弃日志事件 | stderr 最多提示一次 |
+| 日志写入失败 | `.logs/agent.log` 无法写入 | 停止继续写日志，不影响 Agent | stderr 最多提示一次 |
+| 日志 flush 超时 | 正常退出时 2 秒内未 flush 完成 | 继续退出 | 不保证所有日志写入完成 |
 
 - **通用降级原则**:
   1. 工具失败时不得假装已完成。
@@ -494,12 +615,13 @@ CREATE TABLE IF NOT EXISTS qa_cards (
   4. 不得为了回答完整而引入无来源外部知识。
 
 - **日志降级原则**:
-  1. Agent Loop 记录轮次、是否收到 tool calls、是否返回 final answer。
-  2. LLM Client 记录 model、请求成功或失败、tool_calls 数量，不记录 API key。
-  3. Tool Dispatcher 记录 tool name、tool_call_id、成功或失败和耗时。
-  4. Tools 记录保存成功的 card_id、检索结果数量和 not_found。
-  5. SQLite Store 记录 schema 初始化、插入、搜索数量和数据库错误。
-  6. 默认不记录完整 question、answer、prompt、messages。
+  1. Async JSONL Logger 记录 Agent run 事件，是 Agent run 过程的唯一结构化开发日志。
+  2. 日志完整记录用户原始输入，不截断。
+  3. 工具 input/output 只记录工具契约声明的可展示字段。
+  4. 日志中的工具可展示长文本不截断；CLI 展示时截断。
+  5. 日志写入失败、队列满和 flush 超时不得影响 Agent 工具执行和最终回答。
+  6. Python 标准库 `logging` 仅保留底层库级异常和不可恢复错误，不承担 Agent loop trace 职责。
+  7. 不记录 API key、完整 prompt、完整 messages、secret 或未声明为可展示的内部 payload。
 
 - **配置安全规则**:
   1. `.env` 必须通过 `.git/info/exclude` 在本地忽略，不要求提交仓库级 `.gitignore`。
@@ -526,12 +648,20 @@ CREATE TABLE IF NOT EXISTS qa_cards (
   3. 保存后再搜索能召回同一张卡片。
   4. CLI Runtime 能用 fake input / fake AgentLoop 跑一次输入和退出流程。
   5. `pyproject.toml` 必须声明 `pka = "personal_knowledge_agent.__main__:main"` 或等价 script 入口。
+  6. Agent Loop 关键阶段会产生结构化事件。
+  7. CLI Renderer 对长文本进行截断。
+  8. Async JSONL Logger 完整记录 `user_input`。
+  9. Async JSONL Logger 使用后台线程异步写入，不阻塞主流程。
+  10. Async JSONL Logger 在队列满和写入失败时按降级策略处理。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
   2. 工具失败时不会返回保存成功。
   3. 回答来源至少包含 card_id、question、source_type、created_at。
   4. 日志不输出 API key。
+  5. 日志不输出完整 system prompt 或完整 LLM messages。
+  6. Tool event 只包含工具契约声明的可展示字段。
+  7. 与新事件流重复的旧 logging 成功路径埋点应删除或收缩。
 
 - **可选 Live Smoke Test**:
   1. 仅在存在 `DEEPSEEK_API_KEY` 时运行。
