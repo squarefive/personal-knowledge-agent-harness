@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Callable
 
 from prompt_toolkit import PromptSession
@@ -11,6 +12,9 @@ from .config import AgentConfig, load_config
 from .events import AgentEvent
 from .jsonl_logger import AsyncJsonlLogger
 from .llm_client import DeepSeekClient
+from .memory_index import MemoryIndexStore
+from .memory_store import MemoryStore
+from .session_store import SessionStore
 from .sqlite_store import SQLiteStore
 from .tool_dispatcher import ToolDispatcher
 from .tools import KnowledgeTools
@@ -22,11 +26,20 @@ def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] |
     store = SQLiteStore(config.knowledge_db_path)
     tools = KnowledgeTools(store)
     dispatcher = ToolDispatcher(tools)
+    workspace_root = Path.cwd()
     llm = DeepSeekClient(
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
     )
-    return AgentLoop(llm=llm, tools=tools, dispatcher=dispatcher, event_sink=event_sink)
+    return AgentLoop(
+        llm=llm,
+        tools=tools,
+        dispatcher=dispatcher,
+        memory_index_store=MemoryIndexStore(workspace_root),
+        memory_store=MemoryStore(workspace_root),
+        session_store=SessionStore(workspace_root),
+        event_sink=event_sink,
+    )
 
 
 def create_prompt_session() -> PromptSession:

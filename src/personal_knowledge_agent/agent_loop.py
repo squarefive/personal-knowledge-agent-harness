@@ -6,8 +6,11 @@ from typing import Any, Callable
 
 from .events import AgentEvent, new_run_id
 from .llm_client import DeepSeekClient
+from .memory_index import MemoryIndexStore
+from .memory_store import MemoryStore
 from .prompt_builder import build_system_prompt
-from .schemas import LLMResponse
+from .schemas import LLMResponse, MemoryDocument, MemoryIndex, MemoryIndexEntry, SessionSummary
+from .session_store import SessionStore
 from .tool_dispatcher import ToolDispatcher
 from .tools import KnowledgeTools
 
@@ -21,19 +24,30 @@ class AgentLoop:
         llm: DeepSeekClient,
         tools: KnowledgeTools,
         dispatcher: ToolDispatcher,
+        memory_index_store: MemoryIndexStore | None = None,
+        memory_store: MemoryStore | None = None,
+        session_store: SessionStore | None = None,
         max_turns: int = 8,
         event_sink: EventSink | None = None,
     ):
         self.llm = llm
         self.tools = tools
         self.dispatcher = dispatcher
+        self.memory_index_store = memory_index_store
+        self.memory_store = memory_store
+        self.session_store = session_store
         self.max_turns = max_turns
         self.event_sink = event_sink
 
     def run(self, user_input: str) -> str:
         run_id = new_run_id()
         messages: list[dict[str, Any]] = [{"role": "user", "content": user_input}]
-        system_prompt = build_system_prompt()
+        memory_index, session_summary, selected_memories = self._prepare_turn_context(user_input)
+        system_prompt = build_system_prompt(
+            memory_index=memory_index,
+            selected_memories=selected_memories,
+            session_summary=session_summary,
+        )
         tool_definitions = self.tools.definitions()
         self._emit(run_id, "user_input_received", user_input=user_input)
 
@@ -108,6 +122,81 @@ class AgentLoop:
         self._emit(run_id, "final_answer_generated", answer=answer)
         return answer
 
+    def _prepare_turn_context(
+        self,
+        user_input: str,
+    ) -> tuple[MemoryIndex | None, SessionSummary | None, list[MemoryDocument]]:
+        memory_index = self._load_memory_index()
+        session_summary = self._load_session_summary()
+        if memory_index is None or self.memory_store is None:
+            return memory_index, session_summary, []
+
+        selected_entries = self._select_memory_entries(
+            user_input=user_input,
+            memory_index=memory_index,
+            session_summary=session_summary,
+        )
+        selected_memories: list[MemoryDocument] = []
+        for entry in selected_entries:
+            try:
+                selected_memories.append(self.memory_store.read_by_entry(entry))
+            except Exception:
+                continue
+        return memory_index, session_summary, selected_memories
+
+    def _load_memory_index(self) -> MemoryIndex | None:
+        if self.memory_index_store is None:
+            return None
+        try:
+            return self.memory_index_store.load()
+        except Exception:
+            return MemoryIndex()
+
+    def _load_session_summary(self) -> SessionSummary | None:
+        if self.session_store is None:
+            return None
+        try:
+            return self.session_store.load_current()
+        except Exception:
+            return SessionSummary()
+
+    @staticmethod
+    def _select_memory_entries(
+        *,
+        user_input: str,
+        memory_index: MemoryIndex,
+        session_summary: SessionSummary | None,
+        limit: int = 3,
+    ) -> list[MemoryIndexEntry]:
+        query_parts = [user_input]
+        if session_summary is not None:
+            query_parts.extend(
+                [
+                    session_summary.current_goal,
+                    " ".join(session_summary.confirmed_decisions),
+                    " ".join(session_summary.open_questions),
+                    " ".join(session_summary.next_steps),
+                ]
+            )
+        query = " ".join(part for part in query_parts if part).lower()
+        if not query:
+            return []
+
+        scored: list[tuple[int, MemoryIndexEntry]] = []
+        for entry in memory_index.entries:
+            haystack = " ".join([entry.name, entry.type, entry.description, entry.path]).lower()
+            score = 0
+            for token in _query_tokens(query):
+                if token in haystack:
+                    score += 1
+            if entry.name.lower() in query:
+                score += 2
+            if score > 0:
+                scored.append((score, entry))
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [entry for _, entry in scored[:limit]]
+
     def _emit(self, run_id: str, event_type: str, **payload: Any) -> None:
         if self.event_sink is None:
             return
@@ -132,3 +221,7 @@ class AgentLoop:
                 }
             )
         return message
+
+
+def _query_tokens(query: str) -> list[str]:
+    return [token for token in query.replace("/", " ").replace("-", " ").split() if token]

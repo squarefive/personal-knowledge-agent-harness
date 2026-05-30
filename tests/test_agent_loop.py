@@ -1,5 +1,8 @@
 from personal_knowledge_agent.agent_loop import AgentLoop
-from personal_knowledge_agent.schemas import LLMResponse, ToolCall
+from personal_knowledge_agent.memory_index import MemoryIndexStore
+from personal_knowledge_agent.memory_store import MemoryStore
+from personal_knowledge_agent.schemas import LLMResponse, SessionSummary, ToolCall
+from personal_knowledge_agent.session_store import SessionStore
 from personal_knowledge_agent.sqlite_store import SQLiteStore
 from personal_knowledge_agent.tool_dispatcher import ToolDispatcher
 from personal_knowledge_agent.tools import KnowledgeTools
@@ -95,3 +98,62 @@ def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
         "evidence_checked",
         "final_answer_generated",
     ]
+
+
+def test_agent_loop_injects_memory_context_using_session_summary(tmp_path):
+    memory_dir = tmp_path / ".memory"
+    memory_dir.mkdir()
+    (memory_dir / "MEMORY.md").write_text(
+        "\n".join(
+            [
+                "# Memory Index",
+                "",
+                "| name | type | description | path |",
+                "|---|---|---|---|",
+                "| memory-design | project | Agent memory 管理设计 | .memory/memory-design.md |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (memory_dir / "memory-design.md").write_text(
+        "\n".join(
+            [
+                "---",
+                'name: "memory-design"',
+                'type: "project"',
+                'description: "Agent memory 管理设计"',
+                'updated_at: "2026-05-31"',
+                'source_type: "user_decision"',
+                "---",
+                "",
+                "Q&A 知识库和 Agent memory 必须分开。",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    session_store = SessionStore(tmp_path)
+    session_store.write_current(
+        SessionSummary(
+            current_goal="继续 Agent memory 管理设计",
+            next_steps=["实现 turn-start memory 选择"],
+        )
+    )
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(knowledge_tools)
+    fake_llm = FakeLLM([LLMResponse(text="继续。")])
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        memory_index_store=MemoryIndexStore(tmp_path),
+        memory_store=MemoryStore(tmp_path),
+        session_store=session_store,
+    )
+
+    loop.run("继续")
+
+    system_prompt = fake_llm.calls[0]["system_prompt"]
+    assert "可用 Agent memory 索引" in system_prompt
+    assert "本轮已加载的相关 Agent memory" in system_prompt
+    assert "Q&A 知识库和 Agent memory 必须分开。" in system_prompt
+    assert "current_goal: 继续 Agent memory 管理设计" in system_prompt
