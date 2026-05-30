@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import sys
+from typing import Callable
 
 from .agent_loop import AgentLoop
+from .cli_renderer import CliRenderer
 from .config import AgentConfig, load_config
+from .events import AgentEvent
+from .jsonl_logger import AsyncJsonlLogger
 from .llm_client import DeepSeekClient
 from .sqlite_store import SQLiteStore
 from .tool_dispatcher import ToolDispatcher
@@ -12,7 +16,7 @@ from .tools import KnowledgeTools
 EXIT_COMMANDS = {"/exit", "/quit"}
 
 
-def create_agent(config: AgentConfig) -> AgentLoop:
+def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] | None = None) -> AgentLoop:
     store = SQLiteStore(config.knowledge_db_path)
     tools = KnowledgeTools(store)
     dispatcher = ToolDispatcher(tools)
@@ -20,33 +24,53 @@ def create_agent(config: AgentConfig) -> AgentLoop:
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
     )
-    return AgentLoop(llm=llm, tools=tools, dispatcher=dispatcher)
+    return AgentLoop(llm=llm, tools=tools, dispatcher=dispatcher, event_sink=event_sink)
 
 
 def run_cli() -> int:
+    renderer = CliRenderer(stream=sys.stdout)
+    event_logger = AsyncJsonlLogger()
+    rendered_final_answer = False
+
+    def handle_event(event: AgentEvent) -> None:
+        nonlocal rendered_final_answer
+        try:
+            renderer.render(event)
+            if event.event_type == "final_answer_generated":
+                rendered_final_answer = True
+        except Exception as exc:
+            print(f"CLI 渲染失败：{exc}", file=sys.stderr)
+        event_logger.write(event)
+
     try:
         config = load_config()
-        agent = create_agent(config)
+        agent = create_agent(config, event_sink=handle_event)
     except Exception as exc:
         print(f"启动失败：{exc}", file=sys.stderr)
         return 1
 
     print("本地 Q&A 知识库 Agent 已启动。输入 /exit 或 /quit 退出。")
-    while True:
-        try:
-            user_input = input("你> ").strip()
-        except EOFError:
-            print("已退出。")
-            return 0
+    try:
+        while True:
+            try:
+                raw_input = input("你> ")
+            except EOFError:
+                print("已退出。")
+                return 0
 
-        if not user_input:
-            continue
-        if user_input in EXIT_COMMANDS:
-            print("已退出。")
-            return 0
+            user_input = raw_input.strip()
+            if not user_input:
+                continue
+            if user_input in EXIT_COMMANDS:
+                print("已退出。")
+                return 0
 
-        answer = agent.run(user_input)
-        print(f"Agent> {answer}")
+            rendered_final_answer = False
+            answer = agent.run(raw_input)
+            if not rendered_final_answer:
+                print(f"Agent> {answer}")
+    finally:
+        event_logger.close()
 
 
 def main() -> int:

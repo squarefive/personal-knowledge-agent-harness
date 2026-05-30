@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .schemas import QACard, SearchResult
-
-logger = logging.getLogger(__name__)
 
 
 class SQLiteStore:
@@ -34,7 +31,6 @@ class SQLiteStore:
                 )
                 """
             )
-        logger.info("sqlite.schema.initialized")
 
     def save_card(
         self,
@@ -79,7 +75,6 @@ class SQLiteStore:
                     card.updated_at,
                 ),
             )
-        logger.info("sqlite.card.inserted", extra={"card_id": card.id})
         return card
 
     def read_card(self, card_id: str) -> QACard | None:
@@ -90,7 +85,6 @@ class SQLiteStore:
                 (card_id.strip(),),
             ).fetchone()
         if row is None:
-            logger.info("sqlite.card.not_found", extra={"card_id": card_id})
             return None
         return self._row_to_card(row)
 
@@ -102,7 +96,6 @@ class SQLiteStore:
                 (safe_limit,),
             ).fetchall()
         cards = [self._row_to_card(row) for row in rows]
-        logger.info("sqlite.recent.completed", extra={"count": len(cards)})
         return cards
 
     def search_cards(self, query: str, limit: int = 5) -> list[SearchResult]:
@@ -141,9 +134,7 @@ class SQLiteStore:
                     )
                 )
         results.sort(key=lambda item: item.score, reverse=True)
-        limited = results[:safe_limit]
-        logger.info("sqlite.search.completed", extra={"count": len(limited)})
-        return limited
+        return results[:safe_limit]
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)

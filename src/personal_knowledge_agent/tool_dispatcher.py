@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import logging
-import time
 from typing import Any, Callable
 
 from .schemas import ToolCall
 from .tools import KnowledgeTools
-
-logger = logging.getLogger(__name__)
 
 
 class ToolDispatcher:
@@ -20,32 +16,97 @@ class ToolDispatcher:
         }
 
     def execute(self, tool_call: ToolCall) -> dict[str, Any]:
-        started_at = time.monotonic()
-        logger.info(
-            "tool.dispatch.start",
-            extra={"tool_name": tool_call.name, "tool_call_id": tool_call.id},
-        )
         handler = self._handlers.get(tool_call.name)
         if handler is None:
-            logger.warning(
-                "tool.unknown",
-                extra={"tool_name": tool_call.name, "tool_call_id": tool_call.id},
-            )
             return {"ok": False, "error_code": "unknown_tool", "message": tool_call.name}
         try:
-            result = handler(tool_call.arguments)
-            logger.info(
-                "tool.dispatch.success",
-                extra={
-                    "tool_name": tool_call.name,
-                    "tool_call_id": tool_call.id,
-                    "elapsed_ms": int((time.monotonic() - started_at) * 1000),
-                },
-            )
-            return result
+            return handler(tool_call.arguments)
         except Exception as exc:
-            logger.exception(
-                "tool.dispatch.error",
-                extra={"tool_name": tool_call.name, "tool_call_id": tool_call.id},
-            )
             return {"ok": False, "error_code": "tool_error", "message": str(exc)}
+
+    def display_input(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        return self._select(arguments, DISPLAY_INPUT_FIELDS.get(tool_name, ()))
+
+    def display_output(self, tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
+        return self._select(result, DISPLAY_OUTPUT_FIELDS.get(tool_name, ERROR_OUTPUT_FIELDS))
+
+    def _select(self, payload: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
+        selected: dict[str, Any] = {}
+        for field in fields:
+            self._copy_field(payload, selected, field.split("."))
+        return selected
+
+    def _copy_field(self, source: Any, target: Any, parts: list[str]) -> None:
+        if not parts:
+            return
+        head, *tail = parts
+        if isinstance(source, list):
+            if not isinstance(target, list):
+                return
+            while len(target) < len(source):
+                target.append({})
+            for index, item in enumerate(source):
+                self._copy_field(item, target[index], parts)
+            return
+        if not isinstance(source, dict) or head not in source:
+            return
+        if not tail:
+            if isinstance(target, dict):
+                target[head] = source[head]
+            return
+        value = source[head]
+        if isinstance(value, list):
+            next_target = target.setdefault(head, []) if isinstance(target, dict) else []
+        else:
+            next_target = target.setdefault(head, {}) if isinstance(target, dict) else {}
+        self._copy_field(value, next_target, tail)
+
+
+DISPLAY_INPUT_FIELDS: dict[str, tuple[str, ...]] = {
+    "save_qa_card": ("question", "answer", "summary", "keywords"),
+    "search_qa_cards": ("query", "limit"),
+    "read_qa_card": ("card_id",),
+    "list_recent_cards": ("limit",),
+}
+
+ERROR_OUTPUT_FIELDS = ("ok", "error_code", "message")
+
+DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
+    "save_qa_card": ("ok", "card_id", "source_type", "created_at", "error_code", "message"),
+    "search_qa_cards": (
+        "ok",
+        "cards.card_id",
+        "cards.question",
+        "cards.summary",
+        "cards.answer_snippet",
+        "cards.score",
+        "cards.source_type",
+        "cards.created_at",
+        "error_code",
+        "message",
+    ),
+    "read_qa_card": (
+        "ok",
+        "card.card_id",
+        "card.question",
+        "card.answer",
+        "card.summary",
+        "card.keywords",
+        "card.source_type",
+        "card.created_at",
+        "card.updated_at",
+        "error_code",
+        "message",
+    ),
+    "list_recent_cards": (
+        "ok",
+        "cards.card_id",
+        "cards.question",
+        "cards.summary",
+        "cards.keywords",
+        "cards.source_type",
+        "cards.created_at",
+        "error_code",
+        "message",
+    ),
+}

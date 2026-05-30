@@ -11,8 +11,9 @@ def test_run_cli_processes_input_and_exit(monkeypatch, capsys):
 
     inputs = iter(["帮我记一条知识", "/exit"])
     monkeypatch.setattr(cli, "load_config", lambda: object())
-    monkeypatch.setattr(cli, "create_agent", lambda config: FakeAgent())
+    monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None: FakeAgent())
     monkeypatch.setattr("builtins.input", lambda prompt: next(inputs))
+    monkeypatch.setattr(cli, "AsyncJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
 
     exit_code = cli.run_cli()
 

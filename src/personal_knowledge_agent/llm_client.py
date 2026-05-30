@@ -40,14 +40,8 @@ class DeepSeekClient:
             "tools": tools,
             "tool_choice": "auto",
         }
-        logger.info("llm.deepseek.request", extra={"model": self.model})
         data = self._post_json("/chat/completions", payload)
-        response = self._parse_response(data)
-        logger.info(
-            "llm.deepseek.response",
-            extra={"tool_calls_count": len(response.tool_calls)},
-        )
-        return response
+        return self._parse_response(data)
 
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

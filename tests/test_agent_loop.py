@@ -24,6 +24,7 @@ class FakeLLM:
 def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
     knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
     dispatcher = ToolDispatcher(knowledge_tools)
+    events = []
     fake_llm = FakeLLM(
         [
             LLMResponse(
@@ -47,6 +48,7 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
         llm=fake_llm,
         tools=knowledge_tools,
         dispatcher=dispatcher,
+        event_sink=events.append,
     )
 
     answer = loop.run("帮我记一条知识")
@@ -56,16 +58,40 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
     second_messages = fake_llm.calls[1]["messages"]
     assert second_messages[-1]["role"] == "tool"
     assert "card_id" in second_messages[-1]["content"]
+    event_types = [event.event_type for event in events]
+    assert event_types == [
+        "user_input_received",
+        "llm_call_started",
+        "llm_call_finished",
+        "tool_call_started",
+        "tool_call_finished",
+        "llm_call_started",
+        "llm_call_finished",
+        "evidence_checked",
+        "final_answer_generated",
+    ]
+    assert events[0].payload["user_input"] == "帮我记一条知识"
+    assert events[3].payload["input"]["question"] == "什么是最小闭环？"
+    assert "card_id" in events[4].payload["output"]
 
 
 def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
     knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
     dispatcher = ToolDispatcher(knowledge_tools)
+    events = []
     fake_llm = FakeLLM([LLMResponse(text="本地知识库中没有找到足够依据。")])
     loop = AgentLoop(
         llm=fake_llm,
         tools=knowledge_tools,
         dispatcher=dispatcher,
+        event_sink=events.append,
     )
 
     assert loop.run("未知问题") == "本地知识库中没有找到足够依据。"
+    assert [event.event_type for event in events] == [
+        "user_input_received",
+        "llm_call_started",
+        "llm_call_finished",
+        "evidence_checked",
+        "final_answer_generated",
+    ]
