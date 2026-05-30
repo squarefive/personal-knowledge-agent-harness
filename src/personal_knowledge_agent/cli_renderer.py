@@ -12,6 +12,11 @@ class CliRenderer:
         self.max_text_length = max_text_length
 
     def render(self, event: AgentEvent) -> None:
+        if event.event_type == "final_answer_generated":
+            self._section("Final Answer")
+            self._write(event.payload.get("answer", ""))
+            return
+
         payload = self._truncate(event.payload)
         if event.event_type == "user_input_received":
             self._section("User Input")
@@ -32,9 +37,6 @@ class CliRenderer:
             self._dump(payload.get("output", {}))
         elif event.event_type == "evidence_checked":
             self._write(f"[Evidence] {payload.get('status', 'completed')}")
-        elif event.event_type == "final_answer_generated":
-            self._section("Final Answer")
-            self._write(payload.get("answer", ""))
         elif event.event_type == "error":
             self._write(f"[Error] {payload.get('message', 'unknown error')}")
 
