@@ -1,4 +1,4 @@
-from personal_knowledge_agent.session_transcript import SessionTranscript
+from personal_knowledge_agent.session_memory import SessionTranscript
 
 
 def test_session_transcript_appends_and_loads_messages(tmp_path):

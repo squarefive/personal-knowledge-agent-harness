@@ -1,4 +1,4 @@
-from personal_knowledge_agent.session_metadata import SessionMetadataStore
+from personal_knowledge_agent.session_memory import SessionMetadataStore
 
 
 def test_session_metadata_load_or_create_writes_default_metadata(tmp_path):

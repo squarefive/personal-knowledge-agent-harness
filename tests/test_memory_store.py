@@ -1,7 +1,7 @@
 import pytest
 
-from personal_knowledge_agent.memory_index import MemoryIndexEntry
-from personal_knowledge_agent.memory_store import MemoryStore
+from personal_knowledge_agent.agent_memory import MemoryStore
+from personal_knowledge_agent.schemas import MemoryIndexEntry
 
 
 def test_read_memory_document_with_frontmatter(tmp_path):

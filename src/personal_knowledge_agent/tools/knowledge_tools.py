@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from .memory_index import MemoryIndexStore
-from .memory_store import MemoryStore
-from .schemas import QACard
-from .sqlite_store import SQLiteStore
+from ..agent_memory.document_store import MemoryStore
+from ..agent_memory.index_store import MemoryIndexStore
+from ..qa_store.sqlite_store import SQLiteStore
+from ..schemas import QACard
 
 
 class KnowledgeTools:

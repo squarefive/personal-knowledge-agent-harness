@@ -1,16 +1,11 @@
 import copy
 
 from personal_knowledge_agent.agent_loop import AgentLoop
-from personal_knowledge_agent.context_compactor import ContextCompactor
-from personal_knowledge_agent.memory_extractor import MemoryExtractor
-from personal_knowledge_agent.memory_index import MemoryIndexStore
-from personal_knowledge_agent.memory_store import MemoryStore
+from personal_knowledge_agent.agent_memory import MemoryExtractor, MemoryIndexStore, MemoryStore
+from personal_knowledge_agent.qa_store import SQLiteStore
 from personal_knowledge_agent.schemas import LLMResponse, ToolCall
-from personal_knowledge_agent.session_metadata import SessionMetadataStore
-from personal_knowledge_agent.session_transcript import SessionTranscript
-from personal_knowledge_agent.sqlite_store import SQLiteStore
-from personal_knowledge_agent.tool_dispatcher import ToolDispatcher
-from personal_knowledge_agent.tools import KnowledgeTools
+from personal_knowledge_agent.session_memory import ContextCompactor, SessionMetadataStore, SessionTranscript
+from personal_knowledge_agent.tools import KnowledgeTools, ToolDispatcher
 
 
 class FakeLLM:

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .memory_index import MEMORY_TYPES
-from .schemas import MemoryDocument, MemoryIndexEntry
+from ..schemas import MemoryDocument, MemoryIndexEntry
+from .index_store import MEMORY_TYPES
 
 REQUIRED_FRONTMATTER_FIELDS = ["name", "type", "description", "updated_at", "source_type"]
 

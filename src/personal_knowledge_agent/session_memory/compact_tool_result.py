@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .schemas import CompactRecord
+from ..schemas import CompactRecord
 
 
 class ContextCompactor:

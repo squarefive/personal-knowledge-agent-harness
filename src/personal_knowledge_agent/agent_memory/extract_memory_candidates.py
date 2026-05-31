@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .schemas import MemoryCandidate, MemoryIndex
+from ..schemas import MemoryCandidate, MemoryIndex
 
 USER_PREFERENCE_MARKERS = ("记住", "以后", "每次", "总是")
 PROJECT_DECISION_MARKERS = ("决定", "确认", "必须", "不要", "不允许")

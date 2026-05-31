@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .schemas import MemoryIndex, MemoryIndexEntry
+from ..schemas import MemoryIndex, MemoryIndexEntry
 
 MEMORY_TYPES = {"user", "feedback", "project", "reference"}
 REQUIRED_COLUMNS = ["name", "type", "description", "path"]

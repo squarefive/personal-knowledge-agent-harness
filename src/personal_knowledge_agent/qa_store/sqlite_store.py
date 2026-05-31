@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .schemas import QACard, SearchResult
+from ..schemas import QACard, SearchResult
 
 
 class SQLiteStore:

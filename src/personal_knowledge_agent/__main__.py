@@ -7,22 +7,21 @@ from typing import Callable
 from prompt_toolkit import PromptSession
 
 from .agent_loop import AgentLoop
+from .agent_memory import MemoryExtractor, MemoryIndexStore, MemoryStore
 from .cli_renderer import CliRenderer
 from .config import AgentConfig, load_config
-from .context_compactor import ContextCompactor
 from .events import AgentEvent
 from .jsonl_logger import AsyncJsonlLogger
 from .llm_client import DeepSeekClient
-from .memory_extractor import MemoryExtractor
-from .memory_index import MemoryIndexStore
-from .memory_store import MemoryStore
-from .session_metadata import SessionMetadataStore
-from .session_restore import SessionRestore
-from .session_summarizer import SessionSummarizer
-from .session_transcript import SessionTranscript
-from .sqlite_store import SQLiteStore
-from .tool_dispatcher import ToolDispatcher
-from .tools import KnowledgeTools
+from .qa_store import SQLiteStore
+from .session_memory import (
+    ContextCompactor,
+    SessionMetadataStore,
+    SessionRestore,
+    SessionSummarizer,
+    SessionTranscript,
+)
+from .tools import KnowledgeTools, ToolDispatcher
 
 EXIT_COMMANDS = {"/exit", "/quit"}
 
