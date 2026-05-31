@@ -40,8 +40,10 @@ last_updated: "2026-05-31"
   3. 能基于检索结果回答问题并引用来源。
   4. 在依据不足时明确拒答，不编造来源或事实。
   5. 能读取用户可见的 Agent memory，用于理解用户偏好、项目约束、长期反馈和引用入口。
-  6. 能维护当前任务的 session memory，用于在上下文压缩后延续任务状态。
-  7. 能对过大的上下文材料做 compact，保留摘要、相关性说明和可回读 artifact。
+  6. 能维护当前 CLI 进程内的 runtime `messages[]`，作为聊天上下文本体。
+  7. 能将可恢复 messages 追加写入 `.sessions/<session_id>/transcript.jsonl`。
+  8. 能在 transcript 过长时生成 `summary.md`，并用 summary + recent messages 恢复上下文。
+  9. 能对过大的上下文材料做 compact，保留摘要、相关性说明和可回读 artifact。
 
 - **包含能力**:
   1. 录入用户提供的 Q&A。
@@ -52,9 +54,10 @@ last_updated: "2026-05-31"
   6. 回答时展示 card_id、原始问题、source_type 和 created_at。
   7. 读取 `.memory/MEMORY.md` 中的 Agent memory index。
   8. 按需读取少量相关 `.memory/*.md`，用于指导 Agent 协作行为。
-  9. 读取和更新 `.session/current.md`，用于保存当前任务状态。
-  10. 将过大的 tool result 写入 `.session/artifacts/`，并在上下文中保留 compact record。
-  11. 在 turn 结束后提取 memory candidates，并按写入规则保存或等待用户确认。
+  9. 从 `.sessions/<session_id>/transcript.jsonl` 恢复 runtime `messages[]`。
+  10. 在长 transcript 场景下使用 `summary.md` + recent messages 恢复。
+  11. 将过大的 tool result 写入 `.sessions/<session_id>/artifacts/`，并在上下文中保留 compact record。
+  12. 在 turn 结束后提取 memory candidates，并按写入规则保存或等待用户确认。
 
 - **不包含能力**:
   1. 不做 Markdown Wiki。
@@ -78,7 +81,7 @@ last_updated: "2026-05-31"
   5. 回答不得引入无来源外部知识。
   6. Q&A 知识库和 Agent memory 必须分开。
   7. `.memory/*.md` 用于 Agent 长期工作记忆，不得作为 Q&A 回答的知识卡片来源。
-  8. `.session/current.md` 只表示当前任务状态，不得当作长期事实来源。
+  8. `.sessions/<session_id>/summary.md` 只表示当前会话 compact summary，不得当作长期事实来源。
   9. compact 只能缩减当前上下文窗口，不得替代长期记忆写入。
   10. memory candidate 写入必须遵守确认规则，不得把模型推测直接写成长期事实。
 
@@ -115,22 +118,31 @@ last_updated: "2026-05-31"
   - 不直接回答用户知识问题。
   - 不把 Agent memory 写入 SQLite `qa_cards` 表。
 
-- **Session Manager 职责**:
-  - 读取和更新 `.session/current.md`。
-  - 保存当前任务目标、已确认决策、开放问题和下一步。
-  - 为 turn-start memory 选择提供当前任务状态。
-  - 不把 session summary 当作长期记忆。
-  - 不把 session summary 作为 Q&A 回答来源。
+- **Session Transcript 职责**:
+  - 将 user message、assistant message、assistant tool call message 和 tool result message 追加写入 `.sessions/<session_id>/transcript.jsonl`。
+  - CLI 重启时从 transcript 恢复 runtime `messages[]`。
+  - transcript 只服务当前聊天上下文恢复，不作为 Q&A 知识来源。
+
+- **Session Metadata 职责**:
+  - 读写 `.sessions/<session_id>/metadata.json`。
+  - 记录 session_id、cwd、model、created_at、updated_at、message_count、event_count、summary_status、summary_attempts 和 last_restore_mode。
+  - 不保存 API key、secret、完整 headers 或非恢复必需 payload。
+
+- **Session Restore / Summarizer 职责**:
+  - 当 transcript 未超过预算时原样恢复 `messages[]`。
+  - 当 transcript 超过预算时，调用 summarizer 生成 `.sessions/<session_id>/summary.md`。
+  - summarizer 最多重试 3 次。
+  - summarizer 失败时使用 first N messages + recovery notice + recent N messages 降级恢复。
 
 - **Context Compactor 职责**:
   - 识别过大的 tool result 或旧上下文。
-  - 将原始大输出写入 `.session/artifacts/`。
+  - 将原始大输出写入 `.sessions/<session_id>/artifacts/`。
   - 在上下文中保留 compact record，包括 `artifact_path`、`summary`、`relevance` 和 `must_keep`。
   - compact 失败时保留原始上下文或降级为不压缩。
   - 不删除可回读 artifact，除非用户明确要求清理。
 
 - **Memory Extractor 职责**:
-  - 在 turn 结束后从 recent dialogue、tool result summaries、session summary 和 memory index 中提取 memory candidates。
+  - 在 turn 结束后从 user input、final answer、recent messages、tool result summaries 和 memory index 中提取 memory candidates。
   - 输出结构化候选，不直接绕过写入规则。
   - 只提取稳定偏好、明确约束、项目事实、长期反馈和可复用引用。
   - 不提取临时闲聊、敏感信息、模型猜测或已经过期的任务状态作为长期 memory。
@@ -169,7 +181,7 @@ last_updated: "2026-05-31"
   - 作为 Agent 可执行动作的唯一入口。
   - 校验工具输入。
   - 调用 SQLite Store 完成保存、检索、读取和列出最近卡片。
-  - 调用 Memory Manager、Session Manager 和 Context Compactor 完成 Agent memory、session memory 和 compact artifact 相关操作。
+  - 调用 Memory Manager 和 Context Compactor 完成 Agent memory 和 compact artifact 相关操作。
   - 将成功、失败和未找到结果统一转换为结构化 tool result。
 
 - **Services / Repositories 职责**:
@@ -178,14 +190,19 @@ last_updated: "2026-05-31"
   - `SQLiteStore` 不调用 LLM，不组织最终自然语言回答。
   - `MemoryStore` 负责 `.memory/*.md` 的读写、frontmatter 解析和内容校验。
   - `MemoryIndex` 负责 `.memory/MEMORY.md` 的读取、校验和更新。
-  - `SessionStore` 负责 `.session/current.md` 和 `.session/artifacts/` 的读写。
+  - `SessionTranscript` 负责 `.sessions/<session_id>/transcript.jsonl` 的追加和读取。
+  - `SessionMetadata` 负责 `.sessions/<session_id>/metadata.json` 的读写。
+  - `SessionRestore` 负责从 transcript / summary 恢复 runtime `messages[]`。
+  - `SessionSummarizer` 负责长 transcript 的 summary 生成和失败降级。
 
 - **Storage / External API 职责**:
   - SQLite `qa_cards` 是第一版 Q&A 知识库的唯一长期记忆来源。
   - `.memory/*.md` 是 Agent 长期工作记忆来源。
   - `.memory/MEMORY.md` 是 Agent memory index，只保存 name、type、description 和 path。
-  - `.session/current.md` 是当前任务状态来源，不是长期事实来源。
-  - `.session/artifacts/` 保存 compact 后可回读的大输出，不是长期事实来源。
+  - `.sessions/<session_id>/transcript.jsonl` 是 runtime `messages[]` 的可恢复持久化记录。
+  - `.sessions/<session_id>/summary.md` 是长 transcript compact 后的恢复摘要，不是长期事实来源。
+  - `.sessions/<session_id>/metadata.json` 是 session 管理索引，不参与 Q&A 回答。
+  - `.sessions/<session_id>/artifacts/` 保存 compact 后可回读的大输出，不是长期事实来源。
   - DeepSeek 是第一版 LLM 服务。
   - 第一版不引入向量库、外部知识库或后台任务。
 
@@ -216,9 +233,9 @@ last_updated: "2026-05-31"
   2. LLM 输出不得被视为已持久化事实。
   3. Tools 不得绕过 SQLite Store 直接拼接外部副作用。
   4. SQLite Store 不得调用 LLM。
-  5. Agent Loop 不得直接读写 `.memory/` 或 `.session/`。
+  5. Agent Loop 不得直接操作 SQLite。
   6. `.memory/*.md` 不得作为 Q&A 知识库来源。
-  7. `.session/current.md` 不得作为长期事实来源。
+  7. `.sessions/<session_id>/summary.md` 不得作为长期事实来源。
   8. 未在本文档声明的核心依赖不得擅自引入。
 
 - **核心文件 / 目录**:
@@ -238,7 +255,10 @@ last_updated: "2026-05-31"
 | `src/personal_knowledge_agent/tools.py` | 四个知识库工具 |
 | `src/personal_knowledge_agent/memory_store.py` | 读写 `.memory/*.md` 长期 Agent memory |
 | `src/personal_knowledge_agent/memory_index.py` | 读写 `.memory/MEMORY.md` 记忆索引 |
-| `src/personal_knowledge_agent/session_store.py` | 读写 `.session/current.md` 和 `.session/artifacts/` |
+| `src/personal_knowledge_agent/session_transcript.py` | 追加和读取 `.sessions/<session_id>/transcript.jsonl` |
+| `src/personal_knowledge_agent/session_metadata.py` | 读写 `.sessions/<session_id>/metadata.json` |
+| `src/personal_knowledge_agent/session_restore.py` | 从 transcript 或 summary 恢复 runtime `messages[]` |
+| `src/personal_knowledge_agent/session_summarizer.py` | 长 transcript 自动总结和失败降级 |
 | `src/personal_knowledge_agent/context_compactor.py` | 大工具结果落盘和 compact record 生成 |
 | `src/personal_knowledge_agent/memory_extractor.py` | 生成 memory candidates |
 | `src/personal_knowledge_agent/schemas.py` | 轻量数据契约 |
@@ -246,8 +266,10 @@ last_updated: "2026-05-31"
 | `.knowledge/knowledge.db` | 本地知识库数据库文件 |
 | `.memory/MEMORY.md` | 用户可见 Agent memory 索引 |
 | `.memory/*.md` | 用户可见 Agent 长期记忆文档 |
-| `.session/current.md` | 当前任务状态摘要 |
-| `.session/artifacts/` | compact 后可回读的大输出 artifact |
+| `.sessions/<session_id>/transcript.jsonl` | runtime `messages[]` 的可恢复持久化记录 |
+| `.sessions/<session_id>/summary.md` | 长 transcript compact 后的恢复摘要 |
+| `.sessions/<session_id>/metadata.json` | session 管理索引 |
+| `.sessions/<session_id>/artifacts/` | compact 后可回读的大输出 artifact |
 
 ---
 
@@ -263,7 +285,6 @@ last_updated: "2026-05-31"
 | `list_recent_cards` | 列出最近保存卡片 | 用户要求查看最近记录或保存后确认时 | 否 | 否 |
 | `list_memory_index` | 列出 Agent memory 索引 | turn-start 或模型需要了解可用记忆时 | 否 | 否 |
 | `read_memory` | 读取指定 Agent memory 全文 | 当前请求需要某条长期记忆时 | 否 | 否 |
-| `update_session_memory` | 更新当前 session memory | turn-end 或 compact 后 | 是 | 否 |
 | `compact_context_artifact` | 将大工具结果落盘并返回 compact record | tool result 超过阈值或显式 compact 时 | 是 | 否 |
 | `propose_memory_candidate` | 提交长期 memory 候选 | turn-end 提取到可复用记忆时 | 是 | 视类型而定 |
 
@@ -573,55 +594,10 @@ last_updated: "2026-05-31"
 - **失败处理**:
   name 为空时返回结构化错误。找不到 memory 时返回 `ok: false`、`error_code: "not_found"`。frontmatter 缺少必填字段或 type 非法时返回 `ok: false`、`error_code: "invalid_memory"`。
 
-#### `update_session_memory`
-
-- **职责**:
-  更新 `.session/current.md`，保存当前任务目标、已确认决策、开放问题和下一步。session memory 用于跨 compact 延续当前任务，不是长期事实来源。
-
-- **输入**:
-
-```json
-{
-  "current_goal": "当前任务目标",
-  "confirmed_decisions": ["已确认决策"],
-  "open_questions": ["开放问题"],
-  "next_steps": ["下一步"]
-}
-```
-
-- **输出**:
-
-```json
-{
-  "ok": true,
-  "path": ".session/current.md",
-  "updated_at": "ISO 8601 时间"
-}
-```
-
-- **可展示输入字段**:
-  - `current_goal`
-  - `confirmed_decisions`
-  - `open_questions`
-  - `next_steps`
-
-- **可展示输出字段**:
-  - `ok`
-  - `path`
-  - `updated_at`
-  - `error_code`
-  - `message`
-
-- **副作用**:
-  写入或覆盖 `.session/current.md`。
-
-- **失败处理**:
-  输入字段类型非法时返回结构化错误。写入失败时返回 `ok: false`、`error_code: "session_write_failed"` 和 `message`，不得影响 Q&A 工具执行。
-
 #### `compact_context_artifact`
 
 - **职责**:
-  将过大的 tool result 或上下文材料写入 `.session/artifacts/`，并返回 compact record。compact 只服务当前上下文窗口，不产生长期记忆。
+  将过大的 tool result 或上下文材料写入 `.sessions/<session_id>/artifacts/`，并返回 compact record。compact 只服务当前上下文窗口，不产生长期记忆。
 
 - **输入**:
 
@@ -642,7 +618,7 @@ last_updated: "2026-05-31"
 {
   "ok": true,
   "compact_record": {
-    "artifact_path": ".session/artifacts/run-123-tool-2.txt",
+    "artifact_path": ".sessions/<session_id>/artifacts/run-123-tool-2.txt",
     "summary": "摘要",
     "relevance": "相关性说明",
     "must_keep": ["必须保留的关键信息"]
@@ -667,7 +643,7 @@ last_updated: "2026-05-31"
   - `message`
 
 - **副作用**:
-  写入 `.session/artifacts/`。
+  写入 `.sessions/<session_id>/artifacts/`。
 
 - **失败处理**:
   content 为空或写入失败时返回结构化错误。artifact 落盘失败时 Agent 应降级为不 compact 或保留原始 tool result，不得丢失当前回答所需证据。
@@ -726,7 +702,7 @@ last_updated: "2026-05-31"
   字段缺失、type 非法、候选与已有 memory 冲突或 confidence 过低时返回 `ok: false` 或 `status: "pending_confirmation"`。不得在冲突时自动覆盖已有 memory。
 
 - **写入规则**:
-  1. `session` 不通过本工具写入长期 memory，应由 `update_session_memory` 覆盖 `.session/current.md`。
+  1. session transcript / summary 不通过本工具写入长期 memory。
   2. `reference` 可自动写入，但只写路径、用途和入口说明，不复制大内容。
   3. `project` 仅在来源是用户明确决策或项目文档时可自动写入。
   4. `user` 默认需要确认，除非用户明确说“记住”“以后”“每次”等长期偏好表达。
@@ -739,12 +715,12 @@ last_updated: "2026-05-31"
 
 - **运行时上下文来源**:
   1. 用户当前输入。
-  2. LLM 当前轮输出。
-  3. 工具返回的结构化结果。
-  4. Prompt Builder 生成的 system prompt。
-  5. `.memory/MEMORY.md` memory index。
-  6. 按需读取的少量 `.memory/*.md`。
-  7. `.session/current.md` 当前任务摘要。
+  2. runtime `messages[]` 中的历史 user / assistant / tool messages。
+  3. Prompt Builder 生成的 system prompt。
+  4. `.memory/MEMORY.md` memory index。
+  5. 按需读取的少量 `.memory/*.md`。
+  6. 从 `.sessions/<session_id>/transcript.jsonl` 恢复的 messages。
+  7. 从 `.sessions/<session_id>/summary.md` 构造的 summary message。
   8. compact record，包括 `artifact_path`、`summary`、`relevance` 和 `must_keep`。
   9. `.env` 和环境变量提供的运行配置。
 
@@ -759,9 +735,10 @@ last_updated: "2026-05-31"
   4. DeepSeek 响应中未保存到 SQLite 的内容。
   5. `.env` 中的运行配置。
   6. Agent run 事件和 JSONL 日志。
-  7. `.session/current.md` 中的当前任务状态。
-  8. `.session/artifacts/` 中未整理为长期 memory 的原始大输出。
-  9. compact record 本身。
+  7. `.sessions/<session_id>/summary.md` 中的会话 compact summary。
+  8. `.sessions/<session_id>/transcript.jsonl` 中的历史 messages。
+  9. `.sessions/<session_id>/artifacts/` 中未整理为长期 memory 的原始大输出。
+  10. compact record 本身。
 
 - **运行 trace 边界**:
   1. 第一版不把运行 trace 写入 SQLite。
@@ -776,27 +753,30 @@ last_updated: "2026-05-31"
   4. 每轮不得默认注入所有 `.memory/*.md` 全文，只能按需读取少量相关 memory。
   5. Agent memory 写入必须保留来源类型和可追溯说明。
 
-- **Session memory 边界**:
-  1. `.session/current.md` 保存当前任务目标、已确认决策、开放问题和下一步。
-  2. `.session/current.md` 用于处理“继续”“按刚才的来”等依赖当前任务状态的输入。
-  3. `.session/current.md` 可以被自动更新和覆盖。
-  4. `.session/current.md` 不得作为长期事实来源。
-  5. `.session/current.md` 不得作为 Q&A 回答来源。
+- **Session / transcript 边界**:
+  1. runtime `messages[]` 是当前聊天上下文本体。
+  2. `.sessions/<session_id>/transcript.jsonl` 是 runtime `messages[]` 的可恢复持久化记录。
+  3. `.sessions/<session_id>/summary.md` 是长 transcript compact 后的恢复摘要。
+  4. `.sessions/<session_id>/metadata.json` 是 session 管理索引。
+  5. `.sessions/<session_id>/summary.md` 和 transcript 不得作为长期事实来源。
+  6. `.sessions/<session_id>/summary.md` 和 transcript 不得作为 Q&A 回答来源。
+  7. `.logs/agent.log` 只做运行 trace，不参与 messages 恢复。
 
 - **配置边界**:
   1. `.env` 只保存运行配置，不是长期知识来源。
   2. `DEEPSEEK_API_KEY` 不得进入 messages、tool result、SQLite 或日志。
-  3. `.env`、`.knowledge/`、`.session/` 和本地 `.memory/` 内容应通过 `.git/info/exclude` 在本地忽略，不要求提交仓库级 `.gitignore`。
+  3. `.env`、`.knowledge/`、`.sessions/` 和本地 `.memory/` 内容应通过 `.git/info/exclude` 在本地忽略，不要求提交仓库级 `.gitignore`。
 
 - **上下文裁剪规则**:
-  1. 第一版优先保留用户当前输入、最近一次 LLM tool call 和 tool result。
+  1. 第一版优先保留用户当前输入、最近 messages、最近一次 LLM tool call 和 tool result。
   2. 回答必须保留用于引用来源的 card_id、question、source_type 和 created_at。
   3. 不把历史对话当作可靠长期记忆。
   4. turn-start 指收到用户输入后、第一次调用主 LLM 前的上下文准备阶段。
-  5. turn-start 选择相关 memory 时，不得只依赖 user_input，还必须结合 `.session/current.md` 中的 current_goal、open_questions、confirmed_decisions 和 next_steps。
-  6. 当单个 tool result 或本轮累计工具结果超过阈值时，应优先将原始内容写入 `.session/artifacts/`，并用 compact record 替换上下文中的大输出。
+  5. turn-start 从 `.sessions/default/transcript.jsonl` 恢复 runtime `messages[]`，短会话原样恢复，长会话用 summary + recent messages 恢复。
+  6. 当单个 tool result 或本轮累计工具结果超过阈值时，应优先将原始内容写入 `.sessions/<session_id>/artifacts/`，并用 compact record 替换上下文中的大输出。
   7. compact record 必须保留 artifact_path、summary、relevance 和 must_keep。
   8. compact 不得删除回答所需证据，不得替代长期 memory 写入。
+  9. summarizer 最多重试 3 次；失败后使用 first N messages + recovery notice + recent N messages 恢复，不阻断 CLI。
 
 ---
 
@@ -906,32 +886,33 @@ pka
 
 ### 5.6 Turn-start 上下文准备
 
-1. Agent Loop 收到用户当前输入。
-2. Memory Manager 读取 `.memory/MEMORY.md`，得到 memory index。
-3. Session Manager 读取 `.session/current.md`，得到当前任务状态；文件不存在时使用空 session summary。
-4. Agent Loop 使用 user_input、session current_goal、confirmed_decisions、open_questions、next_steps 和 memory index 生成 retrieval query。
-5. Memory Manager 根据 retrieval query 和 memory index 选择最多 N 条相关 memory。
-6. Memory Manager 读取所选 `.memory/*.md` 全文。
-7. Prompt Builder 将 base system prompt、memory index 摘要、selected memories 和 session summary 组合成本轮 system/context prompt。
-8. Agent Loop 继续执行原有 LLM + tool loop。
+1. CLI Runtime 选择或创建默认 session：`.sessions/default/`。
+2. Session Restore 读取 `metadata.json` 和 `transcript.jsonl`。
+3. 如果 transcript 未超过预算，原样恢复 runtime `messages[]`。
+4. 如果 transcript 超过预算，优先使用 summarizer 生成或更新 `summary.md`，并用 summary message + recent messages 恢复。
+5. 如果 summarizer 在最多 3 次重试后仍失败，使用 first N messages + recovery notice + recent N messages 降级恢复。
+6. Memory Manager 读取 `.memory/MEMORY.md`，得到 memory index。
+7. Memory Manager 根据用户当前输入、recent messages 和 memory index 选择最多 N 条相关 memory。
+8. Prompt Builder 将 base system prompt、memory index 摘要和 selected memories 组合成本轮 system prompt。
+9. Agent Loop 接收 runtime `messages[]` 并继续执行 LLM + tool loop。
 
 - **成功条件**:
-  本轮上下文包含用户当前输入、基础规则、可用 memory index、相关 memory 和当前 session summary，且未默认注入全部 memory 全文。
+  本轮上下文包含从 transcript / summary 恢复的 messages、用户当前输入、基础规则、可用 memory index 和相关 memory，且未默认注入全部 memory 全文。
 
 - **失败条件**:
-  memory index 格式非法、memory 文件读取失败或 session 文件读取失败。
+  metadata / transcript 读取失败、summary 生成失败、memory index 格式非法或 memory 文件读取失败。
 
 - **用户可见反馈**:
-  memory 或 session 读取失败时，Agent 可以降级为空 memory / 空 session 继续处理，并在 CLI 事件中展示简短错误；不得影响 Q&A 主流程的工具检索和回答。
+  session 恢复失败时使用空 messages 或 first+recent 降级恢复，并向 stderr 或 CLI 事件提示一次；不得影响 Q&A 主流程的工具检索和回答。
 
 ### 5.7 上下文压缩
 
 1. Agent Loop 或 Context Compactor 检查 compact 触发条件。
 2. 当单个 tool result 超过阈值、本轮累计 tool result 过大，或用户显式要求总结 / 进入下一阶段时，触发 compact。
-3. Context Compactor 将原始大输出写入 `.session/artifacts/`。
+3. Context Compactor 将原始大输出写入 `.sessions/<session_id>/artifacts/`。
 4. Context Compactor 生成 compact record，至少包含 artifact_path、summary、relevance 和 must_keep。
 5. Agent Loop 用 compact record 替换上下文中的大输出，或在 trace 中记录 compact record。
-6. 必要时 Session Manager 更新 `.session/current.md`，保存当前任务目标、已确认决策、开放问题和下一步。
+6. compact 后继续将可恢复 message 追加写入 `transcript.jsonl`，必要时更新 `summary.md` 和 `metadata.json`。
 
 - **成功条件**:
   大输出可通过 artifact_path 回读，当前上下文只保留高相关摘要和关键事实。
@@ -945,7 +926,7 @@ pka
 ### 5.8 Turn-end memory candidate 提取
 
 1. Agent Loop 完成本轮最终回答。
-2. Memory Extractor 收集 recent dialogue、tool result summaries、session summary 和 memory index。
+2. Memory Extractor 收集 user input、final answer、recent messages、tool result summaries 和 memory index。
 3. Memory Extractor 提取结构化 memory candidates。
 4. Memory Manager 对候选做去重、字段校验和冲突检测。
 5. Memory Manager 按写入规则处理候选：自动写入、保存为待确认，或拒绝写入。
@@ -1056,39 +1037,81 @@ source_ref: "conversation:2026-05-31"
 | `source_ref` | `TEXT` | 否 | 来源引用，例如文档路径、会话日期或外部入口 |
 | 正文 | `TEXT` | 是 | memory 的可读内容 |
 
-### 6.5 `.session/current.md`
+### 6.5 `.sessions/<session_id>/transcript.jsonl`
 
-`.session/current.md` 保存当前任务状态，可以自动更新和覆盖，不是长期事实来源。
+`transcript.jsonl` 是 runtime `messages[]` 的可恢复持久化记录，采用 append-only JSONL。
 
 格式：
 
-```markdown
-# Current Session
-
-## Current Goal
-设计本项目的 Agent memory 管理。
-
-## Confirmed Decisions
-- Q&A 知识库和 Agent memory 必须分开。
-- `.memory/*.md` 是用户可见的长期 Agent memory 来源。
-
-## Open Questions
-- memory candidate 的确认交互如何在 CLI 中展示。
-
-## Next Steps
-- 实现 memory index 读取。
+```json
+{"event_id":1,"type":"message","created_at":"2026-05-31T10:00:00Z","message":{"role":"user","content":"你是谁"}}
 ```
 
 字段约束：
 
 | 字段 | 类型 | 是否必填 | 说明 |
 |---|---|---|---|
-| `current_goal` | `TEXT` | 否 | 当前任务目标 |
-| `confirmed_decisions` | `LIST` | 否 | 已确认决策 |
-| `open_questions` | `LIST` | 否 | 尚未解决的问题 |
-| `next_steps` | `LIST` | 否 | 下一步行动 |
+| `event_id` | `INTEGER` | 是 | session 内递增事件 ID |
+| `type` | `TEXT` | 是 | 第一版固定支持 `message` |
+| `created_at` | `TEXT` | 是 | ISO 8601 时间 |
+| `message` | `OBJECT` | 是 | 可恢复到 LLM `messages[]` 的消息 |
 
-### 6.6 Compact Record
+### 6.6 `.sessions/<session_id>/metadata.json`
+
+`metadata.json` 是 session 管理索引，不是上下文本体。
+
+格式：
+
+```json
+{
+  "session_id": "default",
+  "created_at": "2026-05-31T10:00:00Z",
+  "updated_at": "2026-05-31T10:30:00Z",
+  "cwd": "/path/to/project",
+  "model": "deepseek-v4-flash",
+  "transcript_path": ".sessions/default/transcript.jsonl",
+  "summary_path": ".sessions/default/summary.md",
+  "artifacts_dir": ".sessions/default/artifacts",
+  "event_count": 12,
+  "message_count": 12,
+  "compacted_until_event_id": 0,
+  "summary_status": "none / valid / failed",
+  "summary_attempts": 0,
+  "last_restore_mode": "full / summary_plus_recent / first_and_recent"
+}
+```
+
+### 6.7 `.sessions/<session_id>/summary.md`
+
+`summary.md` 是长 transcript compact 后的恢复摘要，不是长期事实来源。
+
+格式：
+
+```markdown
+# Session Summary
+
+## Current Objective
+当前会话正在围绕本地个人 Q&A Agent 的 session transcript 和 compact 恢复设计进行。
+
+## User Constraints
+- transcript 和 `.logs/agent.log` 必须分离。
+- summarizer 失败不能阻断 CLI。
+
+## Important Context
+- runtime `messages[]` 是当前聊天上下文本体。
+- transcript 用于重启恢复 messages。
+
+## Completed Work
+- 已确认废弃 `.session/current.md` 任务看板设计。
+
+## Open Threads
+- 实现 transcript 恢复和 summary 降级。
+
+## Next Best Step
+实现 SessionTranscript 和 SessionMetadata。
+```
+
+### 6.8 Compact Record
 
 compact record 是上下文压缩后的结构化摘要，必须能指回原始 artifact。
 
@@ -1096,7 +1119,7 @@ compact record 是上下文压缩后的结构化摘要，必须能指回原始 a
 
 ```json
 {
-  "artifact_path": ".session/artifacts/run-123-tool-2.txt",
+  "artifact_path": ".sessions/<session_id>/artifacts/run-123-tool-2.txt",
   "summary": "读取了 Agent 设计文档，确认长期知识不能来自未落库对话。",
   "relevance": "当前正在设计 memory 管理，因此该约束必须保留。",
   "must_keep": ["Q&A 知识库和 Agent memory 分开"]
@@ -1112,7 +1135,7 @@ compact record 是上下文压缩后的结构化摘要，必须能指回原始 a
 | `relevance` | `TEXT` | 是 | 与当前任务的关系 |
 | `must_keep` | `LIST` | 是 | 必须保留的关键信息 |
 
-### 6.7 Memory Candidate
+### 6.9 Memory Candidate
 
 memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不是已写入记忆，只有工具返回 `status: "written"` 后才表示长期 memory 已保存。
 
@@ -1169,9 +1192,10 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 | Memory index 非法 | `MEMORY.md` 表格缺少必填字段或字段非法 | 不注入 memory index，继续 Q&A 主流程 | 说明 memory index 格式非法 |
 | Memory frontmatter 非法 | `.memory/*.md` 缺少 name、type、description 或 type 非法 | 跳过该 memory，不注入本轮上下文 | 说明 memory 文件格式非法 |
 | Memory 读取失败 | memory 文件不存在或无法读取 | 不注入该 memory，继续 Q&A 主流程 | 说明 memory 读取失败 |
-| Session summary 读取失败 | `.session/current.md` 无法读取或格式非法 | 使用空 session summary 继续运行 | 说明 session 状态未加载 |
-| Session summary 写入失败 | `.session/current.md` 无法写入 | 不影响最终回答，不声称 session 已更新 | 说明 session 状态未更新 |
-| Artifact 落盘失败 | `.session/artifacts/` 无法写入 | 降级为不 compact 或保留原始 tool result | 说明 compact artifact 未保存 |
+| Transcript 读取失败 | `.sessions/<session_id>/transcript.jsonl` 无法读取或格式非法 | 使用空 messages 继续运行 | 说明 session transcript 未加载 |
+| Metadata 写入失败 | `.sessions/<session_id>/metadata.json` 无法写入 | 不影响最终回答，不声称 metadata 已更新 | 说明 session metadata 未更新 |
+| Summary 生成失败 | summarizer 最多重试后仍失败 | 使用 first N + recovery notice + recent N 恢复 | 说明 summary 降级恢复 |
+| Artifact 落盘失败 | `.sessions/<session_id>/artifacts/` 无法写入 | 降级为不 compact 或保留原始 tool result | 说明 compact artifact 未保存 |
 | Compact record 非法 | 缺少 artifact_path、summary、relevance 或 must_keep | 不使用该 compact record | 说明 compact 失败 |
 | Memory candidate 冲突 | 候选与已有 memory 含义冲突 | 不自动覆盖，标记为待确认 | 展示冲突并要求用户确认 |
 | Memory candidate 需要确认 | type 为 user / feedback 或来源不足 | 不自动写入长期 memory | 展示候选并说明需要确认 |
@@ -1183,7 +1207,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   3. 未落库内容不得作为长期记忆引用。
   4. 不得为了回答完整而引入无来源外部知识。
   5. Agent memory 失败不得阻断 Q&A 保存、检索和回答主流程。
-  6. Session memory 失败不得被解释为长期事实缺失。
+  6. Session transcript / summary 失败不得被解释为长期事实缺失。
   7. Compact 失败不得丢失回答所需证据。
   8. Memory candidate 未写入前不得声称 Agent 已经记住。
 
@@ -1201,13 +1225,19 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   2. 不得把 `.env` 内容打印到日志。
   3. 不得把 DeepSeek key 写入文档、测试快照或数据库。
 
+- **Session 恢复降级原则**:
+  1. 短 transcript 原样恢复为 runtime `messages[]`。
+  2. 长 transcript 优先生成 `summary.md`，再用 summary message + recent messages 恢复。
+  3. summarizer 最多重试 3 次。
+  4. summarizer 失败后使用 first N messages + recovery notice + recent N messages 恢复。
+  5. summary 失败不得阻断 CLI 启动或 Q&A 主流程。
+
 - **Memory 写入降级原则**:
-  1. `session` 自动写入 `.session/current.md`，可覆盖，不进入长期 memory。
-  2. `reference` 可自动写入长期 memory，但只写路径、用途和入口说明。
-  3. `project` 仅在来源是用户明确决策或项目文档时可自动写入。
-  4. `user` 默认需要确认，除非用户明确要求“记住”“以后”“每次”。
-  5. `feedback` 默认展示候选，确认后写入。
-  6. 模型推测、临时讨论、敏感信息和过期任务状态不得自动写入长期 memory。
+  1. `reference` 可自动写入长期 memory，但只写路径、用途和入口说明。
+  2. `project` 仅在来源是用户明确决策或项目文档时可自动写入。
+  3. `user` 默认需要确认，除非用户明确要求“记住”“以后”“每次”。
+  4. `feedback` 默认展示候选，确认后写入。
+  5. 模型推测、临时讨论、敏感信息和过期任务状态不得自动写入长期 memory。
 
 ---
 
@@ -1226,12 +1256,15 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   10. `MemoryIndex` 对缺少必填列或非法 type 返回结构化错误。
   11. `MemoryStore` 能读取合法 `.memory/*.md`。
   12. `MemoryStore` 对 frontmatter 缺失或非法 type 返回结构化错误。
-  13. `SessionStore` 能创建、读取和覆盖 `.session/current.md`。
-  14. `SessionStore` 能将 artifact 写入 `.session/artifacts/`。
-  15. `ContextCompactor` 对超过阈值的大输出生成 compact record。
-  16. compact record 必须包含 artifact_path、summary、relevance 和 must_keep。
-  17. `MemoryExtractor` 只生成候选，不直接写入长期 memory。
-  18. user / feedback candidate 默认不自动写入长期 memory。
+  13. `SessionTranscript` 能追加和读取 `.sessions/<session_id>/transcript.jsonl`。
+  14. `SessionMetadata` 能创建、读取和更新 `.sessions/<session_id>/metadata.json`。
+  15. `SessionRestore` 能短 transcript 原样恢复 messages。
+  16. `SessionRestore` 能长 transcript 使用 summary + recent messages 恢复。
+  17. summarizer 失败时能使用 first N + recovery notice + recent N 降级恢复。
+  18. `ContextCompactor` 对超过阈值的大输出生成 compact record。
+  19. compact record 必须包含 artifact_path、summary、relevance 和 must_keep。
+  20. `MemoryExtractor` 只生成候选，不直接写入长期 memory。
+  21. user / feedback candidate 默认不自动写入长期 memory。
 
 - **集成测试**:
   1. Agent Loop 能接收 fake LLM 的 tool call，执行工具并回填 tool result。
@@ -1244,12 +1277,13 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   8. Async JSONL Logger 完整记录 `user_input`。
   9. Async JSONL Logger 使用后台线程异步写入，不阻塞主流程。
   10. Async JSONL Logger 在队列满和写入失败时按降级策略处理。
-  11. turn-start 能读取 memory index 和 session summary。
-  12. turn-start memory 选择必须结合 user_input 和 session summary。
-  13. Prompt Builder 能注入 memory index、selected memories 和 session summary。
-  14. 大 tool result 能落盘并在 trace 中保留 compact record。
-  15. turn-end 能更新 session summary。
-  16. turn-end 能生成 memory candidates 并展示待确认候选。
+  11. CLI Runtime 启动时能创建或恢复 `.sessions/default`。
+  12. Agent Loop 能基于 runtime `messages[]` 连续运行多轮用户输入。
+  13. turn-start 能读取 memory index 并按 user_input / recent messages 选择相关 memory。
+  14. Prompt Builder 能注入 memory index 和 selected memories。
+  15. 大 tool result 能落盘到 session artifacts 并在 trace / transcript 中保留 compact record。
+  16. turn-end 能把可恢复 message 追加到 transcript。
+  17. turn-end 能生成 memory candidates 并展示待确认候选。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
@@ -1260,7 +1294,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   6. Tool event 只包含工具契约声明的可展示字段。
   7. 与新事件流重复的旧 logging 成功路径埋点应删除或收缩。
   8. Q&A 检索只使用 `qa_cards`，不得混入 `.memory/*.md`。
-  9. `.session/current.md` 不得作为长期事实来源。
+  9. `.sessions/<session_id>/summary.md` 和 `transcript.jsonl` 不得作为长期事实来源。
   10. compact artifact 不得作为 Q&A 回答来源。
   11. Memory candidate 未写入时不得声称已经记住。
   12. user / feedback candidate 在未确认前不得自动写入 `.memory/*.md`。
@@ -1279,9 +1313,10 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   4. DeepSeek 只出现在薄 LLM Client 中。
   5. Q&A 知识库和 Agent memory 保持分离。
   6. `.memory/*.md` 是用户可见的 Agent 长期工作记忆来源。
-  7. `.session/current.md` 只保存当前任务状态。
-  8. compact 只缩减上下文窗口，不替代长期 memory。
-  9. 第一版不包含 Wiki、文件监听、周报、多 Agent、向量库和后台任务。
+  7. `.sessions/<session_id>/transcript.jsonl` 能恢复 runtime `messages[]`。
+  8. `.sessions/<session_id>/summary.md` 只保存长 transcript 的 compact summary。
+  9. compact 只缩减上下文窗口，不替代长期 memory。
+  10. 第一版不包含 Wiki、文件监听、周报、多 Agent、向量库和后台任务。
 
 ---
 
@@ -1291,3 +1326,4 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 |---|---|---|---|
 | `2026-05-30` | 新增本地个人 Q&A 知识库 Agent 开发上下文 | 锁定第一版 Agent 设计边界和实现验收依据 | `TBD` |
 | `2026-05-31` | 补充 Agent memory、session memory、context compact 和 memory candidate 设计边界 | 为后续实现 Claude Code 风格记忆管理先锁定文档契约 | `TBD` |
+| `2026-05-31` | 将 session 设计从 `.session/current.md` 调整为 `.sessions/<session_id>/transcript.jsonl`、`summary.md` 和 `metadata.json` | 对齐 messages[] + transcript + compact summary 的聊天上下文设计 | `TBD` |
