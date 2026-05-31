@@ -69,6 +69,18 @@ class CompactRecord:
 
 
 @dataclass(frozen=True)
+class MemoryCandidate:
+    name: str
+    type: str
+    description: str
+    content: str
+    source_type: str
+    source_ref: str | None
+    confidence: str
+    write_policy: str
+
+
+@dataclass(frozen=True)
 class ToolCall:
     id: str
     name: str
