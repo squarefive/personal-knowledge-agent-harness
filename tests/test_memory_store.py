@@ -123,3 +123,19 @@ def test_read_memory_document_rejects_missing_required_field(tmp_path):
 
     with pytest.raises(ValueError, match="description"):
         MemoryStore(tmp_path).read_path(".memory/broken.md")
+
+
+def test_read_memory_document_rejects_absolute_path(tmp_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="relative"):
+        MemoryStore(tmp_path).read_path(outside)
+
+
+def test_read_memory_document_rejects_path_traversal(tmp_path):
+    outside = tmp_path / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="under .memory"):
+        MemoryStore(tmp_path).read_path(".memory/../outside.md")

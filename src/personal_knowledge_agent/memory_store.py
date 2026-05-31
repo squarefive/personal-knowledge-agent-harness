@@ -41,8 +41,12 @@ class MemoryStore:
     def _resolve_memory_path(self, path: str | Path) -> Path:
         candidate = Path(path)
         if candidate.is_absolute():
-            return candidate
-        return self.root / candidate
+            raise ValueError("memory path must be relative")
+        memory_root = (self.root / ".memory").resolve()
+        resolved = (self.root / candidate).resolve()
+        if not resolved.is_relative_to(memory_root):
+            raise ValueError("memory path must stay under .memory")
+        return resolved
 
 
 def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
