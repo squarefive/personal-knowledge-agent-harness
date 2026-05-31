@@ -1,6 +1,7 @@
 from personal_knowledge_agent.agent_loop import AgentLoop
 from personal_knowledge_agent.context_compactor import ContextCompactor
 from personal_knowledge_agent.memory_index import MemoryIndexStore
+from personal_knowledge_agent.memory_extractor import MemoryExtractor
 from personal_knowledge_agent.memory_store import MemoryStore
 from personal_knowledge_agent.schemas import LLMResponse, SessionSummary, ToolCall
 from personal_knowledge_agent.session_store import SessionStore
@@ -196,3 +197,29 @@ def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path
     assert record["summary"]
     assert record["relevance"]
     assert (tmp_path / record["artifact_path"]).exists()
+
+
+def test_agent_loop_updates_session_and_emits_memory_candidates(tmp_path):
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(knowledge_tools)
+    session_store = SessionStore(tmp_path)
+    events = []
+    fake_llm = FakeLLM([LLMResponse(text="好的。")])
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        session_store=session_store,
+        memory_extractor=MemoryExtractor(),
+        event_sink=events.append,
+    )
+
+    loop.run("记住：以后回答我先给结论。")
+
+    event_types = [event.event_type for event in events]
+    assert "session_memory_updated" in event_types
+    assert "memory_candidates_generated" in event_types
+    assert session_store.load_current().current_goal == "记住：以后回答我先给结论。"
+    candidates_event = next(event for event in events if event.event_type == "memory_candidates_generated")
+    assert candidates_event.payload["candidates"][0]["type"] == "user"
+    assert candidates_event.payload["candidates"][0]["write_policy"] == "needs_confirmation"

@@ -13,6 +13,7 @@ from .context_compactor import ContextCompactor
 from .events import AgentEvent
 from .jsonl_logger import AsyncJsonlLogger
 from .llm_client import DeepSeekClient
+from .memory_extractor import MemoryExtractor
 from .memory_index import MemoryIndexStore
 from .memory_store import MemoryStore
 from .session_store import SessionStore
@@ -48,6 +49,7 @@ def create_agent(config: AgentConfig, event_sink: Callable[[AgentEvent], None] |
         memory_store=memory_store,
         session_store=session_store,
         context_compactor=ContextCompactor(session_store),
+        memory_extractor=MemoryExtractor(),
         event_sink=event_sink,
     )
 

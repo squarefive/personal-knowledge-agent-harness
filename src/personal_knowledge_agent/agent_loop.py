@@ -8,6 +8,7 @@ from typing import Any, Callable
 from .context_compactor import ContextCompactor
 from .events import AgentEvent, new_run_id
 from .llm_client import DeepSeekClient
+from .memory_extractor import MemoryExtractor
 from .memory_index import MemoryIndexStore
 from .memory_store import MemoryStore
 from .prompt_builder import build_system_prompt
@@ -30,6 +31,7 @@ class AgentLoop:
         memory_store: MemoryStore | None = None,
         session_store: SessionStore | None = None,
         context_compactor: ContextCompactor | None = None,
+        memory_extractor: MemoryExtractor | None = None,
         max_turns: int = 8,
         event_sink: EventSink | None = None,
     ):
@@ -40,6 +42,7 @@ class AgentLoop:
         self.memory_store = memory_store
         self.session_store = session_store
         self.context_compactor = context_compactor
+        self.memory_extractor = memory_extractor
         self.max_turns = max_turns
         self.event_sink = event_sink
 
@@ -85,6 +88,13 @@ class AgentLoop:
             if not response.tool_calls:
                 answer = response.text or ""
                 self._emit(run_id, "evidence_checked", status="completed", turn=turn)
+                self._finalize_turn(
+                    run_id=run_id,
+                    user_input=user_input,
+                    final_answer=answer,
+                    memory_index=memory_index,
+                    session_summary=session_summary,
+                )
                 self._emit(run_id, "final_answer_generated", answer=answer, turn=turn)
                 return answer
 
@@ -138,6 +148,13 @@ class AgentLoop:
 
         answer = "工具调用次数过多，已停止本轮处理。"
         self._emit(run_id, "error", stage="agent_loop", message=answer)
+        self._finalize_turn(
+            run_id=run_id,
+            user_input=user_input,
+            final_answer=answer,
+            memory_index=memory_index,
+            session_summary=session_summary,
+        )
         self._emit(run_id, "final_answer_generated", answer=answer)
         return answer
 
@@ -157,6 +174,60 @@ class AgentLoop:
             tool_name=tool_name,
             result_text=json.dumps(result, ensure_ascii=False),
         )
+
+    def _finalize_turn(
+        self,
+        *,
+        run_id: str,
+        user_input: str,
+        final_answer: str,
+        memory_index: MemoryIndex | None,
+        session_summary: SessionSummary | None,
+    ) -> None:
+        updated_session = self._update_session_summary(
+            user_input=user_input,
+            session_summary=session_summary,
+        )
+        if updated_session is not None:
+            self._emit(run_id, "session_memory_updated", session=asdict(updated_session))
+
+        if self.memory_extractor is None:
+            return
+        candidates = self.memory_extractor.extract(
+            user_input=user_input,
+            final_answer=final_answer,
+            memory_index=memory_index,
+            session_summary=updated_session or session_summary,
+        )
+        if candidates:
+            self._emit(
+                run_id,
+                "memory_candidates_generated",
+                candidates=[asdict(candidate) for candidate in candidates],
+            )
+
+    def _update_session_summary(
+        self,
+        *,
+        user_input: str,
+        session_summary: SessionSummary | None,
+    ) -> SessionSummary | None:
+        if self.session_store is None:
+            return None
+        existing = session_summary or SessionSummary()
+        current_goal = existing.current_goal or user_input.strip()
+        next_steps = existing.next_steps or [user_input.strip()]
+        updated = SessionSummary(
+            current_goal=current_goal,
+            confirmed_decisions=existing.confirmed_decisions,
+            open_questions=existing.open_questions,
+            next_steps=next_steps,
+        )
+        try:
+            self.session_store.write_current(updated)
+        except Exception:
+            return None
+        return updated
 
     def _prepare_turn_context(
         self,

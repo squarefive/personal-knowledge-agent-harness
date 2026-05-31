@@ -37,6 +37,12 @@ class CliRenderer:
             self._dump(payload.get("output", {}))
         elif event.event_type == "evidence_checked":
             self._write(f"[Evidence] {payload.get('status', 'completed')}")
+        elif event.event_type == "session_memory_updated":
+            self._section("Session Memory")
+            self._dump(payload.get("session", {}))
+        elif event.event_type == "memory_candidates_generated":
+            self._section("Memory Candidates")
+            self._dump(payload.get("candidates", []))
         elif event.event_type == "error":
             self._write(f"[Error] {payload.get('message', 'unknown error')}")
 
