@@ -57,3 +57,20 @@ def test_cli_renderer_does_not_truncate_final_answer():
 
     output = stream.getvalue()
     assert answer in output
+
+
+def test_cli_renderer_renders_memory_candidates():
+    stream = StringIO()
+    renderer = CliRenderer(stream=stream)
+
+    renderer.render(
+        AgentEvent(
+            run_id="run_1",
+            event_type="memory_candidates_generated",
+            payload={"candidates": [{"name": "user-preference", "type": "user"}]},
+        )
+    )
+
+    output = stream.getvalue()
+    assert "Memory Candidates" in output
+    assert '"name": "user-preference"' in output

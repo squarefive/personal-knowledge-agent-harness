@@ -3,13 +3,23 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
-from .schemas import QACard, SearchResult
+from .memory_index import MemoryIndexStore
+from .memory_store import MemoryStore
+from .schemas import QACard
 from .sqlite_store import SQLiteStore
 
 
 class KnowledgeTools:
-    def __init__(self, store: SQLiteStore):
+    def __init__(
+        self,
+        store: SQLiteStore,
+        *,
+        memory_index_store: MemoryIndexStore | None = None,
+        memory_store: MemoryStore | None = None,
+    ):
         self.store = store
+        self.memory_index_store = memory_index_store
+        self.memory_store = memory_store
 
     def save_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -58,6 +68,30 @@ class KnowledgeTools:
             return {"ok": True, "cards": [self._recent_payload(card) for card in cards]}
         except Exception as exc:
             return self._error("store_error", str(exc))
+
+    def list_memory_index(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.memory_index_store is None:
+            return self._error("memory_not_configured", "memory index store is not configured")
+        try:
+            limit = self._optional_limit(arguments, default=50)
+            index = self.memory_index_store.load()
+            return {"ok": True, "entries": [asdict(entry) for entry in index.entries[:limit]]}
+        except Exception as exc:
+            return self._error("invalid_memory_index", str(exc))
+
+    def read_memory(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.memory_index_store is None or self.memory_store is None:
+            return self._error("memory_not_configured", "memory store is not configured")
+        try:
+            name = self._required_text(arguments, "name")
+            index = self.memory_index_store.load()
+            entry = next((item for item in index.entries if item.name == name), None)
+            if entry is None:
+                return self._error("not_found", f"memory not found: {name}")
+            memory = self.memory_store.read_by_entry(entry)
+            return {"ok": True, "memory": asdict(memory)}
+        except Exception as exc:
+            return self._error("invalid_memory", str(exc))
 
     def definitions(self) -> list[dict[str, Any]]:
         return TOOL_DEFINITIONS
@@ -168,6 +202,29 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {"limit": {"type": "integer"}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_memory_index",
+            "description": "列出 Agent memory 索引。",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer"}},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_memory",
+            "description": "按 memory name 读取 Agent memory 全文。",
+            "parameters": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
             },
         },
     },

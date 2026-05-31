@@ -13,6 +13,8 @@ class ToolDispatcher:
             "search_qa_cards": tools.search_qa_cards,
             "read_qa_card": tools.read_qa_card,
             "list_recent_cards": tools.list_recent_cards,
+            "list_memory_index": tools.list_memory_index,
+            "read_memory": tools.read_memory,
         }
 
     def execute(self, tool_call: ToolCall) -> dict[str, Any]:
@@ -67,6 +69,8 @@ DISPLAY_INPUT_FIELDS: dict[str, tuple[str, ...]] = {
     "search_qa_cards": ("query", "limit"),
     "read_qa_card": ("card_id",),
     "list_recent_cards": ("limit",),
+    "list_memory_index": ("limit",),
+    "read_memory": ("name",),
 }
 
 ERROR_OUTPUT_FIELDS = ("ok", "error_code", "message")
@@ -106,6 +110,27 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "cards.keywords",
         "cards.source_type",
         "cards.created_at",
+        "error_code",
+        "message",
+    ),
+    "list_memory_index": (
+        "ok",
+        "entries.name",
+        "entries.type",
+        "entries.description",
+        "entries.path",
+        "error_code",
+        "message",
+    ),
+    "read_memory": (
+        "ok",
+        "memory.name",
+        "memory.type",
+        "memory.description",
+        "memory.path",
+        "memory.updated_at",
+        "memory.source_type",
+        "memory.content",
         "error_code",
         "message",
     ),
