@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .schemas import ToolCall
-from .tools import KnowledgeTools
+from ..schemas import ToolCall
+from .knowledge_tools import KnowledgeTools
 
 
 class ToolDispatcher:

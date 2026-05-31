@@ -1,6 +1,4 @@
-from personal_knowledge_agent.session_metadata import SessionMetadataStore
-from personal_knowledge_agent.session_restore import SessionRestore
-from personal_knowledge_agent.session_transcript import SessionTranscript
+from personal_knowledge_agent.session_memory import SessionMetadataStore, SessionRestore, SessionTranscript
 
 
 class FakeSummarizer:

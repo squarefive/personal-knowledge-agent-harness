@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .session_metadata import utc_now
+from .metadata import utc_now
 
 
 class SessionTranscript:

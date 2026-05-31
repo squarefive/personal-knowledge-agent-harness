@@ -5,7 +5,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .schemas import SessionMetadata
+from ..schemas import SessionMetadata
 
 
 def utc_now() -> str:

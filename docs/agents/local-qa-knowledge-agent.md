@@ -243,7 +243,16 @@ last_updated: "2026-05-31"
 | 路径 | 职责 |
 |---|---|
 | `pyproject.toml` | 声明项目依赖和 `pka` CLI script |
-| `src/personal_knowledge_agent/agent_loop.py` | Agent 最小循环 |
+| `src/personal_knowledge_agent/agent_loop/` | Agent 主循环和 turn 编排 |
+| `src/personal_knowledge_agent/agent_loop/loop.py` | Agent Loop 核心调用链 |
+| `src/personal_knowledge_agent/agent_loop/call_llm.py` | 单次 LLM 调用和对应事件 |
+| `src/personal_knowledge_agent/agent_loop/run_tool_call.py` | 单次 tool call、耗时、compact 和对应事件 |
+| `src/personal_knowledge_agent/agent_loop/finish_answer.py` | 最终回答收尾和最大轮次停止 |
+| `src/personal_knowledge_agent/agent_loop/format_llm_messages.py` | assistant/tool result 的 LLM API message 格式化 |
+| `src/personal_knowledge_agent/agent_loop/load_turn_context.py` | turn-start memory index 和相关 memory 加载 |
+| `src/personal_knowledge_agent/agent_loop/finalize_turn_memory.py` | turn-end memory candidate 提取 |
+| `src/personal_knowledge_agent/agent_loop/emit_agent_events.py` | Agent run 事件发射适配 |
+| `src/personal_knowledge_agent/agent_loop/record_runtime_messages.py` | runtime messages、transcript 和 metadata count 记录 |
 | `src/personal_knowledge_agent/events.py` | Agent run 结构化事件契约 |
 | `src/personal_knowledge_agent/cli_renderer.py` | CLI 实时事件渲染 |
 | `src/personal_knowledge_agent/jsonl_logger.py` | 异步 JSONL 开发日志 |
@@ -251,18 +260,22 @@ last_updated: "2026-05-31"
 | `src/personal_knowledge_agent/llm_client.py` | DeepSeek 薄客户端 |
 | `src/personal_knowledge_agent/config.py` | 读取 `.env` 和环境变量，返回运行配置 |
 | `src/personal_knowledge_agent/__main__.py` | CLI 持续交互入口，供 `python -m personal_knowledge_agent` 和 `pka` 复用 |
-| `src/personal_knowledge_agent/tool_dispatcher.py` | 工具分发和错误包装 |
-| `src/personal_knowledge_agent/tools.py` | 四个知识库工具 |
-| `src/personal_knowledge_agent/memory_store.py` | 读写 `.memory/*.md` 长期 Agent memory |
-| `src/personal_knowledge_agent/memory_index.py` | 读写 `.memory/MEMORY.md` 记忆索引 |
-| `src/personal_knowledge_agent/session_transcript.py` | 追加和读取 `.sessions/<session_id>/transcript.jsonl` |
-| `src/personal_knowledge_agent/session_metadata.py` | 读写 `.sessions/<session_id>/metadata.json` |
-| `src/personal_knowledge_agent/session_restore.py` | 从 transcript 或 summary 恢复 runtime `messages[]` |
-| `src/personal_knowledge_agent/session_summarizer.py` | 长 transcript 自动总结和失败降级 |
-| `src/personal_knowledge_agent/context_compactor.py` | 大工具结果落盘和 compact record 生成 |
-| `src/personal_knowledge_agent/memory_extractor.py` | 生成 memory candidates |
+| `src/personal_knowledge_agent/tools/` | LLM 可调用工具和工具分发 |
+| `src/personal_knowledge_agent/tools/knowledge_tools.py` | 知识库工具实现 |
+| `src/personal_knowledge_agent/tools/dispatch_tool_call.py` | 工具分发和错误包装 |
+| `src/personal_knowledge_agent/agent_memory/` | `.memory/` 长期 Agent 工作记忆 |
+| `src/personal_knowledge_agent/agent_memory/document_store.py` | 读写 `.memory/*.md` 长期 Agent memory |
+| `src/personal_knowledge_agent/agent_memory/index_store.py` | 读写 `.memory/MEMORY.md` 记忆索引 |
+| `src/personal_knowledge_agent/agent_memory/extract_memory_candidates.py` | 生成 memory candidates |
+| `src/personal_knowledge_agent/session_memory/` | `.sessions/` 会话恢复、摘要、transcript 和 artifact |
+| `src/personal_knowledge_agent/session_memory/transcript.py` | 追加和读取 `.sessions/<session_id>/transcript.jsonl` |
+| `src/personal_knowledge_agent/session_memory/metadata.py` | 读写 `.sessions/<session_id>/metadata.json` |
+| `src/personal_knowledge_agent/session_memory/restore_session.py` | 从 transcript 或 summary 恢复 runtime `messages[]` |
+| `src/personal_knowledge_agent/session_memory/summarize_session.py` | 长 transcript 自动总结和失败降级 |
+| `src/personal_knowledge_agent/session_memory/compact_tool_result.py` | 大工具结果落盘和 compact record 生成 |
 | `src/personal_knowledge_agent/schemas.py` | 轻量数据契约 |
-| `src/personal_knowledge_agent/sqlite_store.py` | SQLite 初始化、写入、读取、检索 |
+| `src/personal_knowledge_agent/qa_store/` | Q&A 知识库持久化 |
+| `src/personal_knowledge_agent/qa_store/sqlite_store.py` | SQLite 初始化、写入、读取、检索 |
 | `.knowledge/knowledge.db` | 本地知识库数据库文件 |
 | `.memory/MEMORY.md` | 用户可见 Agent memory 索引 |
 | `.memory/*.md` | 用户可见 Agent 长期记忆文档 |

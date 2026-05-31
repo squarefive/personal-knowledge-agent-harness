@@ -1,9 +1,7 @@
-from personal_knowledge_agent.memory_index import MemoryIndexStore
-from personal_knowledge_agent.memory_store import MemoryStore
+from personal_knowledge_agent.agent_memory import MemoryIndexStore, MemoryStore
+from personal_knowledge_agent.qa_store import SQLiteStore
 from personal_knowledge_agent.schemas import ToolCall
-from personal_knowledge_agent.sqlite_store import SQLiteStore
-from personal_knowledge_agent.tool_dispatcher import ToolDispatcher
-from personal_knowledge_agent.tools import KnowledgeTools
+from personal_knowledge_agent.tools import KnowledgeTools, ToolDispatcher
 
 
 def test_save_qa_card_validates_required_fields(tmp_path):

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 
-from .schemas import SessionRestoreResult
-from .session_metadata import SessionMetadataStore
-from .session_summarizer import SessionSummarizer
-from .session_transcript import SessionTranscript
+from ..schemas import SessionRestoreResult
+from .metadata import SessionMetadataStore
+from .summarize_session import SessionSummarizer
+from .transcript import SessionTranscript
 
 
 class SessionRestore:
