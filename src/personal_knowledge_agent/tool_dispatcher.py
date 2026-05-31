@@ -15,7 +15,6 @@ class ToolDispatcher:
             "list_recent_cards": tools.list_recent_cards,
             "list_memory_index": tools.list_memory_index,
             "read_memory": tools.read_memory,
-            "update_session_memory": tools.update_session_memory,
         }
 
     def execute(self, tool_call: ToolCall) -> dict[str, Any]:
@@ -72,12 +71,6 @@ DISPLAY_INPUT_FIELDS: dict[str, tuple[str, ...]] = {
     "list_recent_cards": ("limit",),
     "list_memory_index": ("limit",),
     "read_memory": ("name",),
-    "update_session_memory": (
-        "current_goal",
-        "confirmed_decisions",
-        "open_questions",
-        "next_steps",
-    ),
 }
 
 ERROR_OUTPUT_FIELDS = ("ok", "error_code", "message")
@@ -141,5 +134,4 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "error_code",
         "message",
     ),
-    "update_session_memory": ("ok", "path", "updated_at", "error_code", "message"),
 }

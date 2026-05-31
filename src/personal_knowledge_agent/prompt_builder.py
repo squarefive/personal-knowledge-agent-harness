@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from .schemas import MemoryDocument, MemoryIndex, SessionSummary
+from .schemas import MemoryDocument, MemoryIndex
 
 
 def build_system_prompt(
     *,
     memory_index: MemoryIndex | None = None,
     selected_memories: list[MemoryDocument] | None = None,
-    session_summary: SessionSummary | None = None,
 ) -> str:
     sections = [
         "\n".join(
@@ -28,8 +27,6 @@ def build_system_prompt(
         sections.append(_render_memory_index(memory_index))
     if selected_memories:
         sections.append(_render_selected_memories(selected_memories))
-    if session_summary is not None:
-        sections.append(_render_session_summary(session_summary))
     return "\n\n".join(section for section in sections if section.strip())
 
 
@@ -54,22 +51,4 @@ def _render_selected_memories(memories: list[MemoryDocument]) -> str:
                 f"  content: {memory.content}",
             ]
         )
-    return "\n".join(lines)
-
-
-def _render_session_summary(summary: SessionSummary) -> str:
-    lines = ["当前 session memory："]
-    if summary.current_goal:
-        lines.append(f"- current_goal: {summary.current_goal}")
-    if summary.confirmed_decisions:
-        lines.append("- confirmed_decisions:")
-        lines.extend(f"  - {item}" for item in summary.confirmed_decisions)
-    if summary.open_questions:
-        lines.append("- open_questions:")
-        lines.extend(f"  - {item}" for item in summary.open_questions)
-    if summary.next_steps:
-        lines.append("- next_steps:")
-        lines.extend(f"  - {item}" for item in summary.next_steps)
-    if len(lines) == 1:
-        lines.append("- 无。")
     return "\n".join(lines)

@@ -1,10 +1,13 @@
+import copy
+
 from personal_knowledge_agent.agent_loop import AgentLoop
 from personal_knowledge_agent.context_compactor import ContextCompactor
-from personal_knowledge_agent.memory_index import MemoryIndexStore
 from personal_knowledge_agent.memory_extractor import MemoryExtractor
+from personal_knowledge_agent.memory_index import MemoryIndexStore
 from personal_knowledge_agent.memory_store import MemoryStore
-from personal_knowledge_agent.schemas import LLMResponse, SessionSummary, ToolCall
-from personal_knowledge_agent.session_store import SessionStore
+from personal_knowledge_agent.schemas import LLMResponse, ToolCall
+from personal_knowledge_agent.session_metadata import SessionMetadataStore
+from personal_knowledge_agent.session_transcript import SessionTranscript
 from personal_knowledge_agent.sqlite_store import SQLiteStore
 from personal_knowledge_agent.tool_dispatcher import ToolDispatcher
 from personal_knowledge_agent.tools import KnowledgeTools
@@ -18,7 +21,7 @@ class FakeLLM:
     def chat(self, *, messages, tools, system_prompt):
         self.calls.append(
             {
-                "messages": messages,
+                "messages": copy.deepcopy(messages),
                 "tools": tools,
                 "system_prompt": system_prompt,
             }
@@ -102,7 +105,7 @@ def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
     ]
 
 
-def test_agent_loop_injects_memory_context_using_session_summary(tmp_path):
+def test_agent_loop_injects_memory_context_using_recent_messages(tmp_path):
     memory_dir = tmp_path / ".memory"
     memory_dir.mkdir()
     (memory_dir / "MEMORY.md").write_text(
@@ -133,13 +136,6 @@ def test_agent_loop_injects_memory_context_using_session_summary(tmp_path):
         ),
         encoding="utf-8",
     )
-    session_store = SessionStore(tmp_path)
-    session_store.write_current(
-        SessionSummary(
-            current_goal="继续 Agent memory 管理设计",
-            next_steps=["实现 turn-start memory 选择"],
-        )
-    )
     knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
     dispatcher = ToolDispatcher(knowledge_tools)
     fake_llm = FakeLLM([LLMResponse(text="继续。")])
@@ -149,7 +145,7 @@ def test_agent_loop_injects_memory_context_using_session_summary(tmp_path):
         dispatcher=dispatcher,
         memory_index_store=MemoryIndexStore(tmp_path),
         memory_store=MemoryStore(tmp_path),
-        session_store=session_store,
+        messages=[{"role": "user", "content": "继续 Agent memory 管理设计，实现 turn-start memory 选择"}],
     )
 
     loop.run("继续")
@@ -158,13 +154,11 @@ def test_agent_loop_injects_memory_context_using_session_summary(tmp_path):
     assert "可用 Agent memory 索引" in system_prompt
     assert "本轮已加载的相关 Agent memory" in system_prompt
     assert "Q&A 知识库和 Agent memory 必须分开。" in system_prompt
-    assert "current_goal: 继续 Agent memory 管理设计" in system_prompt
 
 
 def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path):
     knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
     dispatcher = ToolDispatcher(knowledge_tools)
-    session_store = SessionStore(tmp_path)
     events = []
     fake_llm = FakeLLM(
         [
@@ -184,7 +178,7 @@ def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path
         llm=fake_llm,
         tools=knowledge_tools,
         dispatcher=dispatcher,
-        context_compactor=ContextCompactor(session_store, threshold_chars=1),
+        context_compactor=ContextCompactor(tmp_path, threshold_chars=1),
         event_sink=events.append,
     )
 
@@ -193,23 +187,54 @@ def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path
     compact_events = [event for event in events if event.event_type == "context_compacted"]
     assert len(compact_events) == 1
     record = compact_events[0].payload["compact_record"]
-    assert record["artifact_path"].startswith(".session/artifacts/")
+    assert record["artifact_path"].startswith(".sessions/default/artifacts/")
     assert record["summary"]
     assert record["relevance"]
     assert (tmp_path / record["artifact_path"]).exists()
 
 
-def test_agent_loop_updates_session_and_emits_memory_candidates(tmp_path):
+def test_agent_loop_persists_messages_to_transcript(tmp_path):
     knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
     dispatcher = ToolDispatcher(knowledge_tools)
-    session_store = SessionStore(tmp_path)
+    transcript = SessionTranscript(tmp_path)
+    metadata_store = SessionMetadataStore(tmp_path, model="test-model")
+    events = []
+    fake_llm = FakeLLM([LLMResponse(text="第一轮回答。"), LLMResponse(text="第二轮回答。")])
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        transcript=transcript,
+        metadata_store=metadata_store,
+        event_sink=events.append,
+    )
+
+    loop.run("第一轮")
+    loop.run("第二轮")
+
+    assert fake_llm.calls[1]["messages"][0]["content"] == "第一轮"
+    assert fake_llm.calls[1]["messages"][1]["content"] == "第一轮回答。"
+    assert fake_llm.calls[1]["messages"][2]["content"] == "第二轮"
+    assert [message["content"] for message in transcript.load_messages()] == [
+        "第一轮",
+        "第一轮回答。",
+        "第二轮",
+        "第二轮回答。",
+    ]
+    metadata = metadata_store.load_or_create()
+    assert metadata.event_count == 4
+    assert metadata.message_count == 4
+
+
+def test_agent_loop_emits_memory_candidates(tmp_path):
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(knowledge_tools)
     events = []
     fake_llm = FakeLLM([LLMResponse(text="好的。")])
     loop = AgentLoop(
         llm=fake_llm,
         tools=knowledge_tools,
         dispatcher=dispatcher,
-        session_store=session_store,
         memory_extractor=MemoryExtractor(),
         event_sink=events.append,
     )
@@ -217,9 +242,7 @@ def test_agent_loop_updates_session_and_emits_memory_candidates(tmp_path):
     loop.run("记住：以后回答我先给结论。")
 
     event_types = [event.event_type for event in events]
-    assert "session_memory_updated" in event_types
     assert "memory_candidates_generated" in event_types
-    assert session_store.load_current().current_goal == "记住：以后回答我先给结论。"
     candidates_event = next(event for event in events if event.event_type == "memory_candidates_generated")
     assert candidates_event.payload["candidates"][0]["type"] == "user"
     assert candidates_event.payload["candidates"][0]["write_policy"] == "needs_confirmation"

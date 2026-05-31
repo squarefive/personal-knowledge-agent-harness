@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
 from typing import Any
 
 from .memory_index import MemoryIndexStore
 from .memory_store import MemoryStore
-from .schemas import QACard, SearchResult, SessionSummary
-from .session_store import SessionStore
+from .schemas import QACard
 from .sqlite_store import SQLiteStore
 
 
@@ -18,12 +16,10 @@ class KnowledgeTools:
         *,
         memory_index_store: MemoryIndexStore | None = None,
         memory_store: MemoryStore | None = None,
-        session_store: SessionStore | None = None,
     ):
         self.store = store
         self.memory_index_store = memory_index_store
         self.memory_store = memory_store
-        self.session_store = session_store
 
     def save_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -97,25 +93,6 @@ class KnowledgeTools:
         except Exception as exc:
             return self._error("invalid_memory", str(exc))
 
-    def update_session_memory(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self.session_store is None:
-            return self._error("session_not_configured", "session store is not configured")
-        try:
-            summary = SessionSummary(
-                current_goal=self._optional_text(arguments, "current_goal"),
-                confirmed_decisions=self._optional_string_list(arguments, "confirmed_decisions"),
-                open_questions=self._optional_string_list(arguments, "open_questions"),
-                next_steps=self._optional_string_list(arguments, "next_steps"),
-            )
-            path = self.session_store.write_current(summary)
-            return {
-                "ok": True,
-                "path": str(path.relative_to(self.session_store.root)),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        except Exception as exc:
-            return self._error("session_write_failed", str(exc))
-
     def definitions(self) -> list[dict[str, Any]]:
         return TOOL_DEFINITIONS
 
@@ -142,24 +119,6 @@ class KnowledgeTools:
         if not isinstance(value, int) or value < 1:
             return default
         return min(value, 50)
-
-    @staticmethod
-    def _optional_text(arguments: dict[str, Any], name: str) -> str:
-        value = arguments.get(name, "")
-        if value is None:
-            return ""
-        if not isinstance(value, str):
-            raise ValueError(f"{name} must be a string")
-        return value.strip()
-
-    @staticmethod
-    def _optional_string_list(arguments: dict[str, Any], name: str) -> list[str]:
-        value = arguments.get(name, [])
-        if value is None:
-            return []
-        if not isinstance(value, list):
-            raise ValueError(f"{name} must be a list of strings")
-        return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
     @staticmethod
     def _card_payload(card: QACard) -> dict[str, Any]:
@@ -266,22 +225,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
                 "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_session_memory",
-            "description": "更新当前 session memory。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "current_goal": {"type": "string"},
-                    "confirmed_decisions": {"type": "array", "items": {"type": "string"}},
-                    "open_questions": {"type": "array", "items": {"type": "string"}},
-                    "next_steps": {"type": "array", "items": {"type": "string"}},
-                },
             },
         },
     },

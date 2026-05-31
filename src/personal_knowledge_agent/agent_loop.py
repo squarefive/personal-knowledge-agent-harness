@@ -12,8 +12,9 @@ from .memory_extractor import MemoryExtractor
 from .memory_index import MemoryIndexStore
 from .memory_store import MemoryStore
 from .prompt_builder import build_system_prompt
-from .schemas import LLMResponse, MemoryDocument, MemoryIndex, MemoryIndexEntry, SessionSummary
-from .session_store import SessionStore
+from .schemas import LLMResponse, MemoryDocument, MemoryIndex, MemoryIndexEntry
+from .session_metadata import SessionMetadataStore
+from .session_transcript import SessionTranscript
 from .tool_dispatcher import ToolDispatcher
 from .tools import KnowledgeTools
 
@@ -29,7 +30,9 @@ class AgentLoop:
         dispatcher: ToolDispatcher,
         memory_index_store: MemoryIndexStore | None = None,
         memory_store: MemoryStore | None = None,
-        session_store: SessionStore | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        transcript: SessionTranscript | None = None,
+        metadata_store: SessionMetadataStore | None = None,
         context_compactor: ContextCompactor | None = None,
         memory_extractor: MemoryExtractor | None = None,
         max_turns: int = 8,
@@ -40,7 +43,9 @@ class AgentLoop:
         self.dispatcher = dispatcher
         self.memory_index_store = memory_index_store
         self.memory_store = memory_store
-        self.session_store = session_store
+        self.messages = messages if messages is not None else []
+        self.transcript = transcript
+        self.metadata_store = metadata_store
         self.context_compactor = context_compactor
         self.memory_extractor = memory_extractor
         self.max_turns = max_turns
@@ -48,12 +53,12 @@ class AgentLoop:
 
     def run(self, user_input: str) -> str:
         run_id = new_run_id()
-        messages: list[dict[str, Any]] = [{"role": "user", "content": user_input}]
-        memory_index, session_summary, selected_memories = self._prepare_turn_context(user_input)
+        user_message = {"role": "user", "content": user_input}
+        self._append_message(user_message)
+        memory_index, selected_memories = self._prepare_turn_context(user_input)
         system_prompt = build_system_prompt(
             memory_index=memory_index,
             selected_memories=selected_memories,
-            session_summary=session_summary,
         )
         tool_definitions = self.tools.definitions()
         self._emit(run_id, "user_input_received", user_input=user_input)
@@ -62,7 +67,7 @@ class AgentLoop:
             self._emit(run_id, "llm_call_started", stage="next_action", turn=turn)
             try:
                 response = self.llm.chat(
-                    messages=messages,
+                    messages=self.messages,
                     tools=tool_definitions,
                     system_prompt=system_prompt,
                 )
@@ -87,18 +92,18 @@ class AgentLoop:
             )
             if not response.tool_calls:
                 answer = response.text or ""
+                self._append_message({"role": "assistant", "content": answer})
                 self._emit(run_id, "evidence_checked", status="completed", turn=turn)
                 self._finalize_turn(
                     run_id=run_id,
                     user_input=user_input,
                     final_answer=answer,
                     memory_index=memory_index,
-                    session_summary=session_summary,
                 )
                 self._emit(run_id, "final_answer_generated", answer=answer, turn=turn)
                 return answer
 
-            messages.append(self._assistant_message(response))
+            self._append_message(self._assistant_message(response))
             for tool_call in response.tool_calls:
                 display_input = self.dispatcher.display_input(tool_call.name, tool_call.arguments)
                 self._emit(
@@ -138,22 +143,22 @@ class AgentLoop:
                         tool_call_id=tool_call.id,
                         compact_record=asdict(compact_record),
                     )
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": json.dumps(result, ensure_ascii=False),
-                    }
+                self._append_message(
+                    self._tool_message(
+                        tool_call_id=tool_call.id,
+                        result=result,
+                        compact_record=compact_record,
+                    )
                 )
 
         answer = "工具调用次数过多，已停止本轮处理。"
+        self._append_message({"role": "assistant", "content": answer})
         self._emit(run_id, "error", stage="agent_loop", message=answer)
         self._finalize_turn(
             run_id=run_id,
             user_input=user_input,
             final_answer=answer,
             memory_index=memory_index,
-            session_summary=session_summary,
         )
         self._emit(run_id, "final_answer_generated", answer=answer)
         return answer
@@ -182,22 +187,14 @@ class AgentLoop:
         user_input: str,
         final_answer: str,
         memory_index: MemoryIndex | None,
-        session_summary: SessionSummary | None,
     ) -> None:
-        updated_session = self._update_session_summary(
-            user_input=user_input,
-            session_summary=session_summary,
-        )
-        if updated_session is not None:
-            self._emit(run_id, "session_memory_updated", session=asdict(updated_session))
-
         if self.memory_extractor is None:
             return
         candidates = self.memory_extractor.extract(
             user_input=user_input,
             final_answer=final_answer,
             memory_index=memory_index,
-            session_summary=updated_session or session_summary,
+            recent_messages=self.messages[-12:],
         )
         if candidates:
             self._emit(
@@ -206,42 +203,18 @@ class AgentLoop:
                 candidates=[asdict(candidate) for candidate in candidates],
             )
 
-    def _update_session_summary(
-        self,
-        *,
-        user_input: str,
-        session_summary: SessionSummary | None,
-    ) -> SessionSummary | None:
-        if self.session_store is None:
-            return None
-        existing = session_summary or SessionSummary()
-        current_goal = existing.current_goal or user_input.strip()
-        next_steps = existing.next_steps or [user_input.strip()]
-        updated = SessionSummary(
-            current_goal=current_goal,
-            confirmed_decisions=existing.confirmed_decisions,
-            open_questions=existing.open_questions,
-            next_steps=next_steps,
-        )
-        try:
-            self.session_store.write_current(updated)
-        except Exception:
-            return None
-        return updated
-
     def _prepare_turn_context(
         self,
         user_input: str,
-    ) -> tuple[MemoryIndex | None, SessionSummary | None, list[MemoryDocument]]:
+    ) -> tuple[MemoryIndex | None, list[MemoryDocument]]:
         memory_index = self._load_memory_index()
-        session_summary = self._load_session_summary()
         if memory_index is None or self.memory_store is None:
-            return memory_index, session_summary, []
+            return memory_index, []
 
         selected_entries = self._select_memory_entries(
             user_input=user_input,
             memory_index=memory_index,
-            session_summary=session_summary,
+            recent_messages=self.messages[-12:],
         )
         selected_memories: list[MemoryDocument] = []
         for entry in selected_entries:
@@ -249,7 +222,7 @@ class AgentLoop:
                 selected_memories.append(self.memory_store.read_by_entry(entry))
             except Exception:
                 continue
-        return memory_index, session_summary, selected_memories
+        return memory_index, selected_memories
 
     def _load_memory_index(self) -> MemoryIndex | None:
         if self.memory_index_store is None:
@@ -259,32 +232,17 @@ class AgentLoop:
         except Exception:
             return MemoryIndex()
 
-    def _load_session_summary(self) -> SessionSummary | None:
-        if self.session_store is None:
-            return None
-        try:
-            return self.session_store.load_current()
-        except Exception:
-            return SessionSummary()
-
     @staticmethod
     def _select_memory_entries(
         *,
         user_input: str,
         memory_index: MemoryIndex,
-        session_summary: SessionSummary | None,
+        recent_messages: list[dict[str, Any]] | None = None,
         limit: int = 3,
     ) -> list[MemoryIndexEntry]:
         query_parts = [user_input]
-        if session_summary is not None:
-            query_parts.extend(
-                [
-                    session_summary.current_goal,
-                    " ".join(session_summary.confirmed_decisions),
-                    " ".join(session_summary.open_questions),
-                    " ".join(session_summary.next_steps),
-                ]
-            )
+        if recent_messages:
+            query_parts.extend(_message_text(message) for message in recent_messages)
         query = " ".join(part for part in query_parts if part).lower()
         if not query:
             return []
@@ -329,6 +287,54 @@ class AgentLoop:
             )
         return message
 
+    def _tool_message(
+        self,
+        *,
+        tool_call_id: str,
+        result: dict[str, Any],
+        compact_record: Any | None,
+    ) -> dict[str, Any]:
+        content = json.dumps(result, ensure_ascii=False)
+        if compact_record is not None:
+            content = json.dumps(
+                {"ok": result.get("ok", True), "compact_record": asdict(compact_record)},
+                ensure_ascii=False,
+            )
+        return {
+            "role": "tool",
+            "tool_call_id": tool_call_id,
+            "content": content,
+        }
+
+    def _append_message(self, message: dict[str, Any]) -> None:
+        self.messages.append(message)
+        if self.transcript is not None:
+            try:
+                self.transcript.append_message(message)
+            except Exception:
+                pass
+        self._update_metadata_counts()
+
+    def _update_metadata_counts(self) -> None:
+        if self.metadata_store is None:
+            return
+        try:
+            event_count = self.transcript.event_count() if self.transcript is not None else 0
+            if self.transcript is not None:
+                message_count = len(self.transcript.load_messages())
+            else:
+                message_count = len(self.messages)
+            self.metadata_store.update_counts(event_count=event_count, message_count=message_count)
+        except Exception:
+            pass
+
 
 def _query_tokens(query: str) -> list[str]:
     return [token for token in query.replace("/", " ").replace("-", " ").split() if token]
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    return str(content)

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
-from .schemas import MemoryCandidate, MemoryIndex, SessionSummary
+from .schemas import MemoryCandidate, MemoryIndex
 
 USER_PREFERENCE_MARKERS = ("记住", "以后", "每次", "总是")
 PROJECT_DECISION_MARKERS = ("决定", "确认", "必须", "不要", "不允许")
@@ -15,7 +16,7 @@ class MemoryExtractor:
         user_input: str,
         final_answer: str,
         memory_index: MemoryIndex | None = None,
-        session_summary: SessionSummary | None = None,
+        recent_messages: list[dict[str, Any]] | None = None,
     ) -> list[MemoryCandidate]:
         candidates: list[MemoryCandidate] = []
         if _contains_any(user_input, USER_PREFERENCE_MARKERS):
@@ -33,7 +34,7 @@ class MemoryExtractor:
             )
         if _contains_any(user_input, PROJECT_DECISION_MARKERS) and _looks_project_related(
             user_input,
-            session_summary,
+            recent_messages,
         ):
             candidates.append(
                 MemoryCandidate(
@@ -54,21 +55,21 @@ def _contains_any(value: str, markers: tuple[str, ...]) -> bool:
     return any(marker in value for marker in markers)
 
 
-def _looks_project_related(value: str, session_summary: SessionSummary | None) -> bool:
+def _looks_project_related(value: str, recent_messages: list[dict[str, Any]] | None) -> bool:
     project_markers = ("项目", "Agent", "agent", "Q&A", "memory", "记忆", "上下文", "工具", "SQLite")
     if _contains_any(value, project_markers):
         return True
-    if session_summary is None:
+    if not recent_messages:
         return False
-    session_text = " ".join(
-        [
-            session_summary.current_goal,
-            " ".join(session_summary.confirmed_decisions),
-            " ".join(session_summary.open_questions),
-            " ".join(session_summary.next_steps),
-        ]
-    )
+    session_text = " ".join(_message_text(message) for message in recent_messages)
     return _contains_any(session_text, project_markers)
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    return str(content)
 
 
 def _candidate_name(prefix: str, content: str) -> str:

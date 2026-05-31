@@ -1,5 +1,5 @@
 from personal_knowledge_agent.memory_extractor import MemoryExtractor
-from personal_knowledge_agent.schemas import MemoryIndex, MemoryIndexEntry, SessionSummary
+from personal_knowledge_agent.schemas import MemoryIndex, MemoryIndexEntry
 
 
 def test_extract_user_preference_requires_confirmation():
@@ -18,7 +18,7 @@ def test_extract_project_decision_can_auto_write():
     candidates = MemoryExtractor().extract(
         user_input="我们决定：Q&A 知识库和 Agent memory 必须分开。",
         final_answer="已记录为设计决策。",
-        session_summary=SessionSummary(current_goal="设计 Agent memory 管理"),
+        recent_messages=[{"role": "user", "content": "当前在设计 Agent memory 管理"}],
     )
 
     assert len(candidates) == 1

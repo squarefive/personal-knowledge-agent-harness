@@ -3,7 +3,6 @@ from personal_knowledge_agent.schemas import (
     MemoryDocument,
     MemoryIndex,
     MemoryIndexEntry,
-    SessionSummary,
 )
 
 
@@ -51,18 +50,3 @@ def test_build_system_prompt_injects_selected_memories():
 
     assert "本轮已加载的相关 Agent memory" in prompt
     assert "content: Q&A 和 Agent memory 分开。" in prompt
-
-
-def test_build_system_prompt_injects_session_summary():
-    prompt = build_system_prompt(
-        session_summary=SessionSummary(
-            current_goal="设计 memory 管理",
-            confirmed_decisions=[".memory 是长期 Agent memory 来源"],
-            open_questions=["候选如何确认"],
-            next_steps=["实现 session store"],
-        )
-    )
-
-    assert "当前 session memory" in prompt
-    assert "current_goal: 设计 memory 管理" in prompt
-    assert ".memory 是长期 Agent memory 来源" in prompt

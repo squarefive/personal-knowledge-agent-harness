@@ -1,9 +1,8 @@
 from personal_knowledge_agent.context_compactor import ContextCompactor
-from personal_knowledge_agent.session_store import SessionStore
 
 
 def test_compact_tool_result_returns_none_below_threshold(tmp_path):
-    compactor = ContextCompactor(SessionStore(tmp_path), threshold_chars=20)
+    compactor = ContextCompactor(tmp_path, threshold_chars=20)
 
     record = compactor.compact_tool_result(
         run_id="run-1",
@@ -16,7 +15,7 @@ def test_compact_tool_result_returns_none_below_threshold(tmp_path):
 
 
 def test_compact_tool_result_writes_artifact_and_returns_record(tmp_path):
-    compactor = ContextCompactor(SessionStore(tmp_path), threshold_chars=10)
+    compactor = ContextCompactor(tmp_path, threshold_chars=10)
 
     record = compactor.compact_tool_result(
         run_id="run-1",
@@ -26,7 +25,7 @@ def test_compact_tool_result_writes_artifact_and_returns_record(tmp_path):
     )
 
     assert record is not None
-    assert record.artifact_path == ".session/artifacts/run-1-call-1.txt"
+    assert record.artifact_path == ".sessions/default/artifacts/run-1-call-1.txt"
     assert "read_memory 返回了" in record.summary
     assert "first line" in record.summary
     assert "read_memory" in record.relevance

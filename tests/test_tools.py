@@ -1,7 +1,6 @@
 from personal_knowledge_agent.memory_index import MemoryIndexStore
 from personal_knowledge_agent.memory_store import MemoryStore
 from personal_knowledge_agent.schemas import ToolCall
-from personal_knowledge_agent.session_store import SessionStore
 from personal_knowledge_agent.sqlite_store import SQLiteStore
 from personal_knowledge_agent.tool_dispatcher import ToolDispatcher
 from personal_knowledge_agent.tools import KnowledgeTools
@@ -146,30 +145,6 @@ def test_memory_tools_list_and_read_memory(tmp_path):
     assert index["entries"][0]["name"] == "project-boundary"
     assert memory["ok"] is True
     assert memory["memory"]["content"] == "Q&A 和 Agent memory 分开。"
-
-
-def test_update_session_memory_writes_current_session(tmp_path):
-    session_store = SessionStore(tmp_path)
-    tools = KnowledgeTools(
-        SQLiteStore(tmp_path / "knowledge.db"),
-        session_store=session_store,
-    )
-
-    result = tools.update_session_memory(
-        {
-            "current_goal": "设计 memory 管理",
-            "confirmed_decisions": ["Q&A 和 Agent memory 分开"],
-            "open_questions": ["如何确认候选"],
-            "next_steps": ["实现工具"],
-        }
-    )
-
-    assert result["ok"] is True
-    assert result["path"] == ".session/current.md"
-    loaded = session_store.load_current()
-    assert loaded.current_goal == "设计 memory 管理"
-    assert loaded.confirmed_decisions == ["Q&A 和 Agent memory 分开"]
-
 
 def test_tool_dispatcher_handles_memory_tools(tmp_path):
     tools = KnowledgeTools(
