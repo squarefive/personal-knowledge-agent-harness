@@ -251,6 +251,8 @@ last_updated: "2026-05-31"
 | `src/personal_knowledge_agent/agent_loop/format_llm_messages.py` | assistant/tool result 的 LLM API message 格式化 |
 | `src/personal_knowledge_agent/agent_loop/load_turn_context.py` | turn-start memory index 和相关 memory 加载 |
 | `src/personal_knowledge_agent/agent_loop/finalize_turn_memory.py` | turn-end memory candidate 提取 |
+| `src/personal_knowledge_agent/agent_loop/emit_agent_events.py` | Agent run 事件发射适配 |
+| `src/personal_knowledge_agent/agent_loop/record_runtime_messages.py` | runtime messages、transcript 和 metadata count 记录 |
 | `src/personal_knowledge_agent/events.py` | Agent run 结构化事件契约 |
 | `src/personal_knowledge_agent/cli_renderer.py` | CLI 实时事件渲染 |
 | `src/personal_knowledge_agent/jsonl_logger.py` | 异步 JSONL 开发日志 |
