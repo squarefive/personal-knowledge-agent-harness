@@ -44,6 +44,7 @@ last_updated: "2026-06-02"
   7. 能将可恢复 messages 追加写入 `.sessions/<session_id>/transcript.jsonl`。
   8. 能在 transcript 过长时生成 `summary.md`，并用 summary + recent messages 恢复上下文。
   9. 能对过大的上下文材料做 compact，保留摘要、相关性说明和可回读 artifact。
+  10. 能通过本地 Web Runtime 提供浏览器聊天入口和基础 Q&A 卡片浏览能力。
 
 - **包含能力**:
   1. 录入用户提供的 Q&A。
@@ -58,6 +59,8 @@ last_updated: "2026-06-02"
   10. 在长 transcript 场景下使用 `summary.md` + recent messages 恢复。
   11. 将过大的 tool result 写入 `.sessions/<session_id>/artifacts/`，并在上下文中保留 compact record。
   12. 在 turn 结束后提取 memory candidates，并按写入规则保存或等待用户确认。
+  13. 提供本地 HTML 聊天入口，作为 CLI Runtime 的浏览器替代输入输出层。
+  14. 在 Web UI 中查看最近 Q&A 卡片、搜索 Q&A 卡片和查看卡片详情。
 
 - **不包含能力**:
   1. 不做 Markdown Wiki。
@@ -72,6 +75,7 @@ last_updated: "2026-06-02"
   10. 不默认把完整历史对话作为长期记忆。
   11. 不默认把所有 `.memory/*.md` 全文注入每轮上下文。
   12. 不在本阶段实现向量检索、后台自动整理任务或复杂双向同步。
+  13. Web 第一版不做卡片编辑、删除、合并、自动知识图谱、Wiki、文件监听、多 Agent 或后台任务。
 
 - **最终版功能清单完成状态**:
 
@@ -90,6 +94,7 @@ last_updated: "2026-06-02"
 | 后台任务 | 未完成 | 当前明确不做后台任务；没有后台 Wiki 同步、索引构建、批量摘要、任务状态、完成通知或失败重试。 |
 | 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；删除、合并、覆盖、重建索引等高风险操作尚未实现，也没有对应确认流程或变更历史记录。 |
 | 长期偏好记忆 | 部分完成 | 已支持读取 Agent memory index 和相关 memory，并能生成 memory candidates 事件；尚未实现偏好写入确认闭环，以及偏好查看、修改、删除。 |
+| Web Chat + Cards | 未完成 | 已纳入设计边界；目标是提供本地 HTML 聊天入口、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
 
 以上状态仅描述当前代码已实现能力，不代表最终版设计已被纳入当前 Agent 边界。若要实现未完成模块，必须先更新本文档中的角色边界、工具契约、数据模型、核心流程、失败模式和测试要求，并单独提交文档变更后再进入代码实现。
 
@@ -104,6 +109,7 @@ last_updated: "2026-06-02"
   8. `.sessions/<session_id>/summary.md` 只表示当前会话 compact summary，不得当作长期事实来源。
   9. compact 只能缩减当前上下文窗口，不得替代长期记忆写入。
   10. memory candidate 写入必须遵守确认规则，不得把模型推测直接写成长期事实。
+  11. Web UI 只能展示和发起用户意图，不得绕过 AgentLoop、Tools 或 Store 执行业务动作。
 
 ---
 
@@ -122,6 +128,11 @@ last_updated: "2026-06-02"
   - 在关键阶段产生结构化运行事件，包括 `user_input_received`、`llm_call_started`、`llm_call_finished`、`tool_call_started`、`tool_call_finished`、`evidence_checked`、`final_answer_generated` 和 `error`。
   - 运行事件用于 CLI 实时展示和本地开发日志，不作为长期知识来源。
   - 运行事件只描述可审计过程，不暴露模型完整思考链。
+
+- **Agent Factory 职责**:
+  - `agent_factory.py` 负责创建 AgentLoop 及其依赖，包括 SQLiteStore、KnowledgeTools、ToolDispatcher、DeepSeekClient、session memory、Agent memory 和 context compactor。
+  - 供 CLI Runtime 和 Web Runtime 复用同一套 Agent 装配逻辑。
+  - 不负责 CLI 输入、Web HTTP 请求、HTML 渲染、浏览器打开或进程启动。
 
 - **Prompt Builder 职责**:
   - 运行时拼接短 system prompt。
@@ -195,6 +206,19 @@ last_updated: "2026-06-02"
   - 不直接操作 SQLite。
   - 不绕过 AgentLoop 调用工具。
 
+- **Web Runtime 职责**:
+  - 作为 `pka web` 和 `python -m personal_knowledge_agent.web` 的本地浏览器入口。
+  - 启动时加载 `.env` 和环境变量配置。
+  - 通过 `agent_factory.py` 创建 AgentLoop 及其依赖。
+  - 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
+  - 提供静态 HTML/CSS/JS 页面。
+  - 接收用户聊天输入并调用 AgentLoop。
+  - 提供最近卡片、搜索卡片和卡片详情 API。
+  - Web 输入层只负责采集用户输入，不判断知识录入或问答意图。
+  - Web API 不直接操作 SQLite，不绕过 Tools 或 Store 边界。
+  - Web 第一版只覆盖 Chat + Cards，不提供编辑、删除、合并或复杂知识管理能力。
+  - Web Runtime 的单轮 AgentLoop 执行失败时，应返回结构化错误，不得声称保存、查询或回答成功。
+
 - **CLI Renderer 职责**:
   - 根据事件类型渲染用户可见输出。
   - LLM 阶段展示阶段名、开始、结束和失败状态。
@@ -246,6 +270,12 @@ last_updated: "2026-06-02"
   - Python 标准库 `logging` 仅保留底层库级异常和不可恢复错误，不承担 Agent loop trace 职责。
   - 不记录 API key、完整 headers、完整 system prompt、完整 LLM messages、secret 或未声明为可展示的内部 payload。
 
+- **Web UI 职责**:
+  - 展示聊天消息、基础运行状态、Agent 最终回答和错误信息。
+  - 展示最近 Q&A 卡片、搜索结果和卡片详情。
+  - 展示的 Q&A 来源信息必须来自后端 API 返回的结构化字段。
+  - 不在浏览器端保存长期记忆，不直接读写 SQLite，不自行判断证据是否足够。
+
 - **腐败代码清理原则**:
   - 实现结构化事件流后，应删除与事件流重复的旧 logging 埋点。
   - `agent_loop.py` 不再使用 `logger.info` 记录 start、tool_calls.detected、final_answer 等 Agent run trace。
@@ -263,6 +293,7 @@ last_updated: "2026-06-02"
   6. `.memory/*.md` 不得作为 Q&A 知识库来源。
   7. `.sessions/<session_id>/summary.md` 不得作为长期事实来源。
   8. 未在本文档声明的核心依赖不得擅自引入。
+  9. Web UI 不得直接操作 SQLite 或把浏览器本地状态当作长期记忆。
 
 - **核心文件 / 目录**:
 
@@ -280,12 +311,17 @@ last_updated: "2026-06-02"
 | `src/personal_knowledge_agent/agent_loop/emit_agent_events.py` | Agent run 事件发射适配 |
 | `src/personal_knowledge_agent/agent_loop/record_runtime_messages.py` | runtime messages、transcript 和 metadata count 记录 |
 | `src/personal_knowledge_agent/events.py` | Agent run 结构化事件契约 |
+| `src/personal_knowledge_agent/agent_factory.py` | 创建 AgentLoop 及其依赖，供 CLI Runtime 和 Web Runtime 复用 |
 | `src/personal_knowledge_agent/cli_renderer.py` | CLI 实时事件渲染 |
 | `src/personal_knowledge_agent/jsonl_logger.py` | 异步 JSONL 开发日志 |
 | `src/personal_knowledge_agent/prompt_builder.py` | 构建运行时 system prompt |
 | `src/personal_knowledge_agent/llm_client.py` | DeepSeek 薄客户端 |
 | `src/personal_knowledge_agent/config.py` | 读取 `.env` 和环境变量，返回运行配置 |
-| `src/personal_knowledge_agent/__main__.py` | CLI 持续交互入口，供 `python -m personal_knowledge_agent` 和 `pka` 复用 |
+| `src/personal_knowledge_agent/__main__.py` | CLI 持续交互入口和 `pka web` 子命令分发，供 `python -m personal_knowledge_agent` 和 `pka` 复用 |
+| `src/personal_knowledge_agent/web/` | 本地 Web Runtime、Web API 和静态 HTML 页面 |
+| `src/personal_knowledge_agent/web/app.py` | 创建本地 Web app，定义聊天和卡片浏览 API |
+| `src/personal_knowledge_agent/web/__main__.py` | Web Runtime 启动入口，供 `python -m personal_knowledge_agent.web` 复用 |
+| `src/personal_knowledge_agent/web/static/` | Chat + Cards 的原生 HTML/CSS/JS 页面 |
 | `src/personal_knowledge_agent/tools/` | LLM 可调用工具和工具分发 |
 | `src/personal_knowledge_agent/tools/knowledge_tools.py` | 知识库工具实现 |
 | `src/personal_knowledge_agent/tools/dispatch_tool_call.py` | 工具分发和错误包装 |
@@ -906,7 +942,46 @@ pka
 
 `pka` 启动后进入持续交互，用户可以连续录入 Q&A 或提问。
 
-### 5.5 CLI 实时运行过程展示
+### 5.5 Web 持续交互
+
+1. 用户运行 `pka web`，或使用 `python -m personal_knowledge_agent.web` 模块入口。
+2. Web Runtime 调用配置加载器读取 `.env` 和环境变量。
+3. Web Runtime 通过 `agent_factory.py` 创建 AgentLoop 及其依赖。
+4. Web Runtime 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
+5. Web Runtime 提供静态 HTML 页面，并可自动打开浏览器访问本地服务。
+6. 用户在 HTML 页面输入 Q&A 录入请求或问题。
+7. `POST /api/chat` 将输入交给 AgentLoop。
+8. AgentLoop 按 5.1 或 5.2 流程调用 LLM 和工具。
+9. Web API 返回结构化结果，HTML 展示 Agent 最终回答和基础状态。
+
+- **成功条件**:  
+  用户无需使用 CLI，即可在本地浏览器中连续录入知识和提问。
+
+- **失败条件**:  
+  `.env` 或环境变量缺少 `DEEPSEEK_API_KEY`，DeepSeek / SQLite 初始化失败，本地端口不可用，静态页面加载失败，或单轮 AgentLoop 执行失败。
+
+- **用户可见反馈**:  
+  启动失败时输出明确错误；运行中模型或工具失败时，Web API 返回结构化错误，HTML 展示本轮失败说明。不得声称保存、查询或回答成功。
+
+### 5.6 Web 知识卡片浏览
+
+1. HTML 页面请求最近卡片、搜索卡片或卡片详情。
+2. Web API 调用后端封装的卡片读取能力。
+3. 最近卡片 API 返回 card_id、原始问题、summary、keywords、source_type 和 created_at。
+4. 搜索卡片 API 返回 card_id、原始问题、summary、answer_snippet、score、source_type 和 created_at。
+5. 卡片详情 API 返回 card_id、原始问题、原始答案、summary、keywords、source_type、created_at 和 updated_at。
+6. HTML 页面展示结构化卡片信息。
+
+- **成功条件**:  
+  用户能在 Web UI 中查看最近 Q&A 卡片、搜索 Q&A 卡片并打开卡片详情。
+
+- **失败条件**:  
+  数据库读取失败、查询参数非法、card_id 不存在或 Web API 返回结构化错误。
+
+- **用户可见反馈**:  
+  有记录时展示卡片；无记录时展示空状态；读取失败时展示错误原因。Web UI 不得生成虚假卡片或虚假来源。
+
+### 5.7 CLI 实时运行过程展示
 
 1. CLI Runtime 收到用户输入后生成本轮 `run_id`。
 2. Agent Loop 在收到输入、调用 LLM、收到 LLM 响应、调用工具、收到工具结果、判断证据和生成最终回答时产生结构化事件。
@@ -923,7 +998,7 @@ pka
 - **用户可见反馈**:  
   CLI Renderer 或 Logger 失败时向 stderr 输出简短提示，但不得影响 Agent 工具执行和最终回答。
 
-### 5.6 Turn-start 上下文准备
+### 5.8 Turn-start 上下文准备
 
 1. CLI Runtime 选择或创建默认 session：`.sessions/default/`。
 2. Session Restore 读取 `metadata.json` 和 `transcript.jsonl`。
@@ -944,7 +1019,7 @@ pka
 - **用户可见反馈**:
   session 恢复失败时使用空 messages 或 first+recent 降级恢复，并向 stderr 或 CLI 事件提示一次；不得影响 Q&A 主流程的工具检索和回答。
 
-### 5.7 上下文压缩
+### 5.9 上下文压缩
 
 1. Agent Loop 或 Context Compactor 检查 compact 触发条件。
 2. 当单个 tool result 超过阈值、本轮累计 tool result 过大，或用户显式要求总结 / 进入下一阶段时，触发 compact。
@@ -962,7 +1037,7 @@ pka
 - **用户可见反馈**:
   compact 成功时可在事件中展示 artifact_path 和 summary。compact 失败时降级为不压缩或保留原始 tool result，不得丢失回答所需证据。
 
-### 5.8 Turn-end memory candidate 提取
+### 5.10 Turn-end memory candidate 提取
 
 1. Agent Loop 完成本轮最终回答。
 2. Memory Extractor 收集 user input、final answer、recent messages、tool result summaries 和 memory index。
@@ -1218,13 +1293,17 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 | 检索结果不相关 | 候选卡片与用户问题无明显关系 | 不基于弱证据回答 | 说明没有足够可靠依据 |
 | 读取卡片失败 | `read_qa_card` 找不到 card_id 或数据库错误 | 不引用该卡片作为来源 | 说明来源读取失败 |
 | DeepSeek key 缺失 | 真实 LLM 调用时未设置 `DEEPSEEK_API_KEY` | 不调用真实 LLM | 说明缺少环境变量 |
-| 配置缺失 | `.env` 和环境变量中均没有 `DEEPSEEK_API_KEY` | CLI Runtime 不启动 Agent | 提示用户设置 `DEEPSEEK_API_KEY` |
-| LLM 临时故障 | DeepSeek 网络错误、timeout、SSL EOF、HTTP 429、HTTP 500 或 HTTP 503 | 执行有上限的有限重试；重试耗尽后不编造工具结果或最终回答，结束本轮但不退出 CLI | 说明模型调用失败，可稍后重试 |
+| 配置缺失 | `.env` 和环境变量中均没有 `DEEPSEEK_API_KEY` | CLI Runtime 或 Web Runtime 不启动 Agent | 提示用户设置 `DEEPSEEK_API_KEY` |
+| LLM 临时故障 | DeepSeek 网络错误、timeout、SSL EOF、HTTP 429、HTTP 500 或 HTTP 503 | 执行有上限的有限重试；重试耗尽后不编造工具结果或最终回答，结束本轮但不退出 CLI / Web 服务 | 说明模型调用失败，可稍后重试 |
 | LLM 不可重试错误 | DeepSeek 返回 HTTP 400、401、402、422，或响应解析 / tool call 参数解析失败 | 不重试，不进入工具流程，不声称动作成功 | 展示明确失败原因 |
 | 工具执行失败 | 工具抛错或返回 `ok: false` | 不声称动作成功 | 展示失败原因 |
 | CLI 输入为空 | 用户直接回车 | 不调用 AgentLoop | 继续等待输入 |
 | CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
 | CLI Renderer 失败 | 渲染事件时发生异常 | 不影响工具执行和 Agent 最终回答 | 向 stderr 输出简短错误 |
+| Web 服务启动失败 | 端口不可用、配置缺失或 Web app 初始化失败 | 不启动 Web Runtime，不创建虚假会话 | 输出明确启动失败原因 |
+| Web chat 执行失败 | `POST /api/chat` 调用 AgentLoop 失败 | 返回结构化错误，不声称本轮完成 | HTML 展示本轮失败说明 |
+| Web 卡片读取失败 | 最近卡片、搜索或详情 API 读取失败 | 返回结构化错误，不生成虚假卡片 | HTML 展示错误原因 |
+| Web 静态页面加载失败 | 静态文件缺失或服务异常 | 不影响数据库内容，不声称 Agent 已启动完成 | 浏览器或终端展示加载失败 |
 | 日志队列满 | Async JSONL Logger 队列达到上限 | 不阻塞 Agent Loop，丢弃日志事件 | stderr 最多提示一次 |
 | 日志写入失败 | `.logs/agent.log` 无法写入 | 停止继续写日志，不影响 Agent | stderr 最多提示一次 |
 | 日志 flush 超时 | 正常退出时 2 秒内未 flush 完成 | 继续退出 | 不保证所有日志写入完成 |
@@ -1250,6 +1329,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   6. Session transcript / summary 失败不得被解释为长期事实缺失。
   7. Compact 失败不得丢失回答所需证据。
   8. Memory candidate 未写入前不得声称 Agent 已经记住。
+  9. Web API 失败时必须返回结构化错误，HTML 不得伪造成功状态。
 
 - **日志降级原则**:
   1. Async JSONL Logger 记录 Agent run 事件，是 Agent run 过程的唯一结构化开发日志。
@@ -1308,6 +1388,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   22. compact record 必须包含 artifact_path、summary、relevance 和 must_keep。
   23. `MemoryExtractor` 只生成候选，不直接写入长期 memory。
   24. user / feedback candidate 默认不自动写入长期 memory。
+  25. `agent_factory.py` 能创建 AgentLoop 及其依赖，并可被 CLI Runtime 和 Web Runtime 复用。
 
 - **集成测试**:
   1. Agent Loop 能接收 fake LLM 的 tool call，执行工具并回填 tool result。
@@ -1328,6 +1409,10 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   16. 大 tool result 能落盘到 session artifacts 并在 trace / transcript 中保留 compact record。
   17. turn-end 能把可恢复 message 追加到 transcript。
   18. turn-end 能生成 memory candidates 并展示待确认候选。
+  19. CLI 入口能在默认模式启动 CLI，并能通过 `pka web` 分发到 Web Runtime。
+  20. Web Runtime 能用 fake AgentLoop 处理一次 `POST /api/chat`。
+  21. Web Runtime 能返回最近卡片、搜索卡片和卡片详情的结构化结果。
+  22. Web Runtime 在 AgentLoop 或卡片读取失败时返回结构化错误。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
@@ -1342,13 +1427,16 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   10. compact artifact 不得作为 Q&A 回答来源。
   11. Memory candidate 未写入时不得声称已经记住。
   12. user / feedback candidate 在未确认前不得自动写入 `.memory/*.md`。
+  13. Web API 不得绕过 AgentLoop 直接完成聊天回答。
+  14. Web UI 不得提供未声明的编辑、删除、合并或自动知识图谱能力。
 
 - **可选 Live Smoke Test**:
   1. 仅在存在 `DEEPSEEK_API_KEY` 时运行。
   2. 使用 `deepseek-v4-flash` 做真实 DeepSeek 调用。
   3. 完成一次保存 Q&A。
   4. 再完成一次检索回答。
-  5. 不把 API key 写入仓库或日志。
+  5. 启动 `pka web` 并在浏览器完成一次聊天、最近卡片刷新、搜索和详情查看。
+  6. 不把 API key 写入仓库或日志。
 
 - **验收清单**:
   1. 符合本文档定义的能力边界。
@@ -1360,7 +1448,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   7. `.sessions/<session_id>/transcript.jsonl` 能恢复 runtime `messages[]`。
   8. `.sessions/<session_id>/summary.md` 只保存长 transcript 的 compact summary。
   9. compact 只缩减上下文窗口，不替代长期 memory。
-  10. 第一版不包含 Wiki、文件监听、周报、多 Agent、向量库和后台任务。
+  10. Web Runtime 只作为本地 Chat + Cards 入口，不改变 Agent 的工具和记忆边界。
+  11. 第一版不包含 Wiki、文件监听、周报、多 Agent、向量库和后台任务。
 
 ---
 
@@ -1372,3 +1461,4 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 | `2026-05-31` | 补充 Agent memory、session memory、context compact 和 memory candidate 设计边界 | 为后续实现 Claude Code 风格记忆管理先锁定文档契约 | `TBD` |
 | `2026-05-31` | 将 session 设计从 `.session/current.md` 调整为 `.sessions/<session_id>/transcript.jsonl`、`summary.md` 和 `metadata.json` | 对齐 messages[] + transcript + compact summary 的聊天上下文设计 | `TBD` |
 | `2026-06-02` | 标记最终版功能清单相对当前实现的完成状态 | 帮助区分当前第一版闭环、部分 Harness 能力和最终版未实现模块 | `TBD` |
+| `2026-06-02` | 补充 Web Runtime、Chat + Cards UI 和 agent_factory 设计边界 | 支持本地浏览器聊天入口和基础 Q&A 卡片浏览 | `TBD` |
