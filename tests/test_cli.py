@@ -35,6 +35,26 @@ def test_run_cli_reports_startup_error(monkeypatch, capsys):
     assert "启动失败：missing key" in captured.err
 
 
+def test_run_cli_continues_after_agent_run_error(monkeypatch, capsys):
+    class FakeAgent:
+        def run(self, text):
+            raise RuntimeError("temporary llm failure")
+
+    inputs = iter(["你好", "/exit"])
+    monkeypatch.setattr(cli, "load_config", lambda: object())
+    monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None: FakeAgent())
+    monkeypatch.setattr(cli, "create_prompt_session", lambda: object())
+    monkeypatch.setattr(cli, "prompt_user", lambda session: next(inputs))
+    monkeypatch.setattr(cli, "AsyncJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
+
+    exit_code = cli.run_cli()
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "模型服务暂时不可用，本轮没有完成" in output
+    assert "已退出" in output
+
+
 def test_pyproject_declares_pka_script():
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 

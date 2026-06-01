@@ -151,6 +151,10 @@ last_updated: "2026-05-31"
   - 作为 DeepSeek API 的薄适配层。
   - 接收 messages、tools 和 system_prompt。
   - 发起 DeepSeek chat 请求。
+  - 对 DeepSeek 临时故障执行有上限的有限重试，不得无限阻塞 CLI。
+  - 可重试错误包括网络连接类错误、timeout、SSL EOF，以及 HTTP 429、500、503。
+  - 不可重试错误包括 HTTP 400、401、402、422，以及响应解析错误和 tool call 参数解析错误。
+  - 重试耗尽后抛出明确错误，错误信息不得包含 API key、完整 headers、完整 payload 或完整 system prompt。
   - 将 DeepSeek 响应转换为统一的 LLMResponse。
   - 不包含 Agent 业务判断逻辑。
 
@@ -166,6 +170,8 @@ last_updated: "2026-05-31"
   - 将事件交给 CLI Renderer 渲染。
   - 将事件投递给 Async JSONL Logger。
   - CLI 展示长文本时必须做确定性截断。
+  - 单轮 AgentLoop 执行失败时，应展示本轮失败提示并继续等待下一轮输入。
+  - 单轮模型或工具运行失败不得导致 CLI 进程退出；启动阶段不可恢复错误、用户输入 `/exit` 或 `/quit` 除外。
   - 不直接操作 SQLite。
   - 不绕过 AgentLoop 调用工具。
 
@@ -864,10 +870,10 @@ last_updated: "2026-05-31"
   用户无需手写初始化代码，即可在 CLI 中连续录入知识和提问。
 
 - **失败条件**:  
-  `.env` 或环境变量缺少 `DEEPSEEK_API_KEY`，或 DeepSeek / SQLite 初始化失败。
+  `.env` 或环境变量缺少 `DEEPSEEK_API_KEY`，或 DeepSeek / SQLite 初始化失败。运行中 LLM 调用失败且重试耗尽时，只应结束本轮，不应退出 CLI 进程。
 
 - **用户可见反馈**:  
-  启动失败时输出明确错误；运行中工具或模型失败时展示 Agent 返回的失败说明。
+  启动失败时输出明确错误；运行中工具或模型失败时展示本轮失败说明。运行中 LLM 调用失败且重试耗尽时，不得声称保存、查询或回答成功，应提示模型服务暂时不可用并继续等待下一轮输入。
 
 推荐本地使用方式：
 
@@ -1193,7 +1199,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 | 读取卡片失败 | `read_qa_card` 找不到 card_id 或数据库错误 | 不引用该卡片作为来源 | 说明来源读取失败 |
 | DeepSeek key 缺失 | 真实 LLM 调用时未设置 `DEEPSEEK_API_KEY` | 不调用真实 LLM | 说明缺少环境变量 |
 | 配置缺失 | `.env` 和环境变量中均没有 `DEEPSEEK_API_KEY` | CLI Runtime 不启动 Agent | 提示用户设置 `DEEPSEEK_API_KEY` |
-| LLM 调用失败 | DeepSeek API 请求失败 | 不编造工具结果或最终回答 | 说明模型调用失败，可稍后重试 |
+| LLM 临时故障 | DeepSeek 网络错误、timeout、SSL EOF、HTTP 429、HTTP 500 或 HTTP 503 | 执行有上限的有限重试；重试耗尽后不编造工具结果或最终回答，结束本轮但不退出 CLI | 说明模型调用失败，可稍后重试 |
+| LLM 不可重试错误 | DeepSeek 返回 HTTP 400、401、402、422，或响应解析 / tool call 参数解析失败 | 不重试，不进入工具流程，不声称动作成功 | 展示明确失败原因 |
 | 工具执行失败 | 工具抛错或返回 `ok: false` | 不声称动作成功 | 展示失败原因 |
 | CLI 输入为空 | 用户直接回车 | 不调用 AgentLoop | 继续等待输入 |
 | CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
@@ -1263,40 +1270,44 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   4. `KnowledgeTools.save_qa_card` 能校验必填字段。
   5. `KnowledgeTools.read_qa_card` 对不存在 ID 返回结构化 not_found。
   6. `DeepSeekClient` 请求构造和响应解析使用 mock 测试。
-  7. `load_config` 能从 `.env` / 环境变量读取 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和 `KNOWLEDGE_DB_PATH`。
-  8. 缺少 `DEEPSEEK_API_KEY` 时返回明确错误。
-  9. `MemoryIndex` 能读取 `.memory/MEMORY.md` 索引。
-  10. `MemoryIndex` 对缺少必填列或非法 type 返回结构化错误。
-  11. `MemoryStore` 能读取合法 `.memory/*.md`。
-  12. `MemoryStore` 对 frontmatter 缺失或非法 type 返回结构化错误。
-  13. `SessionTranscript` 能追加和读取 `.sessions/<session_id>/transcript.jsonl`。
-  14. `SessionMetadata` 能创建、读取和更新 `.sessions/<session_id>/metadata.json`。
-  15. `SessionRestore` 能短 transcript 原样恢复 messages。
-  16. `SessionRestore` 能长 transcript 使用 summary + recent messages 恢复。
-  17. summarizer 失败时能使用 first N + recovery notice + recent N 降级恢复。
-  18. `ContextCompactor` 对超过阈值的大输出生成 compact record。
-  19. compact record 必须包含 artifact_path、summary、relevance 和 must_keep。
-  20. `MemoryExtractor` 只生成候选，不直接写入长期 memory。
-  21. user / feedback candidate 默认不自动写入长期 memory。
+  7. `DeepSeekClient` 能对可重试网络错误和 HTTP 429、500、503 执行有限重试。
+  8. `DeepSeekClient` 对 HTTP 400、401、402、422 不重试。
+  9. `DeepSeekClient` 重试耗尽时返回明确错误且不泄露 API key、headers、完整 payload 或 system prompt。
+  10. `load_config` 能从 `.env` / 环境变量读取 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和 `KNOWLEDGE_DB_PATH`。
+  11. 缺少 `DEEPSEEK_API_KEY` 时返回明确错误。
+  12. `MemoryIndex` 能读取 `.memory/MEMORY.md` 索引。
+  13. `MemoryIndex` 对缺少必填列或非法 type 返回结构化错误。
+  14. `MemoryStore` 能读取合法 `.memory/*.md`。
+  15. `MemoryStore` 对 frontmatter 缺失或非法 type 返回结构化错误。
+  16. `SessionTranscript` 能追加和读取 `.sessions/<session_id>/transcript.jsonl`。
+  17. `SessionMetadata` 能创建、读取和更新 `.sessions/<session_id>/metadata.json`。
+  18. `SessionRestore` 能短 transcript 原样恢复 messages。
+  19. `SessionRestore` 能长 transcript 使用 summary + recent messages 恢复。
+  20. summarizer 失败时能使用 first N + recovery notice + recent N 降级恢复。
+  21. `ContextCompactor` 对超过阈值的大输出生成 compact record。
+  22. compact record 必须包含 artifact_path、summary、relevance 和 must_keep。
+  23. `MemoryExtractor` 只生成候选，不直接写入长期 memory。
+  24. user / feedback candidate 默认不自动写入长期 memory。
 
 - **集成测试**:
   1. Agent Loop 能接收 fake LLM 的 tool call，执行工具并回填 tool result。
   2. Agent Loop 在 fake LLM 返回 final answer 时能直接结束。
   3. 保存后再搜索能召回同一张卡片。
   4. CLI Runtime 能用 fake input / fake AgentLoop 跑一次输入和退出流程。
-  5. `pyproject.toml` 必须声明 `pka = "personal_knowledge_agent.__main__:main"` 或等价 script 入口。
-  6. Agent Loop 关键阶段会产生结构化事件。
-  7. CLI Renderer 对长文本进行截断。
-  8. Async JSONL Logger 完整记录 `user_input`。
-  9. Async JSONL Logger 使用后台线程异步写入，不阻塞主流程。
-  10. Async JSONL Logger 在队列满和写入失败时按降级策略处理。
-  11. CLI Runtime 启动时能创建或恢复 `.sessions/default`。
-  12. Agent Loop 能基于 runtime `messages[]` 连续运行多轮用户输入。
-  13. turn-start 能读取 memory index 并按 user_input / recent messages 选择相关 memory。
-  14. Prompt Builder 能注入 memory index 和 selected memories。
-  15. 大 tool result 能落盘到 session artifacts 并在 trace / transcript 中保留 compact record。
-  16. turn-end 能把可恢复 message 追加到 transcript。
-  17. turn-end 能生成 memory candidates 并展示待确认候选。
+  5. CLI Runtime 在单轮 AgentLoop 失败后不退出，并能继续处理后续输入或 `/exit`。
+  6. `pyproject.toml` 必须声明 `pka = "personal_knowledge_agent.__main__:main"` 或等价 script 入口。
+  7. Agent Loop 关键阶段会产生结构化事件。
+  8. CLI Renderer 对长文本进行截断。
+  9. Async JSONL Logger 完整记录 `user_input`。
+  10. Async JSONL Logger 使用后台线程异步写入，不阻塞主流程。
+  11. Async JSONL Logger 在队列满和写入失败时按降级策略处理。
+  12. CLI Runtime 启动时能创建或恢复 `.sessions/default`。
+  13. Agent Loop 能基于 runtime `messages[]` 连续运行多轮用户输入。
+  14. turn-start 能读取 memory index 并按 user_input / recent messages 选择相关 memory。
+  15. Prompt Builder 能注入 memory index 和 selected memories。
+  16. 大 tool result 能落盘到 session artifacts 并在 trace / transcript 中保留 compact record。
+  17. turn-end 能把可恢复 message 追加到 transcript。
+  18. turn-end 能生成 memory candidates 并展示待确认候选。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
