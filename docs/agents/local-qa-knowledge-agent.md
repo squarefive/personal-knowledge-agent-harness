@@ -3,7 +3,7 @@ module: "local-qa-knowledge-agent"
 title: "本地个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-05-31"
+last_updated: "2026-06-02"
 ---
 
 # 本地个人 Q&A 知识库 Agent 开发上下文
@@ -72,6 +72,26 @@ last_updated: "2026-05-31"
   10. 不默认把完整历史对话作为长期记忆。
   11. 不默认把所有 `.memory/*.md` 全文注入每轮上下文。
   12. 不在本阶段实现向量检索、后台自动整理任务或复杂双向同步。
+
+- **最终版功能清单完成状态**:
+
+| 模块 | 状态 | 当前实现边界 |
+|---|---|---|
+| Q&A 知识管理 | 部分完成 | 已实现保存 Q&A 卡片、读取卡片、LIKE 检索和最近卡片列表；尚未实现标题、分类、标签、编辑、删除、导入和导出。 |
+| Markdown Wiki 管理 | 未完成 | 当前 Agent 明确不包含 Wiki、文件监听和自动索引；不得声称支持 Wiki 绑定、Markdown chunk、hash 或增量同步。 |
+| 统一知识检索 | 部分完成 | 当前只有 `search_qa_cards`，检索范围仅限 SQLite `qa_cards`；尚未实现语义向量检索、混合检索、过滤器、检索调试或统一 `search_knowledge`。 |
+| 来源追踪 | 部分完成 | Q&A 来源可追溯到 card_id、question、source_type 和 created_at；尚未支持 Markdown chunk、代码经验、手动笔记等来源类型，也没有程序级最终回答来源校验。 |
+| 分类与标签体系 | 未完成 | 当前只保存 keywords，不存在分类/标签模型、列表、重命名、合并或相似标签建议。 |
+| 知识去重与合并 | 未完成 | 当前明确不做去重合并；没有重复检测、相似知识检测、合并建议、差异展示、用户确认合并或原始来源保留流程。 |
+| 代码经验管理 | 未完成 | 当前没有报错记录、解决方案、代码片段、项目复盘、错误信息检索或面试复盘素材生成能力。 |
+| 复习系统 | 未完成 | 当前没有复习卡、今日待复习、复习结果、间隔重复、按标签/分类复习或自动小测题。 |
+| 内容输出 | 未完成 | 当前明确不做周报、日报或自动总结；没有学习总结、周报、博客大纲、面试提纲、简历项目描述或项目复盘总结能力。 |
+| Agent Harness | 部分完成 | 已实现 Agent Loop、Tool Dispatcher、Prompt Builder、运行时上下文拼接和工具调用结果回填；工具注册仍是静态映射，尚未形成完整可扩展注册机制。 |
+| 后台任务 | 未完成 | 当前明确不做后台任务；没有后台 Wiki 同步、索引构建、批量摘要、任务状态、完成通知或失败重试。 |
+| 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；删除、合并、覆盖、重建索引等高风险操作尚未实现，也没有对应确认流程或变更历史记录。 |
+| 长期偏好记忆 | 部分完成 | 已支持读取 Agent memory index 和相关 memory，并能生成 memory candidates 事件；尚未实现偏好写入确认闭环，以及偏好查看、修改、删除。 |
+
+以上状态仅描述当前代码已实现能力，不代表最终版设计已被纳入当前 Agent 边界。若要实现未完成模块，必须先更新本文档中的角色边界、工具契约、数据模型、核心流程、失败模式和测试要求，并单独提交文档变更后再进入代码实现。
 
 - **行为约束**:
   1. 凡是涉及长期记忆的动作，必须通过工具完成。
@@ -1351,3 +1371,4 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 | `2026-05-30` | 新增本地个人 Q&A 知识库 Agent 开发上下文 | 锁定第一版 Agent 设计边界和实现验收依据 | `TBD` |
 | `2026-05-31` | 补充 Agent memory、session memory、context compact 和 memory candidate 设计边界 | 为后续实现 Claude Code 风格记忆管理先锁定文档契约 | `TBD` |
 | `2026-05-31` | 将 session 设计从 `.session/current.md` 调整为 `.sessions/<session_id>/transcript.jsonl`、`summary.md` 和 `metadata.json` | 对齐 messages[] + transcript + compact summary 的聊天上下文设计 | `TBD` |
+| `2026-06-02` | 标记最终版功能清单相对当前实现的完成状态 | 帮助区分当前第一版闭环、部分 Harness 能力和最终版未实现模块 | `TBD` |
