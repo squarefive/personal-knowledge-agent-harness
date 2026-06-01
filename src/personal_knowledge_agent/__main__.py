@@ -114,7 +114,11 @@ def run_cli() -> int:
                 return 0
 
             rendered_final_answer = False
-            answer = agent.run(raw_input)
+            try:
+                answer = agent.run(raw_input)
+            except Exception as exc:
+                print(f"Agent> 模型服务暂时不可用，本轮没有完成。你可以稍后重试。错误：{exc}")
+                continue
             if not rendered_final_answer:
                 print(f"Agent> {answer}")
     finally:
