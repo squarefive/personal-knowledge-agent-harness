@@ -59,3 +59,24 @@ def test_pyproject_declares_pka_script():
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert data["project"]["scripts"]["pka"] == "personal_knowledge_agent.__main__:main"
+
+
+def test_main_dispatches_web_subcommand(monkeypatch):
+    called = {}
+
+    def fake_web_main(argv):
+        called["argv"] = argv
+        return 0
+
+    import personal_knowledge_agent.web.__main__ as web_main_module
+
+    monkeypatch.setattr(web_main_module, "main", fake_web_main)
+
+    assert cli.main(["web", "--no-open"]) == 0
+    assert called["argv"] == ["--no-open"]
+
+
+def test_main_defaults_to_cli(monkeypatch):
+    monkeypatch.setattr(cli, "run_cli", lambda: 0)
+
+    assert cli.main([]) == 0
