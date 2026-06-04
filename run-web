@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+if [ ! -x ".venv/bin/pka" ]; then
+  echo "未找到 .venv/bin/pka，请先运行："
+  echo "  uv venv"
+  echo "  uv pip install -e ."
+  exit 1
+fi
+
+exec .venv/bin/pka web "$@"

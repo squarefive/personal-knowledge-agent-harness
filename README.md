@@ -144,7 +144,20 @@ python -m personal_knowledge_agent
 
 #### Web UI
 
-启动本地 Web 服务：
+推荐使用启动脚本：
+
+```bash
+./run-web
+```
+
+脚本会透传 Web 参数，例如：
+
+```bash
+./run-web --no-open
+./run-web --port 8790
+```
+
+也可以在激活虚拟环境后直接运行：
 
 ```bash
 pka web
