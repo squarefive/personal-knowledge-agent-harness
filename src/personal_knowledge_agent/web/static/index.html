@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Personal Knowledge Agent</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="chat-pane" aria-label="聊天">
+        <header class="pane-header">
+          <div>
+            <h1>Personal Knowledge Agent</h1>
+            <p id="statusText">本地 Web UI 已就绪</p>
+          </div>
+          <button id="refreshCardsButton" class="icon-button" type="button" title="刷新卡片" aria-label="刷新卡片">
+            ↻
+          </button>
+        </header>
+
+        <div id="messages" class="messages" aria-live="polite">
+          <article class="message agent-message">
+            <div class="message-role">Agent</div>
+            <div class="message-body">你好。你可以录入一条 Q&A，也可以提问，我会基于本地知识库回答。</div>
+          </article>
+        </div>
+
+        <form id="chatForm" class="composer">
+          <textarea
+            id="messageInput"
+            name="message"
+            rows="3"
+            placeholder="输入 Q&A 录入请求或问题"
+            autocomplete="off"
+          ></textarea>
+          <button id="sendButton" type="submit">发送</button>
+        </form>
+      </section>
+
+      <aside class="cards-pane" aria-label="知识卡片">
+        <header class="cards-header">
+          <div>
+            <h2>知识卡片</h2>
+            <p>最近记录与搜索结果</p>
+          </div>
+        </header>
+
+        <form id="searchForm" class="search-form">
+          <input id="searchInput" name="q" type="search" placeholder="搜索本地 Q&A" />
+          <button type="submit">搜索</button>
+        </form>
+
+        <section class="card-list-section">
+          <div class="section-title">
+            <h3 id="cardsTitle">最近卡片</h3>
+            <span id="cardsCount">0</span>
+          </div>
+          <div id="cardsList" class="cards-list"></div>
+        </section>
+
+        <section class="card-detail-section">
+          <div class="section-title">
+            <h3>卡片详情</h3>
+          </div>
+          <div id="cardDetail" class="card-detail empty-state">选择一张卡片查看详情。</div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
