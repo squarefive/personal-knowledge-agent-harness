@@ -3,6 +3,8 @@ import time
 
 from fastapi.testclient import TestClient
 
+from personal_knowledge_agent.config import AgentConfig
+from personal_knowledge_agent.permissions import ApprovalRequest
 from personal_knowledge_agent.web.app import create_web_app
 
 
@@ -99,6 +101,29 @@ def test_chat_returns_agent_answer():
     assert response.json()["ok"] is True
     assert response.json()["answer"] == "reply: 你好"
     assert agent.inputs == ["你好"]
+
+
+def test_web_runtime_uses_default_denial_approval_callback(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None):
+        captured["approval_callback"] = approval_callback
+        return type("Components", (), {"agent": FakeAgent(), "tools": FakeTools()})()
+
+    import personal_knowledge_agent.web.app as app_module
+
+    monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+
+    create_web_app(config=config)
+
+    assert captured["approval_callback"](
+        ApprovalRequest(tool_name="delete_qa_card", arguments={"card_id": "qa_1"}, reason="danger")
+    ) is False
 
 
 def test_chat_rejects_empty_message():

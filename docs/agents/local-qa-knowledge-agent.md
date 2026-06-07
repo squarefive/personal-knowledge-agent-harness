@@ -102,12 +102,12 @@ last_updated: "2026-06-07"
 
 | 版本 | 阶段目标 | 技术选型 / 关键设计 | 当前状态 |
 |---|---|---|---|
-| `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 规划中，未实现 |
-| `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须使用 token 两阶段确认 | 规划中，未实现 |
+| `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
+| `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成，待合并到 main |
 | `v0.4` | 中文关键词检索 | 使用 Meilisearch 作为中文关键词检索服务；不使用 FTS5 作为主线；SQLite 仍是事实源，Meilisearch 只保存索引 | 规划中，未实现 |
 | `v0.5` | 向量检索和混合检索 | 使用 DashScope / Qwen `text-embedding-v4` 远程 embedding，默认 `1024` 维；使用 Qdrant 作为向量数据库；向量检索返回 card_id 后必须回 SQLite 读取事实 | 规划中，未实现 |
-| `v0.6` | 标签、分类、去重和合并 | 引入 tags / categories；自动标签、重复检测和合并草稿只是建议；合并必须 token 确认；确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
-| `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须 token 确认；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
+| `v0.6` | 标签、分类、去重和合并 | 引入 tags / categories；自动标签、重复检测和合并草稿只是建议；合并必须经过 PreToolUse permission gate；确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
+| `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须经过 PreToolUse permission gate；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
 
 - **v0.2-v0.7 已确认设计决策**:
   1. SQLite 继续作为 Q&A 事实库；外部索引或图数据库不得替代事实源。
@@ -115,7 +115,7 @@ last_updated: "2026-06-07"
   3. 未调用检索工具时不强制拒答；但 Agent 不得声称回答来自本地知识库，不得编造来源或 card_id。
   4. 删除就是物理删除；后续实现中不得引入软删除概念。
   5. 更新只修改当前卡片，不保存历史版本或 before / after 快照。
-  6. 删除、更新、合并、重建索引和确认图谱关系等高风险操作必须通过 token 两阶段确认；自然语言确认不能作为工具执行依据。
+  6. 删除、更新、合并、重建索引和确认图谱关系等高风险操作必须经过 harness 的 PreToolUse permission gate；模型只能请求工具，不能自行确认或绕过权限层。
   7. Meilisearch 和 Qdrant 由 Docker Compose 管理；数据目录集中放在 `.knowledge/` 下。
   8. Kuzu 使用本地文件数据库，默认路径位于 `.knowledge/` 下，不通过 Docker 管理。
   9. DashScope / Qwen `text-embedding-v4` 是 v0.5 的默认远程 embedding 服务；DeepSeek 继续作为主 LLM，不承担 embedding 职责。
@@ -707,8 +707,8 @@ last_updated: "2026-06-07"
 | 版本 | 工具 / 机制 | 职责 | 是否有副作用 | 是否需要确认 |
 |---|---|---|---|---|
 | `v0.2` | `turn_messages` / `source_evidence` | 从当前 turn messages 中提取真实工具证据，并由程序生成来源区块 | 否 | 否 |
-| `v0.3` | `prepare_update_qa_card` / `confirm_update_qa_card` | 两阶段更新 Q&A 当前卡片 | 是 | 是 |
-| `v0.3` | `prepare_delete_qa_card` / `confirm_delete_qa_card` | 两阶段物理删除 Q&A 卡片及关联索引 | 是 | 是 |
+| `v0.3` | `update_qa_card` | 更新 Q&A 当前卡片 | 是 | 是 |
+| `v0.3` | `delete_qa_card` | 物理删除 Q&A 卡片 | 是 | 是 |
 | `v0.4` | `sync_keyword_index` / `keyword_search_qa_cards` | 同步 Meilisearch 索引并执行中文关键词检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
 | `v0.5` | `sync_vector_index` / `semantic_search_qa_cards` / `hybrid_search_qa_cards` | 生成 embedding、同步 Qdrant、执行语义和混合检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
 | `v0.6` | `suggest_tags` / `apply_tags` | 生成标签建议，并在确认后写入标签 | 写入有副作用 | 写入需要确认 |
@@ -716,7 +716,7 @@ last_updated: "2026-06-07"
 | `v0.7` | `extract_graph_candidates` / `confirm_graph_candidate` | 从卡片抽取实体关系候选，并在确认后写入 Kuzu | 确认写入有副作用 | 是 |
 | `v0.7` | `search_graph_context` | 查询实体和关系上下文，并返回可追溯 card_id | 否 | 否 |
 
-高风险工具必须采用 `prepare_*` 返回 confirmation token、`confirm_*` 校验 token 后执行的结构。工具不得接受模型自由生成的自然语言确认作为执行依据。
+高风险工具必须在真正执行前经过 PreToolUse permission gate。权限结果包括 `allow`、`deny` 和 `ask`：`allow` 直接执行，`deny` 不执行并返回 `permission_denied` tool result，`ask` 由当前 Runtime 询问用户。CLI Runtime 必须提供真实用户确认；Web Runtime 当前不扩展确认 UI，高危 `ask` 默认拒绝并返回 `permission_denied` tool result。工具不得接受模型自由生成的自然语言确认作为执行依据。
 
 v0.2 实现必须保持低侵入：
 
@@ -1000,6 +1000,28 @@ pka
 - **用户可见反馈**:
   当前可通过事件展示候选；不得声称候选已经写入长期 memory。
 
+### 5.11 v0.3 PreToolUse 权限确认
+
+1. 模型在 LLM 响应中请求调用工具。
+2. AgentLoop 将 tool call 交给 ToolCallStep。
+3. ToolCallStep 在执行工具 handler 前调用 permission checker。
+4. 如果权限结果是 `allow`，ToolCallStep 执行 ToolDispatcher。
+5. 如果权限结果是 `deny`，ToolCallStep 不执行工具，并返回 `permission_denied` tool result。
+6. 如果权限结果是 `ask`，ToolCallStep 构造 ApprovalRequest 并调用当前 Runtime 注入的 approval callback。
+7. CLI Runtime 的 approval callback 必须向用户展示工具名、参数摘要和原因，并要求用户输入明确允许词。
+8. 用户允许时，ToolCallStep 执行 ToolDispatcher。
+9. 用户拒绝时，ToolCallStep 不执行工具，并返回 `permission_denied` tool result。
+10. permission_denied 仍必须作为 tool_result 回填给模型，让模型知道该操作没有执行。
+
+- **成功条件**:
+  高风险工具只有在 Runtime 用户确认后才真正执行；普通安全工具不触发用户确认。
+
+- **失败条件**:
+  用户拒绝、Runtime 没有确认 UI、权限规则明确拒绝或 approval callback 抛错。
+
+- **用户可见反馈**:
+  CLI 应展示高风险工具请求和确认提示；拒绝后 Agent 应说明操作未执行。Web 第一版不提供确认 UI，高风险工具默认拒绝，不得阻塞 HTTP 请求。
+
 ---
 
 ## 6. 数据模型
@@ -1236,13 +1258,11 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   - `created_at`
   - `evidence_kind`: `saved`、`searched` 或 `read`
 
-- **v0.3 Confirmation Token**:
-  - `token`
-  - `operation`
-  - `target_ids`
-  - `preview`
-  - `expires_at`
-  - `created_at`
+- **v0.3 Permission Request**:
+  - `tool_name`
+  - `arguments`
+  - `reason`
+  - `behavior`: `allow`、`deny` 或 `ask`
 
 - **v0.4 Meilisearch Document**:
   - `card_id`
@@ -1290,6 +1310,9 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | LLM 临时故障 | DeepSeek 网络错误、timeout、SSL EOF、HTTP 429、HTTP 500 或 HTTP 503 | 执行有上限的有限重试；重试耗尽后不编造工具结果或最终回答，结束本轮但不退出 CLI / Web 服务 | 说明模型调用失败，可稍后重试 |
 | LLM 不可重试错误 | DeepSeek 返回 HTTP 400、401、402、422，或响应解析 / tool call 参数解析失败 | 不重试，不进入工具流程，不声称动作成功 | 展示明确失败原因 |
 | 工具执行失败 | 工具抛错或返回 `ok: false` | 不声称动作成功 | 展示失败原因 |
+| 高风险工具需确认 | 权限结果为 `ask` | Runtime 询问用户；允许才执行 | 展示工具名、参数摘要和风险原因 |
+| 用户拒绝高风险工具 | approval callback 返回 false | 不执行工具，返回 `permission_denied` tool result | 说明操作未执行 |
+| Web 高风险工具请求 | Web Runtime 遇到 `ask` 权限 | 不阻塞 HTTP，默认拒绝并返回 `permission_denied` | HTML 展示本轮失败或未执行说明 |
 | CLI 输入为空 | 用户直接回车 | 不调用 AgentLoop | 继续等待输入 |
 | CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
 | CLI Renderer 失败 | 渲染事件时发生异常 | 不影响工具执行和 Agent 最终回答 | 向 stderr 输出简短错误 |
@@ -1418,6 +1441,10 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   12. memory candidate 事件不得被解释为已写入 `.memory/*.md`。
   13. Web API 不得绕过 AgentLoop 直接完成聊天回答。
   14. Web UI 不得提供未声明的编辑、删除、合并或自动知识图谱能力。
+  15. 高风险工具被用户拒绝时不得执行 handler。
+  16. 高风险工具被用户允许时才执行 handler。
+  17. 普通工具不得触发 approval callback。
+  18. Web Runtime 遇到高风险工具 ask 时不得阻塞等待终端输入。
 
 - **可选 Live Smoke Test**:
   1. 仅在存在 `DEEPSEEK_API_KEY` 时运行。

@@ -88,6 +88,55 @@ class SQLiteStore:
             return None
         return self._row_to_card(row)
 
+    def update_card(
+        self,
+        card_id: str,
+        *,
+        question: str | None = None,
+        answer: str | None = None,
+        summary: str | None = None,
+        keywords: list[str] | None = None,
+    ) -> QACard | None:
+        self._require_text("card_id", card_id)
+        current = self.read_card(card_id)
+        if current is None:
+            return None
+        if question is None and answer is None and summary is None and keywords is None:
+            raise ValueError("at least one field must be provided")
+
+        next_question = current.question if question is None else question.strip()
+        next_answer = current.answer if answer is None else answer.strip()
+        next_summary = current.summary if summary is None else summary.strip()
+        next_keywords = current.keywords if keywords is None else self._clean_keywords(keywords)
+        self._require_text("question", next_question)
+        self._require_text("answer", next_answer)
+        self._require_text("summary", next_summary)
+        updated_at = self._now()
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE qa_cards
+                SET question = ?, answer = ?, summary = ?, keywords = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    next_question,
+                    next_answer,
+                    next_summary,
+                    json.dumps(next_keywords, ensure_ascii=False),
+                    updated_at,
+                    card_id.strip(),
+                ),
+            )
+        return self.read_card(card_id)
+
+    def delete_card(self, card_id: str) -> bool:
+        self._require_text("card_id", card_id)
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM qa_cards WHERE id = ?", (card_id.strip(),))
+        return cursor.rowcount > 0
+
     def list_recent_cards(self, limit: int = 10) -> list[QACard]:
         safe_limit = self._safe_limit(limit)
         with self._connect() as conn:

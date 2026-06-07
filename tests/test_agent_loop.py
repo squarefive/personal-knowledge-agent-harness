@@ -140,6 +140,108 @@ def test_agent_loop_does_not_reuse_previous_turn_sources(tmp_path):
     assert "什么是最小闭环？" not in second_answer
 
 
+def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    saved = knowledge_tools.save_qa_card(
+        {
+            "question": "旧问题？",
+            "answer": "旧答案。",
+            "summary": "旧摘要。",
+            "keywords": ["旧"],
+        }
+    )
+    dispatcher = ToolDispatcher(knowledge_tools)
+    approvals = []
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        name="delete_qa_card",
+                        arguments={"card_id": saved["card_id"]},
+                    )
+                ]
+            ),
+            LLMResponse(text="已删除。"),
+        ]
+    )
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        approval_callback=lambda request: approvals.append(request) is None or True,
+    )
+
+    answer = loop.run("删除这张卡片")
+
+    assert answer == "已删除。"
+    assert approvals[0].tool_name == "delete_qa_card"
+    assert knowledge_tools.read_qa_card({"card_id": saved["card_id"]})["error_code"] == "not_found"
+
+
+def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    saved = knowledge_tools.save_qa_card(
+        {
+            "question": "问题？",
+            "answer": "答案。",
+            "summary": "摘要。",
+            "keywords": ["关键词"],
+        }
+    )
+    dispatcher = ToolDispatcher(knowledge_tools)
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        name="delete_qa_card",
+                        arguments={"card_id": saved["card_id"]},
+                    )
+                ]
+            ),
+            LLMResponse(text="操作未执行。"),
+        ]
+    )
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        approval_callback=lambda request: False,
+    )
+
+    answer = loop.run("删除这张卡片")
+    second_messages = fake_llm.calls[1]["messages"]
+
+    assert answer == "操作未执行。"
+    assert knowledge_tools.read_qa_card({"card_id": saved["card_id"]})["ok"] is True
+    assert "permission_denied" in second_messages[-1]["content"]
+
+
+def test_agent_loop_safe_tool_does_not_request_approval(tmp_path):
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(knowledge_tools)
+    approvals = []
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(tool_calls=[ToolCall(id="call_1", name="list_recent_cards", arguments={"limit": 5})]),
+            LLMResponse(text="没有最近卡片。"),
+        ]
+    )
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        approval_callback=lambda request: approvals.append(request) is None or True,
+    )
+
+    loop.run("列出最近卡片")
+
+    assert approvals == []
+
+
 def test_agent_loop_injects_memory_context_using_recent_messages(tmp_path):
     memory_dir = tmp_path / ".memory"
     memory_dir.mkdir()

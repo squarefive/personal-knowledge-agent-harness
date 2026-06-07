@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ..agent_factory import create_agent_components
 from ..config import AgentConfig, load_config
 from ..events import AgentEvent
+from ..permissions import default_approval_callback
 
 
 class ChatAgent(Protocol):
@@ -43,7 +44,11 @@ def create_web_app(
         events.append(event.to_log_dict())
 
     if agent is None or tools is None:
-        components = create_agent_components(config or load_config(), event_sink=collect_event)
+        components = create_agent_components(
+            config or load_config(),
+            event_sink=collect_event,
+            approval_callback=default_approval_callback,
+        )
         agent = components.agent
         tools = components.tools
 

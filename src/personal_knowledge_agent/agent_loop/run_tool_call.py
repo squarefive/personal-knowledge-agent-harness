@@ -5,6 +5,13 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
+from ..permissions import (
+    ApprovalRequest,
+    PermissionDecision,
+    check_permission,
+    default_approval_callback,
+    permission_denied_result,
+)
 from ..schemas import CompactRecord, ToolCall
 from ..session_memory.compact_tool_result import ContextCompactor
 from ..tools.dispatch_tool_call import ToolDispatcher
@@ -22,10 +29,14 @@ class ToolCallStep:
         *,
         dispatcher: ToolDispatcher,
         context_compactor: ContextCompactor | None = None,
+        permission_checker: Callable[[str, dict[str, Any]], PermissionDecision] = check_permission,
+        approval_callback: Callable[[ApprovalRequest], bool] = default_approval_callback,
         emit: Callable[..., None],
     ):
         self.dispatcher = dispatcher
         self.context_compactor = context_compactor
+        self.permission_checker = permission_checker
+        self.approval_callback = approval_callback
         self.emit = emit
 
     def run(self, *, run_id: str, turn: int, tool_call: ToolCall) -> ToolCallResult:
@@ -39,7 +50,27 @@ class ToolCallStep:
             input=display_input,
         )
         started_at = time.monotonic()
-        result = self.dispatcher.execute(tool_call)
+        decision = self.permission_checker(tool_call.name, tool_call.arguments)
+        approved = False
+        if decision.behavior == "allow":
+            result = self.dispatcher.execute(tool_call)
+        elif decision.behavior == "ask":
+            request = ApprovalRequest(
+                tool_name=tool_call.name,
+                arguments=tool_call.arguments,
+                reason=decision.reason,
+            )
+            try:
+                approved = self.approval_callback(request)
+            except Exception as exc:
+                result = permission_denied_result(f"Permission approval failed: {exc}")
+            else:
+                if approved:
+                    result = self.dispatcher.execute(tool_call)
+                else:
+                    result = permission_denied_result("Permission denied by user.")
+        else:
+            result = permission_denied_result(decision.reason)
         duration_ms = int((time.monotonic() - started_at) * 1000)
         compact_record = self._compact_tool_result(
             run_id=run_id,
@@ -56,6 +87,9 @@ class ToolCallStep:
             tool_call_id=tool_call.id,
             status="success" if result.get("ok") is not False else "error",
             duration_ms=duration_ms,
+            permission_behavior=decision.behavior,
+            permission_reason=decision.reason,
+            permission_approved=approved,
             output=display_output,
         )
         if compact_record is not None:

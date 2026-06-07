@@ -12,6 +12,8 @@ def test_build_system_prompt_keeps_base_rules():
     assert "你是一个本地个人 Q&A 知识库 Agent" in prompt
     assert "如果要基于本地知识库回答，先调用 search_qa_cards" in prompt
     assert "最终来源区块由程序根据工具结果生成" in prompt
+    assert "高风险工具执行前由 harness 权限层请求用户确认" in prompt
+    assert "permission_denied" in prompt
     assert "Q&A 知识库和 Agent memory 必须分开" in prompt
 
 

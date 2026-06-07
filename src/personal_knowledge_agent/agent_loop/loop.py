@@ -7,6 +7,7 @@ from ..agent_memory.extract_memory_candidates import MemoryExtractor
 from ..agent_memory.index_store import MemoryIndexStore
 from ..events import new_run_id
 from ..llm_client import DeepSeekClient
+from ..permissions import check_permission, default_approval_callback
 from ..prompt_builder import build_system_prompt
 from ..session_memory.compact_tool_result import ContextCompactor
 from ..session_memory.metadata import SessionMetadataStore
@@ -37,6 +38,8 @@ class AgentLoop:
         metadata_store: SessionMetadataStore | None = None,
         context_compactor: ContextCompactor | None = None,
         memory_extractor: MemoryExtractor | None = None,
+        permission_checker=None,
+        approval_callback=None,
         max_turns: int = 8,
         event_sink: EventSink | None = None,
     ):
@@ -62,6 +65,8 @@ class AgentLoop:
         self.tool_call_step = ToolCallStep(
             dispatcher=self.dispatcher,
             context_compactor=self.context_compactor,
+            permission_checker=permission_checker or check_permission,
+            approval_callback=approval_callback or default_approval_callback,
             emit=self.event_emitter.emit,
         )
         self.answer_finish_step = AnswerFinishStep(

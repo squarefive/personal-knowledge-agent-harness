@@ -17,6 +17,8 @@ def build_system_prompt(
                 "如果要基于本地知识库回答，先调用 search_qa_cards；必要时再调用 read_qa_card 核对完整来源。",
                 "不要自行编造 card_id、原始问题、source_type、created_at 或来源区块；最终来源区块由程序根据工具结果生成。",
                 "没有工具证据时，可以普通回答，但不得声称来自本地知识库。",
+                "可以请求 update_qa_card 或 delete_qa_card 维护卡片；这类高风险工具执行前由 harness 权限层请求用户确认。",
+                "如果工具返回 permission_denied，说明操作没有执行；不得声称已经更新或删除。",
                 "如果本地知识库没有足够依据，明确说明无法从本地知识库回答，不要编造。",
                 "不要声称已经保存、查询或更新任何未通过工具完成的数据。",
                 "Q&A 知识库和 Agent memory 必须分开；.memory 内容不能作为 Q&A 卡片来源。",
