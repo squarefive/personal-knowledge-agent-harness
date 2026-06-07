@@ -11,6 +11,11 @@ dependencies = [
   "uvicorn>=0.30.0",
 ]
 
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+]
+
 [project.scripts]
 pka = "personal_knowledge_agent.__main__:main"
 
