@@ -42,6 +42,14 @@ elements.chatForm.addEventListener("submit", async (event) => {
   }
 });
 
+elements.messageInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing || state.busy) {
+    return;
+  }
+  event.preventDefault();
+  elements.chatForm.requestSubmit();
+});
+
 elements.searchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = elements.searchInput.value.trim();
