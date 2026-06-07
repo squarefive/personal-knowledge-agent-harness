@@ -3,7 +3,7 @@ module: "local-qa-knowledge-agent"
 title: "本地个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-06-02"
+last_updated: "2026-06-07"
 ---
 
 # 本地个人 Q&A 知识库 Agent 开发上下文
@@ -58,7 +58,7 @@ last_updated: "2026-06-02"
   9. 从 `.sessions/<session_id>/transcript.jsonl` 恢复 runtime `messages[]`。
   10. 在长 transcript 场景下使用 `summary.md` + recent messages 恢复。
   11. 将过大的 tool result 写入 `.sessions/<session_id>/artifacts/`，并在上下文中保留 compact record。
-  12. 在 turn 结束后提取 memory candidates，并按写入规则保存或等待用户确认。
+  12. 在 turn 结束后提取 memory candidates，并通过事件暴露候选；当前不自动写入长期 memory 或维护待确认队列。
   13. 提供本地 HTML 聊天入口，作为 CLI Runtime 的浏览器替代输入输出层。
   14. 在 Web UI 中查看最近 Q&A 卡片、搜索 Q&A 卡片和查看卡片详情。
 
@@ -94,7 +94,7 @@ last_updated: "2026-06-02"
 | 后台任务 | 未完成 | 当前明确不做后台任务；没有后台 Wiki 同步、索引构建、批量摘要、任务状态、完成通知或失败重试。 |
 | 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；删除、合并、覆盖、重建索引等高风险操作尚未实现，也没有对应确认流程或变更历史记录。 |
 | 长期偏好记忆 | 部分完成 | 已支持读取 Agent memory index 和相关 memory，并能生成 memory candidates 事件；尚未实现偏好写入确认闭环，以及偏好查看、修改、删除。 |
-| Web Chat + Cards | 未完成 | 已纳入设计边界；目标是提供本地 HTML 聊天入口、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
+| Web Chat + Cards | 部分完成 | 已实现本地 HTML 聊天入口、`POST /api/chat`、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
 
 以上状态仅描述当前代码已实现能力，不代表最终版设计已被纳入当前 Agent 边界。若要实现未完成模块，必须先更新本文档中的角色边界、工具契约、数据模型、核心流程、失败模式和测试要求，并单独提交文档变更后再进入代码实现。
 
@@ -108,7 +108,7 @@ last_updated: "2026-06-02"
   7. `.memory/*.md` 用于 Agent 长期工作记忆，不得作为 Q&A 回答的知识卡片来源。
   8. `.sessions/<session_id>/summary.md` 只表示当前会话 compact summary，不得当作长期事实来源。
   9. compact 只能缩减当前上下文窗口，不得替代长期记忆写入。
-  10. memory candidate 写入必须遵守确认规则，不得把模型推测直接写成长期事实。
+  10. memory candidate 只表示候选，不表示已写入长期 memory；当前实现不得声称候选已经保存。
   11. Web UI 只能展示和发起用户意图，不得绕过 AgentLoop、Tools 或 Store 执行业务动作。
 
 ---
@@ -145,7 +145,7 @@ last_updated: "2026-06-02"
   - 读取 `.memory/MEMORY.md` memory index。
   - 按需读取少量相关 `.memory/*.md`。
   - 校验 memory frontmatter 和索引字段。
-  - 提供 memory candidate 的写入入口，并按写入规则处理确认要求。
+  - 当前仅提供 Agent memory 读取能力；尚未实现 memory candidate 写入入口、确认队列或索引更新流程。
   - 不直接回答用户知识问题。
   - 不把 Agent memory 写入 SQLite `qa_cards` 表。
 
@@ -231,7 +231,8 @@ last_updated: "2026-06-02"
   - 作为 Agent 可执行动作的唯一入口。
   - 校验工具输入。
   - 调用 SQLite Store 完成保存、检索、读取和列出最近卡片。
-  - 调用 Memory Manager 和 Context Compactor 完成 Agent memory 和 compact artifact 相关操作。
+  - 调用 Agent memory store 完成 memory index 和 memory 全文读取。
+  - 不负责上下文压缩；当前上下文压缩由 AgentLoop 内部的 Context Compactor 自动完成。
   - 将成功、失败和未找到结果统一转换为结构化 tool result。
 
 - **Services / Repositories 职责**:
@@ -360,8 +361,6 @@ last_updated: "2026-06-02"
 | `list_recent_cards` | 列出最近保存卡片 | 用户要求查看最近记录或保存后确认时 | 否 | 否 |
 | `list_memory_index` | 列出 Agent memory 索引 | turn-start 或模型需要了解可用记忆时 | 否 | 否 |
 | `read_memory` | 读取指定 Agent memory 全文 | 当前请求需要某条长期记忆时 | 否 | 否 |
-| `compact_context_artifact` | 将大工具结果落盘并返回 compact record | tool result 超过阈值或显式 compact 时 | 是 | 否 |
-| `propose_memory_candidate` | 提交长期 memory 候选 | turn-end 提取到可复用记忆时 | 是 | 视类型而定 |
 
 ### 3.2 工具契约
 
@@ -669,120 +668,13 @@ last_updated: "2026-06-02"
 - **失败处理**:
   name 为空时返回结构化错误。找不到 memory 时返回 `ok: false`、`error_code: "not_found"`。frontmatter 缺少必填字段或 type 非法时返回 `ok: false`、`error_code: "invalid_memory"`。
 
-#### `compact_context_artifact`
+### 3.3 当前非工具机制
 
-- **职责**:
-  将过大的 tool result 或上下文材料写入 `.sessions/<session_id>/artifacts/`，并返回 compact record。compact 只服务当前上下文窗口，不产生长期记忆。
+- **上下文压缩**:
+  当前上下文压缩不是 LLM 可调用工具。AgentLoop 在 tool result 超过阈值时，通过 `ContextCompactor.compact_tool_result()` 自动将原始 tool result 写入 `.sessions/<session_id>/artifacts/`，并通过 compact record 回填 tool result message 和 `context_compacted` 事件。
 
-- **输入**:
-
-```json
-{
-  "run_id": "本轮运行 ID",
-  "artifact_name": "artifact 文件名建议",
-  "content": "需要落盘的大输出",
-  "summary": "摘要",
-  "relevance": "与当前任务的关系",
-  "must_keep": ["必须保留的关键信息"]
-}
-```
-
-- **输出**:
-
-```json
-{
-  "ok": true,
-  "compact_record": {
-    "artifact_path": ".sessions/<session_id>/artifacts/run-123-tool-2.txt",
-    "summary": "摘要",
-    "relevance": "相关性说明",
-    "must_keep": ["必须保留的关键信息"]
-  }
-}
-```
-
-- **可展示输入字段**:
-  - `run_id`
-  - `artifact_name`
-  - `summary`
-  - `relevance`
-  - `must_keep`
-
-- **可展示输出字段**:
-  - `ok`
-  - `compact_record.artifact_path`
-  - `compact_record.summary`
-  - `compact_record.relevance`
-  - `compact_record.must_keep`
-  - `error_code`
-  - `message`
-
-- **副作用**:
-  写入 `.sessions/<session_id>/artifacts/`。
-
-- **失败处理**:
-  content 为空或写入失败时返回结构化错误。artifact 落盘失败时 Agent 应降级为不 compact 或保留原始 tool result，不得丢失当前回答所需证据。
-
-#### `propose_memory_candidate`
-
-- **职责**:
-  提交一条长期 Agent memory 候选。该工具负责按 type、source_type 和 write_policy 判断是否自动写入 `.memory/*.md`，或保存为待用户确认候选。
-
-- **输入**:
-
-```json
-{
-  "name": "候选 memory 名称",
-  "type": "user / feedback / project / reference",
-  "description": "简短描述",
-  "content": "候选 memory 正文",
-  "source_type": "user_explicit / user_decision / project_doc / agent_extracted / reference",
-  "source_ref": "来源引用，可为空",
-  "confidence": "high / medium / low"
-}
-```
-
-- **输出**:
-
-```json
-{
-  "ok": true,
-  "status": "written / pending_confirmation / rejected",
-  "memory_path": ".memory/project-example.md",
-  "requires_confirmation": false,
-  "message": "处理结果说明"
-}
-```
-
-- **可展示输入字段**:
-  - `name`
-  - `type`
-  - `description`
-  - `source_type`
-  - `source_ref`
-  - `confidence`
-
-- **可展示输出字段**:
-  - `ok`
-  - `status`
-  - `memory_path`
-  - `requires_confirmation`
-  - `message`
-  - `error_code`
-
-- **副作用**:
-  可能写入 `.memory/*.md` 并更新 `.memory/MEMORY.md`，或写入待确认候选队列。
-
-- **失败处理**:
-  字段缺失、type 非法、候选与已有 memory 冲突或 confidence 过低时返回 `ok: false` 或 `status: "pending_confirmation"`。不得在冲突时自动覆盖已有 memory。
-
-- **写入规则**:
-  1. session transcript / summary 不通过本工具写入长期 memory。
-  2. `reference` 可自动写入，但只写路径、用途和入口说明，不复制大内容。
-  3. `project` 仅在来源是用户明确决策或项目文档时可自动写入。
-  4. `user` 默认需要确认，除非用户明确说“记住”“以后”“每次”等长期偏好表达。
-  5. `feedback` 默认展示候选，确认后写入。
-  6. 模型推测、临时讨论、敏感信息和过期任务状态不得自动写入长期 memory。
+- **Memory candidate**:
+  当前 memory candidate 不是 LLM 可调用工具，也没有写入 `.memory/*.md`、更新 `.memory/MEMORY.md` 或 pending confirmation 队列。AgentLoop 只在 turn-end 通过 `MemoryExtractor` 生成候选，并发出 `memory_candidates_generated` 事件；候选不等于已写入长期 memory。
 
 ---
 
@@ -1021,18 +913,18 @@ pka
 
 ### 5.9 上下文压缩
 
-1. Agent Loop 或 Context Compactor 检查 compact 触发条件。
-2. 当单个 tool result 超过阈值、本轮累计 tool result 过大，或用户显式要求总结 / 进入下一阶段时，触发 compact。
-3. Context Compactor 将原始大输出写入 `.sessions/<session_id>/artifacts/`。
-4. Context Compactor 生成 compact record，至少包含 artifact_path、summary、relevance 和 must_keep。
-5. Agent Loop 用 compact record 替换上下文中的大输出，或在 trace 中记录 compact record。
-6. compact 后继续将可恢复 message 追加写入 `transcript.jsonl`，必要时更新 `summary.md` 和 `metadata.json`。
+1. AgentLoop 执行工具调用并获得 tool result。
+2. ToolCallStep 将 tool result 序列化后交给 ContextCompactor 检查长度。
+3. 当 tool result 超过阈值时，ContextCompactor 将原始结果写入 `.sessions/<session_id>/artifacts/`。
+4. ContextCompactor 返回 compact record，包含 artifact_path、summary、relevance 和 must_keep。
+5. AgentLoop 将 compact record 写入 tool result message，并发出 `context_compacted` 事件。
+6. compact 只缩减当前上下文窗口，不作为 Q&A 来源或长期 memory。
 
 - **成功条件**:
-  大输出可通过 artifact_path 回读，当前上下文只保留高相关摘要和关键事实。
+  大输出可通过 artifact_path 回读，当前上下文保留 compact record。
 
 - **失败条件**:
-  artifact 写入失败、compact record 字段缺失或 summary 无法生成。
+  artifact 写入失败或 compact record 生成失败。
 
 - **用户可见反馈**:
   compact 成功时可在事件中展示 artifact_path 和 summary。compact 失败时降级为不压缩或保留原始 tool result，不得丢失回答所需证据。
@@ -1040,21 +932,19 @@ pka
 ### 5.10 Turn-end memory candidate 提取
 
 1. Agent Loop 完成本轮最终回答。
-2. Memory Extractor 收集 user input、final answer、recent messages、tool result summaries 和 memory index。
+2. MemoryExtractor 收集 user input、final answer、recent messages 和 memory index。
 3. Memory Extractor 提取结构化 memory candidates。
-4. Memory Manager 对候选做去重、字段校验和冲突检测。
-5. Memory Manager 按写入规则处理候选：自动写入、保存为待确认，或拒绝写入。
-6. 自动写入时，Memory Manager 写入 `.memory/*.md` 并更新 `.memory/MEMORY.md`。
-7. 需要确认时，Agent 或 CLI 展示候选，不得声称已经写入长期 memory。
+4. AgentLoop 发出 `memory_candidates_generated` 事件。
+5. 当前实现不自动写入 `.memory/*.md`，不更新 `.memory/MEMORY.md`，也不维护 pending confirmation 队列。
 
 - **成功条件**:
-  稳定偏好、明确项目决策、长期反馈和引用入口被整理为可追溯候选，并按规则处理。
+  稳定偏好、明确项目决策等内容被整理为候选并通过事件暴露；候选不表示已经写入长期 memory。
 
 - **失败条件**:
-  候选字段非法、候选与已有 memory 冲突、来源不足、confidence 过低或写入失败。
+  MemoryExtractor 执行失败或候选生成异常。
 
 - **用户可见反馈**:
-  自动写入时展示 memory name、type 和 path。需要确认时展示候选内容和确认需求。拒绝写入时说明原因。
+  当前可通过事件展示候选；不得声称候选已经写入长期 memory。
 
 ---
 
@@ -1251,7 +1141,7 @@ compact record 是上下文压缩后的结构化摘要，必须能指回原始 a
 
 ### 6.9 Memory Candidate
 
-memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不是已写入记忆，只有工具返回 `status: "written"` 后才表示长期 memory 已保存。
+memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实现只生成候选事件，不写入长期记忆；候选不是已写入记忆。
 
 格式：
 
@@ -1316,9 +1206,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 | Summary 生成失败 | summarizer 最多重试后仍失败 | 使用 first N + recovery notice + recent N 恢复 | 说明 summary 降级恢复 |
 | Artifact 落盘失败 | `.sessions/<session_id>/artifacts/` 无法写入 | 降级为不 compact 或保留原始 tool result | 说明 compact artifact 未保存 |
 | Compact record 非法 | 缺少 artifact_path、summary、relevance 或 must_keep | 不使用该 compact record | 说明 compact 失败 |
-| Memory candidate 冲突 | 候选与已有 memory 含义冲突 | 不自动覆盖，标记为待确认 | 展示冲突并要求用户确认 |
-| Memory candidate 需要确认 | type 为 user / feedback 或来源不足 | 不自动写入长期 memory | 展示候选并说明需要确认 |
-| Memory candidate 写入失败 | `.memory/*.md` 或 `MEMORY.md` 无法写入 | 不声称已写入 memory | 说明写入失败和错误原因 |
+| Memory candidate 生成失败 | MemoryExtractor 执行失败或候选字段生成异常 | 不写入长期 memory，不声称已记住 | 可通过事件或日志说明候选生成失败 |
 
 - **通用降级原则**:
   1. 工具失败时不得假装已完成。
@@ -1328,7 +1216,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   5. Agent memory 失败不得阻断 Q&A 保存、检索和回答主流程。
   6. Session transcript / summary 失败不得被解释为长期事实缺失。
   7. Compact 失败不得丢失回答所需证据。
-  8. Memory candidate 未写入前不得声称 Agent 已经记住。
+  8. Memory candidate 只是候选事件；当前实现不得声称 Agent 已经记住。
   9. Web API 失败时必须返回结构化错误，HTML 不得伪造成功状态。
 
 - **日志降级原则**:
@@ -1352,12 +1240,10 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   4. summarizer 失败后使用 first N messages + recovery notice + recent N messages 恢复。
   5. summary 失败不得阻断 CLI 启动或 Q&A 主流程。
 
-- **Memory 写入降级原则**:
-  1. `reference` 可自动写入长期 memory，但只写路径、用途和入口说明。
-  2. `project` 仅在来源是用户明确决策或项目文档时可自动写入。
-  3. `user` 默认需要确认，除非用户明确要求“记住”“以后”“每次”。
-  4. `feedback` 默认展示候选，确认后写入。
-  5. 模型推测、临时讨论、敏感信息和过期任务状态不得自动写入长期 memory。
+- **Memory candidate 降级原则**:
+  1. 当前实现只生成 memory candidate 事件，不自动写入长期 memory。
+  2. 候选生成失败不得阻断 Q&A 保存、检索和回答主流程。
+  3. 模型推测、临时讨论、敏感信息和过期任务状态不得被声称为已写入长期 memory。
 
 ---
 
@@ -1408,7 +1294,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   15. Prompt Builder 能注入 memory index 和 selected memories。
   16. 大 tool result 能落盘到 session artifacts 并在 trace / transcript 中保留 compact record。
   17. turn-end 能把可恢复 message 追加到 transcript。
-  18. turn-end 能生成 memory candidates 并展示待确认候选。
+  18. turn-end 能生成 memory candidates 并通过 `memory_candidates_generated` 事件暴露候选。
   19. CLI 入口能在默认模式启动 CLI，并能通过 `pka web` 分发到 Web Runtime。
   20. Web Runtime 能用 fake AgentLoop 处理一次 `POST /api/chat`。
   21. Web Runtime 能返回最近卡片、搜索卡片和卡片详情的结构化结果。
@@ -1426,7 +1312,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
   9. `.sessions/<session_id>/summary.md` 和 `transcript.jsonl` 不得作为长期事实来源。
   10. compact artifact 不得作为 Q&A 回答来源。
   11. Memory candidate 未写入时不得声称已经记住。
-  12. user / feedback candidate 在未确认前不得自动写入 `.memory/*.md`。
+  12. memory candidate 事件不得被解释为已写入 `.memory/*.md`。
   13. Web API 不得绕过 AgentLoop 直接完成聊天回答。
   14. Web UI 不得提供未声明的编辑、删除、合并或自动知识图谱能力。
 
@@ -1462,3 +1348,4 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。候选不
 | `2026-05-31` | 将 session 设计从 `.session/current.md` 调整为 `.sessions/<session_id>/transcript.jsonl`、`summary.md` 和 `metadata.json` | 对齐 messages[] + transcript + compact summary 的聊天上下文设计 | `TBD` |
 | `2026-06-02` | 标记最终版功能清单相对当前实现的完成状态 | 帮助区分当前第一版闭环、部分 Harness 能力和最终版未实现模块 | `TBD` |
 | `2026-06-02` | 补充 Web Runtime、Chat + Cards UI 和 agent_factory 设计边界 | 支持本地浏览器聊天入口和基础 Q&A 卡片浏览 | `TBD` |
+| `2026-06-07` | 将工具列表、上下文压缩、memory candidate 和 Web 状态调整为当前代码实现边界 | 修正文档中把内部机制和未完成写入闭环描述为当前 LLM 可调用工具的问题 | `TBD` |
