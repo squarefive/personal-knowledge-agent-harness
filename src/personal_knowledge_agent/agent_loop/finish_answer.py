@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from ..schemas import MemoryIndex
 from .finalize_turn_memory import TurnMemoryFinalizer
+from .source_evidence import finalize_answer
 
 
 class AnswerFinishStep:
@@ -25,20 +26,30 @@ class AnswerFinishStep:
         turn: int,
         user_input: str,
         answer: str,
+        turn_messages: list[dict[str, Any]],
         memory_index: MemoryIndex | None,
         recent_messages: list[dict[str, Any]],
     ) -> str:
-        self.append_message({"role": "assistant", "content": answer})
-        self.emit(run_id, "evidence_checked", status="completed", turn=turn)
+        trusted_answer = finalize_answer(answer, turn_messages)
+        self.append_message({"role": "assistant", "content": trusted_answer.answer})
+        self.emit(
+            run_id,
+            "evidence_checked",
+            status="completed",
+            turn=turn,
+            source_count=trusted_answer.source_count,
+            removed_model_sources=trusted_answer.removed_model_sources,
+            removed_unsupported_claim=trusted_answer.removed_unsupported_claim,
+        )
         self._finalize_memory(
             run_id=run_id,
             user_input=user_input,
-            final_answer=answer,
+            final_answer=trusted_answer.answer,
             memory_index=memory_index,
             recent_messages=recent_messages,
         )
-        self.emit(run_id, "final_answer_generated", answer=answer, turn=turn)
-        return answer
+        self.emit(run_id, "final_answer_generated", answer=trusted_answer.answer, turn=turn)
+        return trusted_answer.answer
 
     def stop_for_too_many_tool_calls(
         self,

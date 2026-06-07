@@ -102,7 +102,7 @@ last_updated: "2026-06-07"
 
 | 版本 | 阶段目标 | 技术选型 / 关键设计 | 当前状态 |
 |---|---|---|---|
-| `v0.2` | 可信来源闭环 | AgentLoop 维护本轮 `TurnEvidence`；程序根据真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 规划中，未实现 |
+| `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 规划中，未实现 |
 | `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须使用 token 两阶段确认 | 规划中，未实现 |
 | `v0.4` | 中文关键词检索 | 使用 Meilisearch 作为中文关键词检索服务；不使用 FTS5 作为主线；SQLite 仍是事实源，Meilisearch 只保存索引 | 规划中，未实现 |
 | `v0.5` | 向量检索和混合检索 | 使用 DashScope / Qwen `text-embedding-v4` 远程 embedding，默认 `1024` 维；使用 Qdrant 作为向量数据库；向量检索返回 card_id 后必须回 SQLite 读取事实 | 规划中，未实现 |
@@ -125,7 +125,7 @@ last_updated: "2026-06-07"
 - **行为约束**:
   1. 凡是涉及长期记忆的动作，必须通过工具完成。
   2. Agent 不得声称已经保存、查询或更新实际未通过工具完成的数据。
-  3. 回答问题前必须先检索本地知识库。
+  3. 声称基于本地知识库回答、引用 card_id 或展示来源区块时，必须有本轮真实工具证据。
   4. 没有足够依据时必须明确说明本地知识库中没有找到足够依据。
   5. 回答不得引入无来源外部知识。
   6. Q&A 知识库和 Agent memory 必须分开。
@@ -706,7 +706,7 @@ last_updated: "2026-06-07"
 
 | 版本 | 工具 / 机制 | 职责 | 是否有副作用 | 是否需要确认 |
 |---|---|---|---|---|
-| `v0.2` | `TurnEvidence` / `EvidenceChecker` | 记录本轮真实工具证据，并由程序生成来源区块 | 否 | 否 |
+| `v0.2` | `turn_messages` / `source_evidence` | 从当前 turn messages 中提取真实工具证据，并由程序生成来源区块 | 否 | 否 |
 | `v0.3` | `prepare_update_qa_card` / `confirm_update_qa_card` | 两阶段更新 Q&A 当前卡片 | 是 | 是 |
 | `v0.3` | `prepare_delete_qa_card` / `confirm_delete_qa_card` | 两阶段物理删除 Q&A 卡片及关联索引 | 是 | 是 |
 | `v0.4` | `sync_keyword_index` / `keyword_search_qa_cards` | 同步 Meilisearch 索引并执行中文关键词检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
@@ -717,6 +717,18 @@ last_updated: "2026-06-07"
 | `v0.7` | `search_graph_context` | 查询实体和关系上下文，并返回可追溯 card_id | 否 | 否 |
 
 高风险工具必须采用 `prepare_*` 返回 confirmation token、`confirm_*` 校验 token 后执行的结构。工具不得接受模型自由生成的自然语言确认作为执行依据。
+
+v0.2 实现必须保持低侵入：
+
+1. AgentLoop 只记录当前 turn 起始位置，并向 final answer 阶段传入 `turn_messages`。
+2. `source_evidence` 只能从当前 turn messages 中提取来源，不能扫描完整历史 `messages[]`。
+3. 不引入长期存在的 `TurnEvidence` 状态对象。
+4. 不修改 ToolCallStep、ToolDispatcher、KnowledgeTools 或 SQLite 数据模型。
+5. `save_qa_card` 的 `question` 可从本轮 assistant tool call arguments 中提取；`card_id`、`source_type` 和 `created_at` 必须来自对应 tool result。
+6. `search_qa_cards` 和 `read_qa_card` 的来源必须来自 `ok: true` 且字段完整的 tool result。
+7. 空搜索结果、工具失败和字段不完整的结果不得作为来源。
+8. 程序必须清理模型自写的“来源：”区块，并用真实工具证据重新渲染来源。
+9. 普通无来源回答允许存在，但不得保留“根据本地知识库”“根据知识卡片”“根据检索结果”等无证据声明。
 
 ---
 
@@ -1217,7 +1229,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 
 以下模型仅记录后续版本的数据边界，当前代码尚未实现。实现时必须保持 SQLite 事实源优先，外部索引和图谱只保存可回查的 `card_id` 或轻量 payload。
 
-- **v0.2 Turn Evidence**:
+- **v0.2 Source Evidence**:
   - `card_id`
   - `question`
   - `source_type`

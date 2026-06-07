@@ -76,6 +76,7 @@ class AgentLoop:
 
     def run(self, user_input: str) -> str:
         run_id = new_run_id()
+        turn_start_index = len(self.messages)
         user_message = {"role": "user", "content": user_input}
         self.message_recorder.append(user_message)
         turn_context = self.turn_context_loader.load(
@@ -103,6 +104,7 @@ class AgentLoop:
                     turn=turn,
                     user_input=user_input,
                     answer=response.text or "",
+                    turn_messages=self.messages[turn_start_index:],
                     memory_index=turn_context.memory_index,
                     recent_messages=self.messages[-12:],
                 )
