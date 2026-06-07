@@ -286,7 +286,7 @@ h3 {
   color: var(--muted);
 }
 
-@media (max-width: 880px) {
+@media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
     min-height: auto;
@@ -298,5 +298,36 @@ h3 {
 
   .cards-pane {
     min-height: 70vh;
+  }
+}
+
+@media (max-width: 520px) {
+  .app-shell {
+    gap: 12px;
+    padding: 10px;
+  }
+
+  .pane-header,
+  .cards-header {
+    padding: 14px;
+  }
+
+  .messages {
+    padding: 14px;
+  }
+
+  .composer,
+  .search-form {
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .composer {
+    flex-direction: column;
+  }
+
+  .composer button {
+    min-height: 42px;
+    width: 100%;
   }
 }
