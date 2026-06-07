@@ -61,6 +61,27 @@ class KnowledgeTools:
         except Exception as exc:
             return self._error("invalid_input", str(exc))
 
+    def update_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            card_id = self._required_text(arguments, "card_id")
+            patch = self._update_patch(arguments)
+            card = self.store.update_card(card_id, **patch)
+            if card is None:
+                return self._error("not_found", f"card not found: {card_id}")
+            return {"ok": True, "card": self._card_payload(card)}
+        except Exception as exc:
+            return self._error("invalid_input", str(exc))
+
+    def delete_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            card_id = self._required_text(arguments, "card_id")
+            deleted = self.store.delete_card(card_id)
+            if not deleted:
+                return self._error("not_found", f"card not found: {card_id}")
+            return {"ok": True, "deleted_card_id": card_id}
+        except Exception as exc:
+            return self._error("invalid_input", str(exc))
+
     def list_recent_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             limit = self._optional_limit(arguments, default=10)
@@ -119,6 +140,18 @@ class KnowledgeTools:
         if not isinstance(value, int) or value < 1:
             return default
         return min(value, 50)
+
+    def _update_patch(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        patch: dict[str, Any] = {}
+        for name in ("question", "answer", "summary"):
+            value = arguments.get(name)
+            if value is not None:
+                patch[name] = self._required_text(arguments, name)
+        if "keywords" in arguments:
+            patch["keywords"] = self._required_keywords(arguments)
+        if not patch:
+            raise ValueError("at least one field must be provided")
+        return patch
 
     @staticmethod
     def _card_payload(card: QACard) -> dict[str, Any]:
@@ -187,6 +220,36 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "read_qa_card",
             "description": "按 card_id 读取完整 Q&A 知识卡片。",
+            "parameters": {
+                "type": "object",
+                "properties": {"card_id": {"type": "string"}},
+                "required": ["card_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_qa_card",
+            "description": "更新一条本地 Q&A 知识卡片。该工具执行前必须经过 harness 权限确认。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "card_id": {"type": "string"},
+                    "question": {"type": "string"},
+                    "answer": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["card_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_qa_card",
+            "description": "物理删除一条本地 Q&A 知识卡片。该工具执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {"card_id": {"type": "string"}},

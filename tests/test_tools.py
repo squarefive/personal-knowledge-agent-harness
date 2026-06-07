@@ -49,6 +49,50 @@ def test_read_qa_card_not_found_returns_structured_error(tmp_path):
     assert result["error_code"] == "not_found"
 
 
+def test_update_and_delete_qa_card_tools(tmp_path):
+    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    saved = tools.save_qa_card(
+        {
+            "question": "旧问题？",
+            "answer": "旧答案。",
+            "summary": "旧摘要。",
+            "keywords": ["旧"],
+        }
+    )
+
+    updated = tools.update_qa_card(
+        {
+            "card_id": saved["card_id"],
+            "question": "新问题？",
+            "answer": "新答案。",
+            "summary": "新摘要。",
+            "keywords": ["新"],
+        }
+    )
+
+    assert updated["ok"] is True
+    assert updated["card"]["card_id"] == saved["card_id"]
+    assert updated["card"]["question"] == "新问题？"
+    assert updated["card"]["keywords"] == ["新"]
+
+    deleted = tools.delete_qa_card({"card_id": saved["card_id"]})
+
+    assert deleted == {"ok": True, "deleted_card_id": saved["card_id"]}
+    assert tools.read_qa_card({"card_id": saved["card_id"]})["error_code"] == "not_found"
+
+
+def test_update_and_delete_qa_card_tools_return_not_found(tmp_path):
+    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+
+    updated = tools.update_qa_card({"card_id": "qa_missing", "summary": "新摘要。"})
+    deleted = tools.delete_qa_card({"card_id": "qa_missing"})
+
+    assert updated["ok"] is False
+    assert updated["error_code"] == "not_found"
+    assert deleted["ok"] is False
+    assert deleted["error_code"] == "not_found"
+
+
 def test_tool_dispatcher_display_output_uses_declared_fields(tmp_path):
     tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
     dispatcher = ToolDispatcher(tools)
@@ -85,6 +129,38 @@ def test_tool_dispatcher_display_output_uses_declared_fields(tmp_path):
             }
         ],
     }
+
+
+def test_tool_dispatcher_handles_update_and_delete_tools(tmp_path):
+    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(tools)
+    saved = tools.save_qa_card(
+        {
+            "question": "旧问题？",
+            "answer": "旧答案。",
+            "summary": "旧摘要。",
+            "keywords": ["旧"],
+        }
+    )
+
+    updated = dispatcher.execute(
+        ToolCall(
+            id="call_1",
+            name="update_qa_card",
+            arguments={"card_id": saved["card_id"], "summary": "新摘要。"},
+        )
+    )
+    deleted = dispatcher.execute(
+        ToolCall(
+            id="call_2",
+            name="delete_qa_card",
+            arguments={"card_id": saved["card_id"]},
+        )
+    )
+
+    assert updated["ok"] is True
+    assert updated["card"]["summary"] == "新摘要。"
+    assert deleted == {"ok": True, "deleted_card_id": saved["card_id"]}
 
 
 def test_tool_dispatcher_display_output_keeps_unknown_tool_error(tmp_path):

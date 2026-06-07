@@ -9,6 +9,7 @@ from .agent_memory import MemoryExtractor, MemoryIndexStore, MemoryStore
 from .config import AgentConfig
 from .events import AgentEvent
 from .llm_client import DeepSeekClient
+from .permissions import ApprovalRequest
 from .qa_store import SQLiteStore
 from .session_memory import (
     ContextCompactor,
@@ -29,6 +30,7 @@ class AgentComponents:
 def create_agent_components(
     config: AgentConfig,
     event_sink: Callable[[AgentEvent], None] | None = None,
+    approval_callback: Callable[[ApprovalRequest], bool] | None = None,
 ) -> AgentComponents:
     store = SQLiteStore(config.knowledge_db_path)
     workspace_root = Path.cwd()
@@ -63,6 +65,7 @@ def create_agent_components(
         metadata_store=metadata_store,
         context_compactor=ContextCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir),
         memory_extractor=MemoryExtractor(),
+        approval_callback=approval_callback if approval_callback is not None else None,
         event_sink=event_sink,
     )
     return AgentComponents(agent=agent, tools=tools)
@@ -71,5 +74,10 @@ def create_agent_components(
 def create_agent(
     config: AgentConfig,
     event_sink: Callable[[AgentEvent], None] | None = None,
+    approval_callback: Callable[[ApprovalRequest], bool] | None = None,
 ) -> AgentLoop:
-    return create_agent_components(config, event_sink=event_sink).agent
+    return create_agent_components(
+        config,
+        event_sink=event_sink,
+        approval_callback=approval_callback,
+    ).agent

@@ -2,6 +2,7 @@ import tomllib
 from pathlib import Path
 
 from personal_knowledge_agent import __main__ as cli
+from personal_knowledge_agent.permissions import ApprovalRequest
 
 
 def test_run_cli_processes_input_and_exit(monkeypatch, capsys):
@@ -11,7 +12,7 @@ def test_run_cli_processes_input_and_exit(monkeypatch, capsys):
 
     inputs = iter(["帮我记一条知识", "/exit"])
     monkeypatch.setattr(cli, "load_config", lambda: object())
-    monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None: FakeAgent())
+    monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None, approval_callback=None: FakeAgent())
     monkeypatch.setattr(cli, "create_prompt_session", lambda: object())
     monkeypatch.setattr(cli, "prompt_user", lambda session: next(inputs))
     monkeypatch.setattr(cli, "AsyncJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
@@ -42,7 +43,7 @@ def test_run_cli_continues_after_agent_run_error(monkeypatch, capsys):
 
     inputs = iter(["你好", "/exit"])
     monkeypatch.setattr(cli, "load_config", lambda: object())
-    monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None: FakeAgent())
+    monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None, approval_callback=None: FakeAgent())
     monkeypatch.setattr(cli, "create_prompt_session", lambda: object())
     monkeypatch.setattr(cli, "prompt_user", lambda session: next(inputs))
     monkeypatch.setattr(cli, "AsyncJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
@@ -59,6 +60,28 @@ def test_pyproject_declares_pka_script():
     data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert data["project"]["scripts"]["pka"] == "personal_knowledge_agent.__main__:main"
+
+
+def test_approve_tool_call_allows_only_yes(capsys):
+    class FakeSession:
+        def __init__(self, answer):
+            self.answer = answer
+
+        def prompt(self, text):
+            self.prompt_text = text
+            return self.answer
+
+    request = ApprovalRequest(
+        tool_name="delete_qa_card",
+        arguments={"card_id": "qa_1"},
+        reason="danger",
+    )
+
+    assert cli.approve_tool_call(FakeSession("yes"), request) is True
+    assert cli.approve_tool_call(FakeSession("no"), request) is False
+    output = capsys.readouterr().out
+    assert "高风险工具请求需要确认" in output
+    assert "delete_qa_card" in output
 
 
 def test_main_dispatches_web_subcommand(monkeypatch):

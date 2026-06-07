@@ -29,3 +29,21 @@ def test_create_agent_returns_agent_loop(tmp_path, monkeypatch):
     agent = create_agent(config)
 
     assert isinstance(agent, AgentLoop)
+
+
+def test_create_agent_accepts_approval_callback(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    approvals = []
+
+    def approve(request):
+        approvals.append(request)
+        return False
+
+    agent = create_agent(config, approval_callback=approve)
+
+    assert agent.tool_call_step.approval_callback is approve

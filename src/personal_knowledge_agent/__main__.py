@@ -9,6 +9,7 @@ from .cli_renderer import CliRenderer
 from .config import load_config
 from .events import AgentEvent
 from .jsonl_logger import AsyncJsonlLogger
+from .permissions import ApprovalRequest
 
 EXIT_COMMANDS = {"/exit", "/quit"}
 
@@ -21,6 +22,18 @@ def prompt_user(session: PromptSession | None) -> str:
     if session is None:
         return input("你> ")
     return session.prompt("你> ")
+
+
+def approve_tool_call(session: PromptSession | None, request: ApprovalRequest) -> bool:
+    print("高风险工具请求需要确认。")
+    print(f"工具: {request.tool_name}")
+    print(f"原因: {request.reason}")
+    print(f"参数: {request.arguments}")
+    if session is None:
+        answer = input("允许执行？输入 yes 允许：")
+    else:
+        answer = session.prompt("允许执行？输入 yes 允许：")
+    return answer.strip().lower() == "yes"
 
 
 def run_cli() -> int:
@@ -40,8 +53,12 @@ def run_cli() -> int:
 
     try:
         config = load_config()
-        agent = create_agent(config, event_sink=handle_event)
         prompt_session = create_prompt_session() if sys.stdin.isatty() else None
+        agent = create_agent(
+            config,
+            event_sink=handle_event,
+            approval_callback=lambda request: approve_tool_call(prompt_session, request),
+        )
     except Exception as exc:
         print(f"启动失败：{exc}", file=sys.stderr)
         return 1

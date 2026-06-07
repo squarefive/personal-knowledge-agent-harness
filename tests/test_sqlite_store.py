@@ -36,3 +36,65 @@ def test_search_returns_empty_for_no_match(tmp_path):
     )
 
     assert store.search_cards("完全不存在的检索词") == []
+
+
+def test_update_card_changes_current_card(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    card = store.save_card(
+        question="旧问题？",
+        answer="旧答案。",
+        summary="旧摘要。",
+        keywords=["旧"],
+    )
+
+    updated = store.update_card(
+        card.id,
+        question="新问题？",
+        answer="新答案。",
+        summary="新摘要。",
+        keywords=["新"],
+    )
+
+    assert updated is not None
+    assert updated.id == card.id
+    assert updated.question == "新问题？"
+    assert updated.answer == "新答案。"
+    assert updated.summary == "新摘要。"
+    assert updated.keywords == ["新"]
+    assert updated.created_at == card.created_at
+    assert updated.updated_at != card.updated_at
+
+
+def test_update_card_requires_existing_card_and_non_empty_patch(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+
+    assert store.update_card("qa_missing", question="新问题？") is None
+
+    card = store.save_card(
+        question="问题？",
+        answer="答案。",
+        summary="摘要。",
+        keywords=["关键词"],
+    )
+    try:
+        store.update_card(card.id)
+    except ValueError as exc:
+        assert "at least one field" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_delete_card_physically_removes_card(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    card = store.save_card(
+        question="要删除的问题？",
+        answer="要删除的答案。",
+        summary="要删除的摘要。",
+        keywords=["删除"],
+    )
+
+    assert store.delete_card(card.id) is True
+    assert store.read_card(card.id) is None
+    assert store.search_cards("要删除的问题") == []
+    assert store.list_recent_cards() == []
+    assert store.delete_card(card.id) is False
