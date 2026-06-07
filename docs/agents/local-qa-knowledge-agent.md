@@ -98,6 +98,30 @@ last_updated: "2026-06-07"
 
 以上状态仅描述当前代码已实现能力，不代表最终版设计已被纳入当前 Agent 边界。若要实现未完成模块，必须先更新本文档中的角色边界、工具契约、数据模型、核心流程、失败模式和测试要求，并单独提交文档变更后再进入代码实现。
 
+- **v0.2-v0.7 演进路线和技术选型**:
+
+| 版本 | 阶段目标 | 技术选型 / 关键设计 | 当前状态 |
+|---|---|---|---|
+| `v0.2` | 可信来源闭环 | AgentLoop 维护本轮 `TurnEvidence`；程序根据真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 规划中，未实现 |
+| `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须使用 token 两阶段确认 | 规划中，未实现 |
+| `v0.4` | 中文关键词检索 | 使用 Meilisearch 作为中文关键词检索服务；不使用 FTS5 作为主线；SQLite 仍是事实源，Meilisearch 只保存索引 | 规划中，未实现 |
+| `v0.5` | 向量检索和混合检索 | 使用 DashScope / Qwen `text-embedding-v4` 远程 embedding，默认 `1024` 维；使用 Qdrant 作为向量数据库；向量检索返回 card_id 后必须回 SQLite 读取事实 | 规划中，未实现 |
+| `v0.6` | 标签、分类、去重和合并 | 引入 tags / categories；自动标签、重复检测和合并草稿只是建议；合并必须 token 确认；确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
+| `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须 token 确认；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
+
+- **v0.2-v0.7 已确认设计决策**:
+  1. SQLite 继续作为 Q&A 事实库；外部索引或图数据库不得替代事实源。
+  2. 本阶段不引入正式数据库 migration 框架；表结构必须在本文档中记录，schema 初始化只能补齐缺失表和字段，不得破坏已有数据。
+  3. 未调用检索工具时不强制拒答；但 Agent 不得声称回答来自本地知识库，不得编造来源或 card_id。
+  4. 删除就是物理删除；后续实现中不得引入软删除概念。
+  5. 更新只修改当前卡片，不保存历史版本或 before / after 快照。
+  6. 删除、更新、合并、重建索引和确认图谱关系等高风险操作必须通过 token 两阶段确认；自然语言确认不能作为工具执行依据。
+  7. Meilisearch 和 Qdrant 由 Docker Compose 管理；数据目录集中放在 `.knowledge/` 下。
+  8. Kuzu 使用本地文件数据库，默认路径位于 `.knowledge/` 下，不通过 Docker 管理。
+  9. DashScope / Qwen `text-embedding-v4` 是 v0.5 的默认远程 embedding 服务；DeepSeek 继续作为主 LLM，不承担 embedding 职责。
+  10. 删除卡片时必须同步删除 SQLite 卡片、Meilisearch 索引、Qdrant 向量和 Kuzu 中只由该卡片支撑的来源链接。
+  11. Web UI 不随 v0.2-v0.7 后端路线同步扩展；后续另行设计和实现。
+
 - **行为约束**:
   1. 凡是涉及长期记忆的动作，必须通过工具完成。
   2. Agent 不得声称已经保存、查询或更新实际未通过工具完成的数据。
@@ -676,6 +700,24 @@ last_updated: "2026-06-07"
 - **Memory candidate**:
   当前 memory candidate 不是 LLM 可调用工具，也没有写入 `.memory/*.md`、更新 `.memory/MEMORY.md` 或 pending confirmation 队列。AgentLoop 只在 turn-end 通过 `MemoryExtractor` 生成候选，并发出 `memory_candidates_generated` 事件；候选不等于已写入长期 memory。
 
+### 3.4 v0.2-v0.7 规划工具边界
+
+以下工具仅为后续版本设计边界，当前代码尚未实现。实现前必须为对应版本单独提交更细的工具契约和测试。
+
+| 版本 | 工具 / 机制 | 职责 | 是否有副作用 | 是否需要确认 |
+|---|---|---|---|---|
+| `v0.2` | `TurnEvidence` / `EvidenceChecker` | 记录本轮真实工具证据，并由程序生成来源区块 | 否 | 否 |
+| `v0.3` | `prepare_update_qa_card` / `confirm_update_qa_card` | 两阶段更新 Q&A 当前卡片 | 是 | 是 |
+| `v0.3` | `prepare_delete_qa_card` / `confirm_delete_qa_card` | 两阶段物理删除 Q&A 卡片及关联索引 | 是 | 是 |
+| `v0.4` | `sync_keyword_index` / `keyword_search_qa_cards` | 同步 Meilisearch 索引并执行中文关键词检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
+| `v0.5` | `sync_vector_index` / `semantic_search_qa_cards` / `hybrid_search_qa_cards` | 生成 embedding、同步 Qdrant、执行语义和混合检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
+| `v0.6` | `suggest_tags` / `apply_tags` | 生成标签建议，并在确认后写入标签 | 写入有副作用 | 写入需要确认 |
+| `v0.6` | `detect_duplicate_cards` / `prepare_merge_qa_cards` / `confirm_merge_qa_cards` | 检测重复、生成合并草稿、确认后创建新卡片并删除原卡片 | 确认合并有副作用 | 是 |
+| `v0.7` | `extract_graph_candidates` / `confirm_graph_candidate` | 从卡片抽取实体关系候选，并在确认后写入 Kuzu | 确认写入有副作用 | 是 |
+| `v0.7` | `search_graph_context` | 查询实体和关系上下文，并返回可追溯 card_id | 否 | 否 |
+
+高风险工具必须采用 `prepare_*` 返回 confirmation token、`confirm_*` 校验 token 后执行的结构。工具不得接受模型自由生成的自然语言确认作为执行依据。
+
 ---
 
 ## 4. 上下文来源与记忆边界
@@ -1170,6 +1212,55 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | `source_ref` | `TEXT` | 否 | 来源引用 |
 | `confidence` | `TEXT` | 是 | `high`、`medium` 或 `low` |
 | `write_policy` | `TEXT` | 是 | `auto_write`、`needs_confirmation` 或 `reject` |
+
+### 6.10 v0.2-v0.7 规划数据模型
+
+以下模型仅记录后续版本的数据边界，当前代码尚未实现。实现时必须保持 SQLite 事实源优先，外部索引和图谱只保存可回查的 `card_id` 或轻量 payload。
+
+- **v0.2 Turn Evidence**:
+  - `card_id`
+  - `question`
+  - `source_type`
+  - `created_at`
+  - `evidence_kind`: `saved`、`searched` 或 `read`
+
+- **v0.3 Confirmation Token**:
+  - `token`
+  - `operation`
+  - `target_ids`
+  - `preview`
+  - `expires_at`
+  - `created_at`
+
+- **v0.4 Meilisearch Document**:
+  - `card_id`
+  - `question`
+  - `answer`
+  - `summary`
+  - `keywords`
+  - `source_type`
+  - `created_at`
+  - `updated_at`
+
+- **v0.5 Qdrant Point**:
+  - `id`: 与 `card_id` 稳定关联
+  - `vector`: DashScope / Qwen `text-embedding-v4` 生成的 `1024` 维向量
+  - `payload.card_id`
+  - `payload.source_type`
+  - `payload.created_at`
+  - `payload.embedding_model`
+
+- **v0.6 Tags / Categories**:
+  - `tags`
+  - `categories`
+  - `qa_card_tags`
+  - `qa_card_categories`
+
+- **v0.7 Kuzu Graph**:
+  - `Entity`
+  - `Relation`
+  - `CardSource`
+  - 实体和关系必须能通过 `CardSource.card_id` 回到 SQLite Q&A 卡片。
 
 ---
 
