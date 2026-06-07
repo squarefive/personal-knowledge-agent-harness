@@ -101,6 +101,12 @@ Web UI 是 CLI 的浏览器替代输入输出层，第一版只覆盖 Chat + Car
 DEEPSEEK_API_KEY=你的 DeepSeek Key
 DEEPSEEK_MODEL=deepseek-v4-flash
 KNOWLEDGE_DB_PATH=.knowledge/knowledge.db
+DASHSCOPE_API_KEY=你的阿里云百炼 API Key
+QWEN_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_EMBEDDING_MODEL=text-embedding-v4
+QWEN_EMBEDDING_DIMENSIONS=1024
+QDRANT_PATH=.knowledge/qdrant
+QDRANT_COLLECTION=qa_cards
 ```
 
 `.env` 和 `.knowledge/` 应只保留在本地，不提交到 Git。可以把它们加入 `.git/info/exclude`：
@@ -210,7 +216,7 @@ Agent> 回答... 来源 card_id: ...
 |---|---|---|---|
 | `v0.2` | 可信来源闭环 | 程序维护本轮工具证据并生成来源区块；未检索时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
 | `v0.3` | Q&A 更新和删除 | 更新不保存历史版本；删除是物理删除；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
-| `v0.4` | Hybrid 检索 | 保留 SQLite LIKE 关键词兜底，引入 DashScope / Qwen `text-embedding-v4` + Qdrant 语义召回，并新增 hybrid search | 规划中 |
+| `v0.4` | Hybrid 检索 | 保留 SQLite LIKE 关键词兜底，引入 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 语义召回；通过 `is_vectorized` 跳过已向量化历史卡片，并新增 hybrid search | 规划中 |
 | `v0.5` | 标签和分类 | `qa_cards` 直接增加 tags / category；保存时由模型生成，用户可手动更新；标签多选，分类单选 | 规划中 |
 | `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并走 PreToolUse permission gate，确认后创建新卡片并删除原卡片 | 规划中 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu；候选实体和关系必须确认后写入；图谱回答仍需追溯到 card_id | 规划中 |
@@ -221,11 +227,13 @@ Agent> 回答... 来源 card_id: ...
 DeepSeek: 主 LLM
 SQLite: Q&A 事实库
 DashScope / Qwen text-embedding-v4: 远程 embedding
-Qdrant: 向量数据库，运行方式通过配置决定，当前不提交 Docker Compose
+Qdrant: 向量数据库，本阶段使用 qdrant-client local mode，默认索引目录为 .knowledge/qdrant
 Kuzu: 本地轻量图数据库，使用 .knowledge/ 下的本地文件
 ```
 
 v0.4-v0.6 暂不引入 Meilisearch；SQLite LIKE 作为关键词兜底。后续如果关键词搜索体验不足，再单独设计搜索服务。当前也不引入 Docker，等需要统一打包 Agent 时再单独设计容器化。
+
+首次启用 v0.4 后，需要通过 `rebuild_qa_semantic_index` 将 `.knowledge/knowledge.db` 中已有 Q&A 卡片写入 `.knowledge/qdrant`。`qa_cards.is_vectorized = 1` 的卡片会被跳过；新建或更新后的卡片会先标记为 `is_vectorized = 0`，成功写入 Qdrant 后再标记为 `1`。
 
 Web UI 不随 v0.2-v0.7 后端路线同步扩展，后续另行设计。
 
@@ -250,7 +258,7 @@ Web UI 不随 v0.2-v0.7 后端路线同步扩展，后续另行设计。
 | 内容输出 | 未完成 | 第一版明确不做周报、日报或自动总结；当前没有学习总结、周报、博客大纲、面试提纲、简历项目描述或项目复盘总结能力。 |
 | Agent Harness | 部分完成 | 已支持 Agent Loop、Tool Dispatcher、Prompt Builder、运行时上下文拼接和工具调用结果回填；工具注册仍是静态映射，尚不是完整可扩展注册机制。 |
 | 后台任务 | 未完成 | 第一版明确不做后台任务；当前没有后台同步 Wiki、构建索引、批量摘要、任务状态、完成通知或失败重试。 |
-| 权限与审计 | 部分完成 | 已有 Agent 运行事件和 JSONL 开发日志；删除、合并、覆盖、重建索引等高风险操作尚未实现，因此也没有对应确认流程或变更历史记录。 |
+| 权限与审计 | 部分完成 | 已有 Agent 运行事件和 JSONL 开发日志；更新和删除确认已实现；合并、覆盖和图谱确认等后续高风险操作尚未实现。v0.4 语义索引重建是系统维护工具，不作为高风险确认操作。 |
 | 长期偏好记忆 | 部分完成 | 已支持读取 `.memory/MEMORY.md` 和少量相关 `.memory/*.md`，并能在 turn 结束时生成 memory candidates 事件；尚未支持偏好写入确认闭环，以及偏好查看、修改、删除。 |
 | Web Chat + Cards | 部分完成 | 已实现本地 HTML 聊天入口、`POST /api/chat`、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
 
