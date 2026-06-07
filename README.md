@@ -204,15 +204,15 @@ Agent> 回答... 来源 card_id: ...
 
 ## v0.2-v0.7 规划路线
 
-以下路线是已确认的后续技术方向，当前代码尚未实现这些能力。每个版本必须先更新并提交 Agent 开发上下文文档，再单独进入代码实现、验证和提交。
+以下路线是已确认的后续技术方向和实现状态。未完成版本必须先更新并提交 Agent 开发上下文文档，再单独进入代码实现、验证和提交。
 
 | 版本 | 目标 | 技术选型 / 关键决策 | 当前状态 |
 |---|---|---|---|
 | `v0.2` | 可信来源闭环 | 程序维护本轮工具证据并生成来源区块；未检索时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
-| `v0.3` | Q&A 更新和删除 | 更新不保存历史版本；删除是物理删除；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成，待合并到 main |
-| `v0.4` | 中文关键词检索 | 使用 Meilisearch，不使用 FTS5 作为主线；SQLite 仍是事实源 | 规划中 |
-| `v0.5` | 向量检索和混合检索 | 使用 DashScope / Qwen `text-embedding-v4`，默认 `1024` 维；使用 Qdrant 作为向量数据库 | 规划中 |
-| `v0.6` | 标签、分类、去重和合并 | 标签和分类成为正式模型；合并必须确认，确认后创建新卡片并删除原卡片 | 规划中 |
+| `v0.3` | Q&A 更新和删除 | 更新不保存历史版本；删除是物理删除；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
+| `v0.4` | Hybrid 检索 | 保留 SQLite LIKE 关键词兜底，引入 DashScope / Qwen `text-embedding-v4` + Qdrant 语义召回，并新增 hybrid search | 规划中 |
+| `v0.5` | 标签和分类 | `qa_cards` 直接增加 tags / category；保存时由模型生成，用户可手动更新；标签多选，分类单选 | 规划中 |
+| `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并走 PreToolUse permission gate，确认后创建新卡片并删除原卡片 | 规划中 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu；候选实体和关系必须确认后写入；图谱回答仍需追溯到 card_id | 规划中 |
 
 已确认的服务运行方式：
@@ -220,11 +220,12 @@ Agent> 回答... 来源 card_id: ...
 ```text
 DeepSeek: 主 LLM
 SQLite: Q&A 事实库
-Meilisearch: 中文关键词检索索引，由 Docker Compose 管理
 DashScope / Qwen text-embedding-v4: 远程 embedding
-Qdrant: 向量数据库，由 Docker Compose 管理
+Qdrant: 向量数据库，运行方式通过配置决定，当前不提交 Docker Compose
 Kuzu: 本地轻量图数据库，使用 .knowledge/ 下的本地文件
 ```
+
+v0.4-v0.6 暂不引入 Meilisearch；SQLite LIKE 作为关键词兜底。后续如果关键词搜索体验不足，再单独设计搜索服务。当前也不引入 Docker，等需要统一打包 Agent 时再单独设计容器化。
 
 Web UI 不随 v0.2-v0.7 后端路线同步扩展，后续另行设计。
 

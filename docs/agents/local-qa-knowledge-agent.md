@@ -103,10 +103,10 @@ last_updated: "2026-06-07"
 | 版本 | 阶段目标 | 技术选型 / 关键设计 | 当前状态 |
 |---|---|---|---|
 | `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
-| `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成，待合并到 main |
-| `v0.4` | 中文关键词检索 | 使用 Meilisearch 作为中文关键词检索服务；不使用 FTS5 作为主线；SQLite 仍是事实源，Meilisearch 只保存索引 | 规划中，未实现 |
-| `v0.5` | 向量检索和混合检索 | 使用 DashScope / Qwen `text-embedding-v4` 远程 embedding，默认 `1024` 维；使用 Qdrant 作为向量数据库；向量检索返回 card_id 后必须回 SQLite 读取事实 | 规划中，未实现 |
-| `v0.6` | 标签、分类、去重和合并 | 引入 tags / categories；自动标签、重复检测和合并草稿只是建议；合并必须经过 PreToolUse permission gate；确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
+| `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
+| `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant 做语义召回，并通过 `hybrid_search_qa_cards` 合并排序 | 规划中，未实现 |
+| `v0.5` | 标签和分类 | `qa_cards` 直接增加 tags / category 字段；保存时由模型生成，用户可通过 update 工具手动修改；标签多选，分类单选 | 规划中，未实现 |
+| `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并后的新卡片内容由模型生成；`merge_qa_cards` 必须经过 PreToolUse permission gate，确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须经过 PreToolUse permission gate；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
 
 - **v0.2-v0.7 已确认设计决策**:
@@ -116,11 +116,12 @@ last_updated: "2026-06-07"
   4. 删除就是物理删除；后续实现中不得引入软删除概念。
   5. 更新只修改当前卡片，不保存历史版本或 before / after 快照。
   6. 删除、更新、合并、重建索引和确认图谱关系等高风险操作必须经过 harness 的 PreToolUse permission gate；模型只能请求工具，不能自行确认或绕过权限层。
-  7. Meilisearch 和 Qdrant 由 Docker Compose 管理；数据目录集中放在 `.knowledge/` 下。
-  8. Kuzu 使用本地文件数据库，默认路径位于 `.knowledge/` 下，不通过 Docker 管理。
-  9. DashScope / Qwen `text-embedding-v4` 是 v0.5 的默认远程 embedding 服务；DeepSeek 继续作为主 LLM，不承担 embedding 职责。
-  10. 删除卡片时必须同步删除 SQLite 卡片、Meilisearch 索引、Qdrant 向量和 Kuzu 中只由该卡片支撑的来源链接。
-  11. Web UI 不随 v0.2-v0.7 后端路线同步扩展；后续另行设计和实现。
+  7. v0.4-v0.6 不引入 Meilisearch；SQLite LIKE 作为关键词兜底，Qdrant 作为语义召回索引。
+  8. v0.4 不引入 Docker 或 Docker Compose；Qdrant 运行方式通过配置决定，后续统一打包时再单独设计容器化。
+  9. Kuzu 使用本地文件数据库，默认路径位于 `.knowledge/` 下，不通过 Docker 管理。
+  10. DashScope / Qwen `text-embedding-v4` 是 v0.4 的默认远程 embedding 服务；DeepSeek 继续作为主 LLM，不承担 embedding 职责。
+  11. 删除卡片时必须同步删除 SQLite 卡片、Qdrant 向量和 Kuzu 中只由该卡片支撑的来源链接。
+  12. Web UI 不随 v0.2-v0.7 后端路线同步扩展；后续另行设计和实现。
 
 - **行为约束**:
   1. 凡是涉及长期记忆的动作，必须通过工具完成。
@@ -709,10 +710,9 @@ last_updated: "2026-06-07"
 | `v0.2` | `turn_messages` / `source_evidence` | 从当前 turn messages 中提取真实工具证据，并由程序生成来源区块 | 否 | 否 |
 | `v0.3` | `update_qa_card` | 更新 Q&A 当前卡片 | 是 | 是 |
 | `v0.3` | `delete_qa_card` | 物理删除 Q&A 卡片 | 是 | 是 |
-| `v0.4` | `sync_keyword_index` / `keyword_search_qa_cards` | 同步 Meilisearch 索引并执行中文关键词检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
-| `v0.5` | `sync_vector_index` / `semantic_search_qa_cards` / `hybrid_search_qa_cards` | 生成 embedding、同步 Qdrant、执行语义和混合检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
-| `v0.6` | `suggest_tags` / `apply_tags` | 生成标签建议，并在确认后写入标签 | 写入有副作用 | 写入需要确认 |
-| `v0.6` | `detect_duplicate_cards` / `prepare_merge_qa_cards` / `confirm_merge_qa_cards` | 检测重复、生成合并草稿、确认后创建新卡片并删除原卡片 | 确认合并有副作用 | 是 |
+| `v0.4` | `sync_vector_index` / `semantic_search_qa_cards` / `hybrid_search_qa_cards` / `rebuild_vector_index` | 生成 embedding、同步 Qdrant、执行语义和混合检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
+| `v0.5` | `save_qa_card` / `update_qa_card` tags-category 扩展 | 保存时写入模型生成的 tags/category，用户可手动更新 | 是 | 否 |
+| `v0.6` | `detect_duplicate_cards` / `merge_qa_cards` | 检测重复候选；确认后创建合并新卡片并物理删除原卡片 | 合并有副作用 | 合并需要确认 |
 | `v0.7` | `extract_graph_candidates` / `confirm_graph_candidate` | 从卡片抽取实体关系候选，并在确认后写入 Kuzu | 确认写入有副作用 | 是 |
 | `v0.7` | `search_graph_context` | 查询实体和关系上下文，并返回可追溯 card_id | 否 | 否 |
 
@@ -1022,6 +1022,63 @@ pka
 - **用户可见反馈**:
   CLI 应展示高风险工具请求和确认提示；拒绝后 Agent 应说明操作未执行。Web 第一版不提供确认 UI，高风险工具默认拒绝，不得阻塞 HTTP 请求。
 
+### 5.12 v0.4 Hybrid 检索
+
+1. Agent 调用 `hybrid_search_qa_cards`。
+2. 工具先执行 SQLite LIKE，得到 keyword candidates。
+3. 工具调用 DashScope / Qwen embedding，把用户 query 转换为 query vector。
+4. 工具调用 Qdrant，得到 semantic candidates。
+5. 工具将两路结果统一为 SearchCandidate，并按 card_id 合并去重。
+6. 同时被 keyword 和 semantic 命中的 card_id 优先排序。
+7. 工具回 SQLite 读取完整卡片，并丢弃 SQLite 中已不存在的 card_id。
+8. 工具返回统一检索结果；Qdrant / DashScope 失败时降级为 SQLite LIKE，并返回 warning。
+
+- **成功条件**:
+  返回结果均可回溯到 SQLite `qa_cards`。
+
+- **失败条件**:
+  SQLite 读取失败、DashScope 失败、Qdrant 失败或 Qdrant 返回已不存在的 card_id。
+
+- **用户可见反馈**:
+  hybrid 完整成功时返回统一结果；向量部分失败时说明已降级为本地关键词检索。不得把 Qdrant payload 作为事实来源。
+
+### 5.13 v0.5 tags / category
+
+1. 用户录入 Q&A。
+2. 模型生成 summary、keywords、tags 和 category。
+3. `save_qa_card` 将 tags 和 category 随 Q&A 卡片写入 SQLite。
+4. 用户后续可以通过 `update_qa_card` 手动修改 tags 和 category。
+5. tags 是多选，category 是单选。
+6. tags / category 更新不触发 PreToolUse permission ask。
+
+- **成功条件**:
+  卡片读回时包含 tags 和 category。
+
+- **失败条件**:
+  tags 不是字符串数组、category 不是字符串或字段为空值非法。
+
+- **用户可见反馈**:
+  保存或更新后展示当前 tags 和 category。
+
+### 5.14 v0.6 去重和合并
+
+1. Agent 调用 `detect_duplicate_cards`，基于 SQLite LIKE 和 Qdrant 召回相似卡片。
+2. 工具返回可能重复的 card_id、相似分数和相似原因，不写数据库。
+3. 模型生成合并后的新 question、answer、summary、keywords、tags 和 category。
+4. 模型请求调用 `merge_qa_cards`。
+5. `merge_qa_cards` 进入 PreToolUse permission gate。
+6. 用户允许后，工具创建新卡片，物理删除原卡片，并尽力同步 Qdrant。
+7. 用户拒绝时，不执行合并，并返回 `permission_denied` tool result。
+
+- **成功条件**:
+  新卡片创建成功，原卡片物理删除，检索结果不再返回原卡片。
+
+- **失败条件**:
+  用户拒绝、原卡片不存在、新卡片字段非法或 Qdrant 同步失败。
+
+- **用户可见反馈**:
+  合并成功时展示新 card_id；Qdrant 同步失败时提示可通过 rebuild 修复。
+
 ---
 
 ## 6. 数据模型
@@ -1264,29 +1321,26 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   - `reason`
   - `behavior`: `allow`、`deny` 或 `ask`
 
-- **v0.4 Meilisearch Document**:
-  - `card_id`
-  - `question`
-  - `answer`
-  - `summary`
-  - `keywords`
-  - `source_type`
-  - `created_at`
-  - `updated_at`
-
-- **v0.5 Qdrant Point**:
+- **v0.4 Qdrant Point**:
   - `id`: 与 `card_id` 稳定关联
   - `vector`: DashScope / Qwen `text-embedding-v4` 生成的 `1024` 维向量
   - `payload.card_id`
   - `payload.source_type`
   - `payload.created_at`
+  - `payload.updated_at`
   - `payload.embedding_model`
+  - `payload.embedding_dimensions`
+  - `payload.tags`
+  - `payload.category`
 
-- **v0.6 Tags / Categories**:
-  - `tags`
-  - `categories`
-  - `qa_card_tags`
-  - `qa_card_categories`
+- **v0.5 `qa_cards` tags / category 扩展**:
+  - `tags`: `TEXT`，JSON 字符串，保存模型生成或用户手动更新的标签数组。
+  - `category`: `TEXT`，可为空，保存模型生成或用户手动更新的单个分类。
+
+- **v0.6 Duplicate / Merge**:
+  - `duplicate_candidates`: 运行时结构，不入库。
+  - `merge_qa_cards` 输入必须包含模型生成的新 question、answer、summary、keywords、tags 和 category。
+  - 合并成功后创建新卡片，物理删除原卡片，并尽力同步 Qdrant。
 
 - **v0.7 Kuzu Graph**:
   - `Entity`
