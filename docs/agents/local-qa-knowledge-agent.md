@@ -83,7 +83,7 @@ last_updated: "2026-06-08"
 |---|---|---|
 | Q&A 知识管理 | 部分完成 | 已实现保存 Q&A 卡片、读取卡片、LIKE 检索和最近卡片列表；尚未实现标题、分类、标签、编辑、删除、导入和导出。 |
 | Markdown Wiki 管理 | 未完成 | 当前 Agent 明确不包含 Wiki、文件监听和自动索引；不得声称支持 Wiki 绑定、Markdown chunk、hash 或增量同步。 |
-| 统一知识检索 | 部分完成 | 当前只有 `search_qa_cards`，检索范围仅限 SQLite `qa_cards`；尚未实现语义向量检索、混合检索、过滤器、检索调试或统一 `search_knowledge`。 |
+| 统一知识检索 | 部分完成 | 已实现 `search_qa_cards` SQLite LIKE 检索和 `hybrid_search_qa_cards` 混合检索；尚未实现过滤器、检索调试或统一 `search_knowledge`。 |
 | 来源追踪 | 部分完成 | Q&A 来源可追溯到 card_id、question、source_type 和 created_at；尚未支持 Markdown chunk、代码经验、手动笔记等来源类型，也没有程序级最终回答来源校验。 |
 | 分类与标签体系 | 未完成 | 当前只保存 keywords，不存在分类/标签模型、列表、重命名、合并或相似标签建议。 |
 | 知识去重与合并 | 未完成 | 当前明确不做去重合并；没有重复检测、相似知识检测、合并建议、差异展示、用户确认合并或原始来源保留流程。 |
@@ -104,7 +104,7 @@ last_updated: "2026-06-08"
 |---|---|---|---|
 | `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
 | `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
-| `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 做语义召回；通过 `is_vectorized` 标记历史卡片是否已写入语义索引，并通过 `hybrid_search_qa_cards` 合并排序 | 规划中，未实现 |
+| `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 做语义召回；通过 `is_vectorized` 标记历史卡片是否已写入语义索引，并通过 `hybrid_search_qa_cards` 合并排序 | 已完成 |
 | `v0.5` | 标签和分类 | `qa_cards` 直接增加 tags / category 字段；保存时由模型生成，用户可通过 update 工具手动修改；标签多选，分类单选 | 规划中，未实现 |
 | `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并后的新卡片内容由模型生成；`merge_qa_cards` 必须经过 PreToolUse permission gate，确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须经过 PreToolUse permission gate；图谱回答仍必须追溯到 card_id | 规划中，未实现 |

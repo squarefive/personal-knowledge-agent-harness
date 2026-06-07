@@ -216,7 +216,7 @@ Agent> 回答... 来源 card_id: ...
 |---|---|---|---|
 | `v0.2` | 可信来源闭环 | 程序维护本轮工具证据并生成来源区块；未检索时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
 | `v0.3` | Q&A 更新和删除 | 更新不保存历史版本；删除是物理删除；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
-| `v0.4` | Hybrid 检索 | 保留 SQLite LIKE 关键词兜底，引入 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 语义召回；通过 `is_vectorized` 跳过已向量化历史卡片，并新增 hybrid search | 规划中 |
+| `v0.4` | Hybrid 检索 | 保留 SQLite LIKE 关键词兜底，引入 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 语义召回；通过 `is_vectorized` 跳过已向量化历史卡片，并新增 hybrid search | 已完成 |
 | `v0.5` | 标签和分类 | `qa_cards` 直接增加 tags / category；保存时由模型生成，用户可手动更新；标签多选，分类单选 | 规划中 |
 | `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并走 PreToolUse permission gate，确认后创建新卡片并删除原卡片 | 规划中 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu；候选实体和关系必须确认后写入；图谱回答仍需追溯到 card_id | 规划中 |
@@ -249,7 +249,7 @@ Web UI 不随 v0.2-v0.7 后端路线同步扩展，后续另行设计。
 |---|---|---|
 | Q&A 知识管理 | 部分完成 | 已支持保存 Q&A 卡片、关键词检索、读取卡片和最近卡片列表；尚未支持标题、分类、标签、编辑、删除、导入和导出。 |
 | Markdown Wiki 管理 | 未完成 | 第一版明确不做 Wiki、文件监听或自动索引；当前没有本地 Wiki 目录绑定、Markdown 读取、chunk 切分、增量同步或 hash 记录。 |
-| 统一知识检索 | 部分完成 | 已有 Q&A 关键词 LIKE 检索；尚未支持语义向量检索、混合检索、过滤器、检索调试或统一 `search_knowledge`。 |
+| 统一知识检索 | 部分完成 | 已有 Q&A 关键词 LIKE 检索和 hybrid 检索；尚未支持过滤器、检索调试或统一 `search_knowledge`。 |
 | 来源追踪 | 部分完成 | Q&A 工具返回 `card_id`、原始问题、`source_type` 和创建时间，并支持按 card_id 读取原卡片；尚未支持多来源类型，也没有程序级强制校验最终回答必须引用来源。 |
 | 分类与标签体系 | 未完成 | 当前只有 `keywords` 字段；尚未支持自动分类、自动标签、标签列表、分类列表、标签重命名、标签合并或相似标签建议。 |
 | 知识去重与合并 | 未完成 | 第一版明确不做去重合并；当前没有重复检测、相似知识检测、合并建议、差异展示、用户确认合并或原始来源保留流程。 |
