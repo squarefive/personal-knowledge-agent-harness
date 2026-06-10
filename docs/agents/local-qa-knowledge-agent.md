@@ -1030,9 +1030,42 @@ pka
 4. 如果 embedding 已启用，工具调用 DashScope / Qwen `text-embedding-v4`，把用户 query 转换为 query vector。
 5. 工具调用 Qdrant local index，得到 semantic candidates。
 6. 工具将两路结果统一为 SearchCandidate，并按 card_id 合并去重。
-7. 同时被 keyword 和 semantic 命中的 card_id 优先排序。
-8. 工具回 SQLite 读取完整卡片，并丢弃 SQLite 中已不存在的 card_id。
-9. 工具返回统一检索结果；Qdrant / DashScope 失败时降级为 SQLite LIKE，并返回 warning。
+7. 工具为每个候选计算 `keyword_score`、`keyword_score_norm`、`semantic_score` 和 `final_score`。
+8. 工具按 `final_score` 降序排序，返回候选摘要，不返回完整 answer。
+9. 工具返回统一候选结果；Qdrant / DashScope 失败时降级为 SQLite LIKE，并返回 warning。
+
+v0.4 hybrid 排序规则：
+
+1. `keyword_score` 来自 SQLite LIKE 字段权重。
+2. `semantic_score` 来自 Qdrant 相似度。
+3. `keyword_score_norm = keyword_score / max_keyword_score`。
+4. 如果本轮没有关键词命中，则 `keyword_score_norm = 0`。
+5. `final_score = 0.4 * keyword_score_norm + 0.6 * semantic_score`。
+6. 返回候选必须按 `final_score` 降序排序。
+
+v0.4 hybrid 候选分层：
+
+1. `strong`: `final_score >= 0.70`。
+2. `medium`: `0.50 <= final_score < 0.70`。
+3. `weak`: `0.35 <= final_score < 0.50`。
+4. `discard`: `final_score < 0.35`。
+
+v0.4 hybrid 返回规则：
+
+1. 如果存在 `strong` 或 `medium` 候选，返回这些候选，最多 `limit` 条。
+2. 如果不存在 `strong` / `medium`，但存在 `weak` 候选，只返回 top weak 1 条，并附带 warning。
+3. 如果没有 `weak` 以上候选，返回 `cards = []`，并附带 message。
+4. 每个候选应包含 `rank`、`match_level`、`matched_by`、`keyword_score`、`keyword_score_norm`、`semantic_score`、`final_score` 和兼容字段 `score`。
+
+v0.4 hybrid 候选使用规则：
+
+1. `hybrid_search_qa_cards` 是候选召回工具，不是完整依据读取工具。
+2. `read_qa_card` 是完整卡片依据读取工具。
+3. 如果要基于某张候选卡片回答本地知识库问题，必须先调用 `read_qa_card` 读取该 `card_id` 的完整卡片。
+4. 通常应优先读取 `rank = 1` 的候选。
+5. 如果跳过 `rank = 1` 读取更低 rank 候选，必须有明确理由，例如 `rank = 1` 与用户问题明显不匹配。
+6. 如果 `hybrid_search_qa_cards` 只返回 weak 候选，必须读取完整卡片后再判断是否足够回答；不足时应说明本地知识库依据不足。
+7. 如果 `hybrid_search_qa_cards` 返回空 `cards`，不得声称来自本地知识库。
 
 首次启用 v0.4 后，已有 SQLite 历史卡片不会自动假定已进入 Qdrant。工具层必须提供 `rebuild_qa_semantic_index`：
 
@@ -1043,13 +1076,13 @@ pka
 5. 已经 `is_vectorized = 1` 且未被更新的卡片不得重复向量化。
 
 - **成功条件**:
-  hybrid 检索返回结果均可回溯到 SQLite `qa_cards`。历史卡片通过 `rebuild_qa_semantic_index` 成功进入 Qdrant 后，后续可被语义召回命中。
+  hybrid 检索返回候选均可回溯到 SQLite `qa_cards`。历史卡片通过 `rebuild_qa_semantic_index` 成功进入 Qdrant 后，后续可被语义召回命中。
 
 - **失败条件**:
   SQLite 读取失败、DashScope 失败、Qdrant 失败、缺少 `DASHSCOPE_API_KEY` 或 Qdrant 返回已不存在的 card_id。
 
 - **用户可见反馈**:
-  hybrid 完整成功时返回统一结果；向量部分未启用或失败时说明已降级为本地关键词检索。`rebuild_qa_semantic_index` 返回处理总数、成功数量、失败数量和失败 card_id 列表。不得把 Qdrant payload 作为事实来源。
+  hybrid 完整成功时返回候选结果和评分解释字段；向量部分未启用或失败时说明已降级为本地关键词检索。`rebuild_qa_semantic_index` 返回处理总数、成功数量、失败数量和失败 card_id 列表。不得把 Qdrant payload 或 hybrid 候选摘要当作完整事实来源。
 
 ### 5.13 v0.5 tags / category
 
