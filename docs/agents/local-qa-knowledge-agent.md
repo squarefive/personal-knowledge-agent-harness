@@ -3,7 +3,7 @@ module: "local-qa-knowledge-agent"
 title: "本地个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-06-07"
+last_updated: "2026-06-08"
 ---
 
 # 本地个人 Q&A 知识库 Agent 开发上下文
@@ -67,14 +67,14 @@ last_updated: "2026-06-07"
   2. 不做文件监听或自动索引。
   3. 不做周报、日报或自动总结。
   4. 不做多 Agent。
-  5. 不做向量数据库。
+  5. v0.4 之前不做向量数据库；v0.4 起只把 Qdrant 作为 Q&A 语义索引，不作为事实源。
   6. 不做去重合并。
   7. 不做后台任务。
   8. 不做复杂权限系统。
   9. 不把 Agent memory 混入 Q&A 知识库来源。
   10. 不默认把完整历史对话作为长期记忆。
   11. 不默认把所有 `.memory/*.md` 全文注入每轮上下文。
-  12. 不在本阶段实现向量检索、后台自动整理任务或复杂双向同步。
+  12. v0.4 之前不实现向量检索、后台自动整理任务或复杂双向同步；v0.4 的向量检索仅限 Q&A 卡片 hybrid 检索闭环。
   13. Web 第一版不做卡片编辑、删除、合并、自动知识图谱、Wiki、文件监听、多 Agent 或后台任务。
 
 - **最终版功能清单完成状态**:
@@ -83,7 +83,7 @@ last_updated: "2026-06-07"
 |---|---|---|
 | Q&A 知识管理 | 部分完成 | 已实现保存 Q&A 卡片、读取卡片、LIKE 检索和最近卡片列表；尚未实现标题、分类、标签、编辑、删除、导入和导出。 |
 | Markdown Wiki 管理 | 未完成 | 当前 Agent 明确不包含 Wiki、文件监听和自动索引；不得声称支持 Wiki 绑定、Markdown chunk、hash 或增量同步。 |
-| 统一知识检索 | 部分完成 | 当前只有 `search_qa_cards`，检索范围仅限 SQLite `qa_cards`；尚未实现语义向量检索、混合检索、过滤器、检索调试或统一 `search_knowledge`。 |
+| 统一知识检索 | 部分完成 | 已实现 `search_qa_cards` SQLite LIKE 检索和 `hybrid_search_qa_cards` 混合检索；尚未实现过滤器、检索调试或统一 `search_knowledge`。 |
 | 来源追踪 | 部分完成 | Q&A 来源可追溯到 card_id、question、source_type 和 created_at；尚未支持 Markdown chunk、代码经验、手动笔记等来源类型，也没有程序级最终回答来源校验。 |
 | 分类与标签体系 | 未完成 | 当前只保存 keywords，不存在分类/标签模型、列表、重命名、合并或相似标签建议。 |
 | 知识去重与合并 | 未完成 | 当前明确不做去重合并；没有重复检测、相似知识检测、合并建议、差异展示、用户确认合并或原始来源保留流程。 |
@@ -92,7 +92,7 @@ last_updated: "2026-06-07"
 | 内容输出 | 未完成 | 当前明确不做周报、日报或自动总结；没有学习总结、周报、博客大纲、面试提纲、简历项目描述或项目复盘总结能力。 |
 | Agent Harness | 部分完成 | 已实现 Agent Loop、Tool Dispatcher、Prompt Builder、运行时上下文拼接和工具调用结果回填；工具注册仍是静态映射，尚未形成完整可扩展注册机制。 |
 | 后台任务 | 未完成 | 当前明确不做后台任务；没有后台 Wiki 同步、索引构建、批量摘要、任务状态、完成通知或失败重试。 |
-| 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；删除、合并、覆盖、重建索引等高风险操作尚未实现，也没有对应确认流程或变更历史记录。 |
+| 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；更新和删除确认已实现；合并、覆盖和图谱确认等后续高风险操作尚未实现。v0.4 语义索引重建是系统维护工具，不作为高风险确认操作。 |
 | 长期偏好记忆 | 部分完成 | 已支持读取 Agent memory index 和相关 memory，并能生成 memory candidates 事件；尚未实现偏好写入确认闭环，以及偏好查看、修改、删除。 |
 | Web Chat + Cards | 部分完成 | 已实现本地 HTML 聊天入口、`POST /api/chat`、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
 
@@ -104,7 +104,7 @@ last_updated: "2026-06-07"
 |---|---|---|---|
 | `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
 | `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
-| `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant 做语义召回，并通过 `hybrid_search_qa_cards` 合并排序 | 规划中，未实现 |
+| `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 做语义召回；通过 `is_vectorized` 标记历史卡片是否已写入语义索引，并通过 `hybrid_search_qa_cards` 合并排序 | 已完成 |
 | `v0.5` | 标签和分类 | `qa_cards` 直接增加 tags / category 字段；保存时由模型生成，用户可通过 update 工具手动修改；标签多选，分类单选 | 规划中，未实现 |
 | `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并后的新卡片内容由模型生成；`merge_qa_cards` 必须经过 PreToolUse permission gate，确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须经过 PreToolUse permission gate；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
@@ -115,12 +115,12 @@ last_updated: "2026-06-07"
   3. 未调用检索工具时不强制拒答；但 Agent 不得声称回答来自本地知识库，不得编造来源或 card_id。
   4. 删除就是物理删除；后续实现中不得引入软删除概念。
   5. 更新只修改当前卡片，不保存历史版本或 before / after 快照。
-  6. 删除、更新、合并、重建索引和确认图谱关系等高风险操作必须经过 harness 的 PreToolUse permission gate；模型只能请求工具，不能自行确认或绕过权限层。
+  6. 删除、更新、合并和确认图谱关系等高风险操作必须经过 harness 的 PreToolUse permission gate；模型只能请求工具，不能自行确认或绕过权限层。v0.4 的 `rebuild_qa_semantic_index` 是系统维护工具，不需要用户确认。
   7. v0.4-v0.6 不引入 Meilisearch；SQLite LIKE 作为关键词兜底，Qdrant 作为语义召回索引。
-  8. v0.4 不引入 Docker 或 Docker Compose；Qdrant 运行方式通过配置决定，后续统一打包时再单独设计容器化。
+  8. v0.4 不引入 Docker 或 Docker Compose；Qdrant 使用 qdrant-client local mode，默认索引目录为 `.knowledge/qdrant`，后续统一打包时再单独设计容器化。
   9. Kuzu 使用本地文件数据库，默认路径位于 `.knowledge/` 下，不通过 Docker 管理。
   10. DashScope / Qwen `text-embedding-v4` 是 v0.4 的默认远程 embedding 服务；DeepSeek 继续作为主 LLM，不承担 embedding 职责。
-  11. 删除卡片时必须同步删除 SQLite 卡片、Qdrant 向量和 Kuzu 中只由该卡片支撑的来源链接。
+  11. 删除卡片时必须物理删除 SQLite 卡片，并尽力删除 Qdrant 向量；v0.7 引入 Kuzu 后，再同步处理 Kuzu 中只由该卡片支撑的来源链接。
   12. Web UI 不随 v0.2-v0.7 后端路线同步扩展；后续另行设计和实现。
 
 - **行为约束**:
@@ -710,7 +710,7 @@ last_updated: "2026-06-07"
 | `v0.2` | `turn_messages` / `source_evidence` | 从当前 turn messages 中提取真实工具证据，并由程序生成来源区块 | 否 | 否 |
 | `v0.3` | `update_qa_card` | 更新 Q&A 当前卡片 | 是 | 是 |
 | `v0.3` | `delete_qa_card` | 物理删除 Q&A 卡片 | 是 | 是 |
-| `v0.4` | `sync_vector_index` / `semantic_search_qa_cards` / `hybrid_search_qa_cards` / `rebuild_vector_index` | 生成 embedding、同步 Qdrant、执行语义和混合检索 | 同步有副作用，检索无副作用 | 同步按调用场景判断 |
+| `v0.4` | `hybrid_search_qa_cards` / `rebuild_qa_semantic_index` | 执行 SQLite LIKE + Qdrant 语义召回的混合检索；把未向量化的历史 Q&A 卡片写入 Qdrant local index | 重建和保存/更新/删除后的索引同步有副作用，检索无副作用 | 否 |
 | `v0.5` | `save_qa_card` / `update_qa_card` tags-category 扩展 | 保存时写入模型生成的 tags/category，用户可手动更新 | 是 | 否 |
 | `v0.6` | `detect_duplicate_cards` / `merge_qa_cards` | 检测重复候选；确认后创建合并新卡片并物理删除原卡片 | 合并有副作用 | 合并需要确认 |
 | `v0.7` | `extract_graph_candidates` / `confirm_graph_candidate` | 从卡片抽取实体关系候选，并在确认后写入 Kuzu | 确认写入有副作用 | 是 |
@@ -1024,23 +1024,65 @@ pka
 
 ### 5.12 v0.4 Hybrid 检索
 
-1. Agent 调用 `hybrid_search_qa_cards`。
+1. Agent 对本地 Q&A 问答意图优先调用 `hybrid_search_qa_cards`。
 2. 工具先执行 SQLite LIKE，得到 keyword candidates。
-3. 工具调用 DashScope / Qwen embedding，把用户 query 转换为 query vector。
-4. 工具调用 Qdrant，得到 semantic candidates。
-5. 工具将两路结果统一为 SearchCandidate，并按 card_id 合并去重。
-6. 同时被 keyword 和 semantic 命中的 card_id 优先排序。
-7. 工具回 SQLite 读取完整卡片，并丢弃 SQLite 中已不存在的 card_id。
-8. 工具返回统一检索结果；Qdrant / DashScope 失败时降级为 SQLite LIKE，并返回 warning。
+3. 如果缺少 `DASHSCOPE_API_KEY`，工具直接返回 SQLite LIKE 结果，并附带语义检索未启用的 warning。
+4. 如果 embedding 已启用，工具调用 DashScope / Qwen `text-embedding-v4`，把用户 query 转换为 query vector。
+5. 工具调用 Qdrant local index，得到 semantic candidates。
+6. 工具将两路结果统一为 SearchCandidate，并按 card_id 合并去重。
+7. 工具为每个候选计算 `keyword_score`、`keyword_score_norm`、`semantic_score` 和 `final_score`。
+8. 工具按 `final_score` 降序排序，返回候选摘要，不返回完整 answer。
+9. 工具返回统一候选结果；Qdrant / DashScope 失败时降级为 SQLite LIKE，并返回 warning。
+
+v0.4 hybrid 排序规则：
+
+1. `keyword_score` 来自 SQLite LIKE 字段权重。
+2. `semantic_score` 来自 Qdrant 相似度。
+3. `keyword_score_norm = keyword_score / max_keyword_score`。
+4. 如果本轮没有关键词命中，则 `keyword_score_norm = 0`。
+5. `final_score = 0.4 * keyword_score_norm + 0.6 * semantic_score`。
+6. 返回候选必须按 `final_score` 降序排序。
+
+v0.4 hybrid 候选分层：
+
+1. `strong`: `final_score >= 0.70`。
+2. `medium`: `0.50 <= final_score < 0.70`。
+3. `weak`: `0.35 <= final_score < 0.50`。
+4. `discard`: `final_score < 0.35`。
+
+v0.4 hybrid 返回规则：
+
+1. 如果存在 `strong` 或 `medium` 候选，返回这些候选，最多 `limit` 条。
+2. 如果不存在 `strong` / `medium`，但存在 `weak` 候选，只返回 top weak 1 条，并附带 warning。
+3. 如果没有 `weak` 以上候选，返回 `cards = []`，并附带 message。
+4. 每个候选应包含 `rank`、`match_level`、`matched_by`、`keyword_score`、`keyword_score_norm`、`semantic_score`、`final_score` 和兼容字段 `score`。
+
+v0.4 hybrid 候选使用规则：
+
+1. `hybrid_search_qa_cards` 是候选召回工具，不是完整依据读取工具。
+2. `read_qa_card` 是完整卡片依据读取工具。
+3. 如果要基于某张候选卡片回答本地知识库问题，必须先调用 `read_qa_card` 读取该 `card_id` 的完整卡片。
+4. 通常应优先读取 `rank = 1` 的候选。
+5. 如果跳过 `rank = 1` 读取更低 rank 候选，必须有明确理由，例如 `rank = 1` 与用户问题明显不匹配。
+6. 如果 `hybrid_search_qa_cards` 只返回 weak 候选，必须读取完整卡片后再判断是否足够回答；不足时应说明本地知识库依据不足。
+7. 如果 `hybrid_search_qa_cards` 返回空 `cards`，不得声称来自本地知识库。
+
+首次启用 v0.4 后，已有 SQLite 历史卡片不会自动假定已进入 Qdrant。工具层必须提供 `rebuild_qa_semantic_index`：
+
+1. 从 SQLite 读取 `is_vectorized = 0` 的 Q&A 卡片。
+2. 对每张卡片生成 embedding，并写入 Qdrant local index。
+3. 单张卡片写入成功后，将该卡片 `is_vectorized` 标记为 `1`。
+4. 单张卡片失败时保持 `is_vectorized = 0`，本次重建继续处理后续卡片。
+5. 已经 `is_vectorized = 1` 且未被更新的卡片不得重复向量化。
 
 - **成功条件**:
-  返回结果均可回溯到 SQLite `qa_cards`。
+  hybrid 检索返回候选均可回溯到 SQLite `qa_cards`。历史卡片通过 `rebuild_qa_semantic_index` 成功进入 Qdrant 后，后续可被语义召回命中。
 
 - **失败条件**:
-  SQLite 读取失败、DashScope 失败、Qdrant 失败或 Qdrant 返回已不存在的 card_id。
+  SQLite 读取失败、DashScope 失败、Qdrant 失败、缺少 `DASHSCOPE_API_KEY` 或 Qdrant 返回已不存在的 card_id。
 
 - **用户可见反馈**:
-  hybrid 完整成功时返回统一结果；向量部分失败时说明已降级为本地关键词检索。不得把 Qdrant payload 作为事实来源。
+  hybrid 完整成功时返回候选结果和评分解释字段；向量部分未启用或失败时说明已降级为本地关键词检索。`rebuild_qa_semantic_index` 返回处理总数、成功数量、失败数量和失败 card_id 列表。不得把 Qdrant payload 或 hybrid 候选摘要当作完整事实来源。
 
 ### 5.13 v0.5 tags / category
 
@@ -1325,13 +1367,12 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   - `id`: 与 `card_id` 稳定关联
   - `vector`: DashScope / Qwen `text-embedding-v4` 生成的 `1024` 维向量
   - `payload.card_id`
-  - `payload.source_type`
-  - `payload.created_at`
-  - `payload.updated_at`
-  - `payload.embedding_model`
-  - `payload.embedding_dimensions`
-  - `payload.tags`
-  - `payload.category`
+
+- **v0.4 `qa_cards` semantic index marker**:
+  - `is_vectorized`: `0` 表示尚未向量化，或内容更新后需要重新向量化；`1` 表示已成功向量化并写入 Qdrant。
+  - 新卡片默认 `is_vectorized = 0`。
+  - 更新卡片内容时必须把 `is_vectorized` 重置为 `0`。
+  - 成功写入 Qdrant 后才能把 `is_vectorized` 标记为 `1`。
 
 - **v0.5 `qa_cards` tags / category 扩展**:
   - `tags`: `TEXT`，JSON 字符串，保存模型生成或用户手动更新的标签数组。

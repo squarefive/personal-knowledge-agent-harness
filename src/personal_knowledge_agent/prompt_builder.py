@@ -14,7 +14,9 @@ def build_system_prompt(
                 "你是一个本地个人 Q&A 知识库 Agent。",
                 "你的任务是把用户提供的 Q&A 保存为本地知识卡片，并在用户提问时先检索本地知识库。",
                 "当用户要记录知识时，保留原始 question 和 answer，生成 summary 和 keywords，然后调用 save_qa_card。",
-                "如果要基于本地知识库回答，先调用 search_qa_cards；必要时再调用 read_qa_card 核对完整来源。",
+                "如果要基于本地知识库回答，优先调用 hybrid_search_qa_cards 查找候选卡片；search_qa_cards 仅作为关键词检索和降级兜底。",
+                "hybrid_search_qa_cards 返回的是候选摘要，不是完整依据；如果要基于某张候选回答，必须先调用 read_qa_card 读取该 card_id 的完整卡片。",
+                "通常应优先读取 rank=1 的候选；如果只返回 weak 候选，读取完整卡片后仍要判断依据是否足够；如果 cards 为空，不得声称来自本地知识库。",
                 "不要自行编造 card_id、原始问题、source_type、created_at 或来源区块；最终来源区块由程序根据工具结果生成。",
                 "没有工具证据时，可以普通回答，但不得声称来自本地知识库。",
                 "可以请求 update_qa_card 或 delete_qa_card 维护卡片；这类高风险工具执行前由 harness 权限层请求用户确认。",
@@ -22,7 +24,7 @@ def build_system_prompt(
                 "如果本地知识库没有足够依据，明确说明无法从本地知识库回答，不要编造。",
                 "不要声称已经保存、查询或更新任何未通过工具完成的数据。",
                 "Q&A 知识库和 Agent memory 必须分开；.memory 内容不能作为 Q&A 卡片来源。",
-                "第一版不做 Wiki、文件监听、周报、多 Agent、向量数据库、去重合并或后台任务。",
+                "第一版不做 Wiki、文件监听、周报、多 Agent、去重合并或后台任务；Qdrant 只能作为 Q&A 语义索引，不是事实来源。",
             ]
         )
     ]

@@ -10,6 +10,7 @@ from .config import AgentConfig
 from .events import AgentEvent
 from .llm_client import DeepSeekClient
 from .permissions import ApprovalRequest
+from .qa_semantic_index import QASemanticIndex
 from .qa_store import SQLiteStore
 from .session_memory import (
     ContextCompactor,
@@ -48,10 +49,19 @@ def create_agent_components(
     metadata = metadata_store.load_or_create()
     memory_index_store = MemoryIndexStore(workspace_root)
     memory_store = MemoryStore(workspace_root)
+    semantic_index = QASemanticIndex(
+        dashscope_api_key=config.dashscope_api_key,
+        embedding_base_url=config.qwen_embedding_base_url,
+        embedding_model=config.qwen_embedding_model,
+        embedding_dimensions=config.qwen_embedding_dimensions,
+        qdrant_path=config.qdrant_path,
+        collection_name=config.qdrant_collection,
+    )
     tools = KnowledgeTools(
         store,
         memory_index_store=memory_index_store,
         memory_store=memory_store,
+        semantic_index=semantic_index,
     )
     dispatcher = ToolDispatcher(tools)
     agent = AgentLoop(

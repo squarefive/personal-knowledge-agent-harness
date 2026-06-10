@@ -27,10 +27,12 @@ class SQLiteStore:
                   keywords TEXT NOT NULL,
                   source_type TEXT NOT NULL,
                   created_at TEXT NOT NULL,
-                  updated_at TEXT NOT NULL
+                  updated_at TEXT NOT NULL,
+                  is_vectorized INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            self._ensure_column(conn, "qa_cards", "is_vectorized", "INTEGER NOT NULL DEFAULT 0")
 
     def save_card(
         self,
@@ -117,7 +119,7 @@ class SQLiteStore:
             conn.execute(
                 """
                 UPDATE qa_cards
-                SET question = ?, answer = ?, summary = ?, keywords = ?, updated_at = ?
+                SET question = ?, answer = ?, summary = ?, keywords = ?, updated_at = ?, is_vectorized = 0
                 WHERE id = ?
                 """,
                 (
@@ -146,6 +148,35 @@ class SQLiteStore:
             ).fetchall()
         cards = [self._row_to_card(row) for row in rows]
         return cards
+
+    def list_unvectorized_cards(self, limit: int | None = None) -> list[QACard]:
+        params: tuple[int, ...] = ()
+        sql = "SELECT * FROM qa_cards WHERE is_vectorized = 0 ORDER BY created_at ASC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = (self._safe_limit(limit),)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row_to_card(row) for row in rows]
+
+    def read_cards_by_ids(self, card_ids: list[str]) -> list[QACard]:
+        cards: list[QACard] = []
+        for card_id in card_ids:
+            if not isinstance(card_id, str) or not card_id.strip():
+                continue
+            card = self.read_card(card_id)
+            if card is not None:
+                cards.append(card)
+        return cards
+
+    def mark_card_vectorized(self, card_id: str) -> bool:
+        self._require_text("card_id", card_id)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE qa_cards SET is_vectorized = 1 WHERE id = ?",
+                (card_id.strip(),),
+            )
+        return cursor.rowcount > 0
 
     def search_cards(self, query: str, limit: int = 5) -> list[SearchResult]:
         self._require_text("query", query)
@@ -201,7 +232,20 @@ class SQLiteStore:
             source_type=row["source_type"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            is_vectorized=row["is_vectorized"],
         )
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        declaration: str,
+    ) -> None:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        existing = {row["name"] for row in rows}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     @staticmethod
     def _now() -> str:

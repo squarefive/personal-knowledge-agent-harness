@@ -10,7 +10,11 @@ def test_build_system_prompt_keeps_base_rules():
     prompt = build_system_prompt()
 
     assert "你是一个本地个人 Q&A 知识库 Agent" in prompt
-    assert "如果要基于本地知识库回答，先调用 search_qa_cards" in prompt
+    assert "如果要基于本地知识库回答，优先调用 hybrid_search_qa_cards" in prompt
+    assert "hybrid_search_qa_cards 返回的是候选摘要，不是完整依据" in prompt
+    assert "必须先调用 read_qa_card 读取该 card_id 的完整卡片" in prompt
+    assert "通常应优先读取 rank=1 的候选" in prompt
+    assert "如果只返回 weak 候选，读取完整卡片后仍要判断依据是否足够" in prompt
     assert "最终来源区块由程序根据工具结果生成" in prompt
     assert "高风险工具执行前由 harness 权限层请求用户确认" in prompt
     assert "permission_denied" in prompt

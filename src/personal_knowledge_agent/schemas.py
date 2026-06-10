@@ -14,6 +14,7 @@ class QACard:
     source_type: str
     created_at: str
     updated_at: str
+    is_vectorized: int = 0
 
 
 @dataclass(frozen=True)
