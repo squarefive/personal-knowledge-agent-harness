@@ -69,13 +69,13 @@ class ToolDispatcher:
 
 
 DISPLAY_INPUT_FIELDS: dict[str, tuple[str, ...]] = {
-    "save_qa_card": ("question", "answer", "summary", "keywords"),
-    "search_qa_cards": ("query", "limit"),
-    "hybrid_search_qa_cards": ("query", "limit"),
+    "save_qa_card": ("question", "answer", "summary", "keywords", "category"),
+    "search_qa_cards": ("query", "limit", "category"),
+    "hybrid_search_qa_cards": ("query", "limit", "category"),
     "read_qa_card": ("card_id",),
-    "update_qa_card": ("card_id", "question", "answer", "summary", "keywords"),
+    "update_qa_card": ("card_id", "question", "answer", "summary", "keywords", "category"),
     "delete_qa_card": ("card_id",),
-    "list_recent_cards": ("limit",),
+    "list_recent_cards": ("limit", "category"),
     "rebuild_qa_semantic_index": ("limit",),
     "list_memory_index": ("limit",),
     "read_memory": ("name",),
@@ -84,7 +84,7 @@ DISPLAY_INPUT_FIELDS: dict[str, tuple[str, ...]] = {
 ERROR_OUTPUT_FIELDS = ("ok", "error_code", "message")
 
 DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
-    "save_qa_card": ("ok", "card_id", "source_type", "created_at", "error_code", "message"),
+    "save_qa_card": ("ok", "card_id", "source_type", "created_at", "category", "error_code", "message"),
     "search_qa_cards": (
         "ok",
         "cards.card_id",
@@ -94,6 +94,7 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "cards.score",
         "cards.source_type",
         "cards.created_at",
+        "cards.category",
         "error_code",
         "message",
     ),
@@ -113,6 +114,7 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "cards.semantic_score",
         "cards.source_type",
         "cards.created_at",
+        "cards.category",
         "warning",
         "message",
         "error_code",
@@ -124,6 +126,7 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "card.answer",
         "card.summary",
         "card.keywords",
+        "card.category",
         "card.source_type",
         "card.created_at",
         "card.updated_at",
@@ -137,6 +140,7 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "card.answer",
         "card.summary",
         "card.keywords",
+        "card.category",
         "card.source_type",
         "card.created_at",
         "card.updated_at",
@@ -155,6 +159,7 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "cards.question",
         "cards.summary",
         "cards.keywords",
+        "cards.category",
         "cards.source_type",
         "cards.created_at",
         "error_code",

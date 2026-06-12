@@ -73,6 +73,7 @@ def test_semantic_index_uses_qwen_embedding_request_and_card_id_payload():
         answer="完整答案不应进入 Qdrant payload。",
         summary="摘要。",
         keywords=["关键词"],
+        category="检索与知识库",
         source_type="manual_qa",
         created_at="2026-06-08T00:00:00+00:00",
         updated_at="2026-06-08T00:00:00+00:00",

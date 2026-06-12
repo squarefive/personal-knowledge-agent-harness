@@ -40,6 +40,7 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
                             "answer": "能保存、检索、回答并引用来源。",
                             "summary": "最小闭环包含保存、检索、回答和来源。",
                             "keywords": ["最小闭环", "来源"],
+                            "category": "Agent 开发",
                         },
                     )
                 ]
@@ -118,6 +119,7 @@ def test_agent_loop_does_not_reuse_previous_turn_sources(tmp_path):
                             "answer": "能保存、检索、回答并引用来源。",
                             "summary": "最小闭环包含保存、检索、回答和来源。",
                             "keywords": ["最小闭环", "来源"],
+                            "category": "Agent 开发",
                         },
                     )
                 ]
@@ -148,6 +150,7 @@ def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
             "answer": "旧答案。",
             "summary": "旧摘要。",
             "keywords": ["旧"],
+            "category": "Agent 开发",
         }
     )
     dispatcher = ToolDispatcher(knowledge_tools)
@@ -188,6 +191,7 @@ def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
             "answer": "答案。",
             "summary": "摘要。",
             "keywords": ["关键词"],
+            "category": "Agent 开发",
         }
     )
     dispatcher = ToolDispatcher(knowledge_tools)

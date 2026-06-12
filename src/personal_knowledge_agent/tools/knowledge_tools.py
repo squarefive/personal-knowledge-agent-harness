@@ -53,17 +53,20 @@ class KnowledgeTools:
             answer = self._required_text(arguments, "answer")
             summary = self._required_text(arguments, "summary")
             keywords = self._required_keywords(arguments)
+            category = self._required_text(arguments, "category")
             card = self.store.save_card(
                 question=question,
                 answer=answer,
                 summary=summary,
                 keywords=keywords,
+                category=category,
             )
             result = {
                 "ok": True,
                 "card_id": card.id,
                 "source_type": card.source_type,
                 "created_at": card.created_at,
+                "category": card.category,
             }
             warning = self._try_upsert_semantic_index(card)
             if warning:
@@ -76,7 +79,8 @@ class KnowledgeTools:
         try:
             query = self._required_text(arguments, "query")
             limit = self._optional_limit(arguments, default=5)
-            cards = self.store.search_cards(query, limit=limit)
+            category = self._optional_category(arguments)
+            cards = self.store.search_cards(query, limit=limit, category=category)
             return {"ok": True, "cards": [asdict(card) for card in cards]}
         except Exception as exc:
             return self._error("invalid_input", str(exc))
@@ -85,7 +89,8 @@ class KnowledgeTools:
         try:
             query = self._required_text(arguments, "query")
             limit = self._optional_limit(arguments, default=5)
-            keyword_results = self.store.search_cards(query, limit=limit)
+            category = self._optional_category(arguments)
+            keyword_results = self.store.search_cards(query, limit=limit, category=category)
             warning: str | None = None
             message: str | None = None
             semantic_hits = []
@@ -95,7 +100,8 @@ class KnowledgeTools:
                 semantic_degraded = True
             else:
                 try:
-                    semantic_hits = self.semantic_index.search(query, limit=limit)
+                    semantic_limit = max(limit * 5, 20) if category is not None else limit
+                    semantic_hits = self.semantic_index.search(query, limit=semantic_limit)
                 except Exception as exc:
                     warning = f"语义检索失败，已降级为本地关键词检索: {exc}"
                     semantic_degraded = True
@@ -105,9 +111,20 @@ class KnowledgeTools:
                 semantic_scores={hit.card_id: hit.score for hit in semantic_hits},
                 use_keyword_only_score=semantic_degraded,
             )
+            if category is not None:
+                allowed_cards = self.store.read_cards_by_ids(
+                    [candidate.card_id for candidate in candidates],
+                    category=category,
+                )
+                allowed_card_ids = {card.id for card in allowed_cards}
+                candidates = [candidate for candidate in candidates if candidate.card_id in allowed_card_ids]
             returned_candidates = self._select_hybrid_candidates(candidates, limit=limit)
             if not semantic_degraded and not returned_candidates:
-                message = "没有找到足够相关的本地知识卡片。"
+                message = (
+                    "指定 category 下没有找到相关本地知识卡片。"
+                    if category is not None
+                    else "没有找到足够相关的本地知识卡片。"
+                )
             elif not semantic_degraded and returned_candidates[0].match_level == "weak":
                 warning = "只找到弱相关候选，回答前应读取完整卡片并谨慎判断。"
 
@@ -204,7 +221,8 @@ class KnowledgeTools:
     def list_recent_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
             limit = self._optional_limit(arguments, default=10)
-            cards = self.store.list_recent_cards(limit=limit)
+            category = self._optional_category(arguments)
+            cards = self.store.list_recent_cards(limit=limit, category=category)
             return {"ok": True, "cards": [self._recent_payload(card) for card in cards]}
         except Exception as exc:
             return self._error("store_error", str(exc))
@@ -260,6 +278,11 @@ class KnowledgeTools:
             return default
         return min(value, 50)
 
+    def _optional_category(self, arguments: dict[str, Any]) -> str | None:
+        if "category" not in arguments or arguments.get("category") is None:
+            return None
+        return self.store.validate_category(self._required_text(arguments, "category"))
+
     def _update_patch(self, arguments: dict[str, Any]) -> dict[str, Any]:
         patch: dict[str, Any] = {}
         for name in ("question", "answer", "summary"):
@@ -268,6 +291,8 @@ class KnowledgeTools:
                 patch[name] = self._required_text(arguments, name)
         if "keywords" in arguments:
             patch["keywords"] = self._required_keywords(arguments)
+        if "category" in arguments:
+            patch["category"] = self._required_text(arguments, "category")
         if not patch:
             raise ValueError("at least one field must be provided")
         return patch
@@ -280,6 +305,7 @@ class KnowledgeTools:
             "answer": card.answer,
             "summary": card.summary,
             "keywords": card.keywords,
+            "category": card.category,
             "source_type": card.source_type,
             "created_at": card.created_at,
             "updated_at": card.updated_at,
@@ -292,6 +318,7 @@ class KnowledgeTools:
             "question": card.question,
             "summary": card.summary,
             "keywords": card.keywords,
+            "category": card.category,
             "source_type": card.source_type,
             "created_at": card.created_at,
         }
@@ -313,6 +340,7 @@ class KnowledgeTools:
             "semantic_score": candidate.semantic_score,
             "source_type": card.source_type,
             "created_at": card.created_at,
+            "category": card.category,
         }
 
     def _try_upsert_semantic_index(self, card: QACard) -> str | None:
@@ -410,8 +438,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "answer": {"type": "string"},
                     "summary": {"type": "string"},
                     "keywords": {"type": "array", "items": {"type": "string"}},
+                    "category": {"type": "string"},
                 },
-                "required": ["question", "answer", "summary", "keywords"],
+                "required": ["question", "answer", "summary", "keywords", "category"],
             },
         },
     },
@@ -425,6 +454,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "query": {"type": "string"},
                     "limit": {"type": "integer"},
+                    "category": {"type": "string"},
                 },
                 "required": ["query"],
             },
@@ -440,6 +470,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "query": {"type": "string"},
                     "limit": {"type": "integer"},
+                    "category": {"type": "string"},
                 },
                 "required": ["query"],
             },
@@ -470,6 +501,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "answer": {"type": "string"},
                     "summary": {"type": "string"},
                     "keywords": {"type": "array", "items": {"type": "string"}},
+                    "category": {"type": "string"},
                 },
                 "required": ["card_id"],
             },
@@ -494,7 +526,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "description": "列出最近保存的 Q&A 知识卡片。",
             "parameters": {
                 "type": "object",
-                "properties": {"limit": {"type": "integer"}},
+                "properties": {"limit": {"type": "integer"}, "category": {"type": "string"}},
             },
         },
     },

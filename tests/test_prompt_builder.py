@@ -10,6 +10,11 @@ def test_build_system_prompt_keeps_base_rules():
     prompt = build_system_prompt()
 
     assert "你是一个本地个人 Q&A 知识库 Agent" in prompt
+    assert "生成 summary、keywords 和 category" in prompt
+    assert "keywords 是检索词；category 是这张卡片唯一的语义主归属分类" in prompt
+    assert "不得使用“其他”“未分类”“杂项”“默认分类”“未知”“待分类”等兜底分类" in prompt
+    assert "只有用户明确限定分类时" in prompt
+    assert "用户未明确限定分类时，不要传 category" in prompt
     assert "如果要基于本地知识库回答，优先调用 hybrid_search_qa_cards" in prompt
     assert "hybrid_search_qa_cards 返回的是候选摘要，不是完整依据" in prompt
     assert "必须先调用 read_qa_card 读取该 card_id 的完整卡片" in prompt

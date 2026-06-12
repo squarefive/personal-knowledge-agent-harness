@@ -14,6 +14,7 @@ class FakeSemanticIndex:
         self.fail_search = fail_search
         self.upserted = []
         self.deleted = []
+        self.search_limits = []
 
     def is_enabled(self):
         return self.enabled
@@ -21,6 +22,7 @@ class FakeSemanticIndex:
     def search(self, query, limit):
         if self.fail_search:
             raise RuntimeError("qdrant unavailable")
+        self.search_limits.append(limit)
         return self.hits[:limit]
 
     def upsert_card(self, card):
@@ -47,6 +49,23 @@ def test_save_qa_card_validates_required_fields(tmp_path):
     assert result["error_code"] == "invalid_input"
 
 
+def test_save_qa_card_requires_category(tmp_path):
+    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+
+    result = tools.save_qa_card(
+        {
+            "question": "问题？",
+            "answer": "答案。",
+            "summary": "摘要。",
+            "keywords": ["关键词"],
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "invalid_input"
+    assert "category" in result["message"]
+
+
 def test_tools_save_read_search_and_recent(tmp_path):
     tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
 
@@ -56,22 +75,27 @@ def test_tools_save_read_search_and_recent(tmp_path):
             "answer": "DeepSeek 只通过薄 LLM Client 提供模型调用能力。",
             "summary": "DeepSeek 是第一版 LLM 服务。",
             "keywords": ["DeepSeek", "LLM Client"],
+            "category": "Agent 开发",
         }
     )
 
     assert saved["ok"] is True
+    assert saved["category"] == "Agent 开发"
 
     read = tools.read_qa_card({"card_id": saved["card_id"]})
     assert read["ok"] is True
     assert read["card"]["source_type"] == "manual_qa"
+    assert read["card"]["category"] == "Agent 开发"
 
     searched = tools.search_qa_cards({"query": "DeepSeek", "limit": 5})
     assert searched["ok"] is True
     assert searched["cards"][0]["card_id"] == saved["card_id"]
+    assert searched["cards"][0]["category"] == "Agent 开发"
 
     recent = tools.list_recent_cards({"limit": 5})
     assert recent["ok"] is True
     assert recent["cards"][0]["card_id"] == saved["card_id"]
+    assert recent["cards"][0]["category"] == "Agent 开发"
 
 
 def test_read_qa_card_not_found_returns_structured_error(tmp_path):
@@ -91,6 +115,7 @@ def test_update_and_delete_qa_card_tools(tmp_path):
             "answer": "旧答案。",
             "summary": "旧摘要。",
             "keywords": ["旧"],
+            "category": "Agent 开发",
         }
     )
 
@@ -101,6 +126,7 @@ def test_update_and_delete_qa_card_tools(tmp_path):
             "answer": "新答案。",
             "summary": "新摘要。",
             "keywords": ["新"],
+            "category": "Agent 开发",
         }
     )
 
@@ -108,6 +134,7 @@ def test_update_and_delete_qa_card_tools(tmp_path):
     assert updated["card"]["card_id"] == saved["card_id"]
     assert updated["card"]["question"] == "新问题？"
     assert updated["card"]["keywords"] == ["新"]
+    assert updated["card"]["category"] == "Agent 开发"
 
     deleted = tools.delete_qa_card({"card_id": saved["card_id"]})
 
@@ -136,6 +163,7 @@ def test_hybrid_search_degrades_to_sqlite_like_when_semantic_index_disabled(tmp_
             "answer": "程序根据工具结果生成来源区块。",
             "summary": "来源区块必须来自工具证据。",
             "keywords": ["来源", "校验"],
+            "category": "Agent 开发",
         }
     )
 
@@ -155,12 +183,14 @@ def test_hybrid_search_normalizes_scores_and_ranks_by_final_score(tmp_path):
         answer="关键词答案。",
         summary="关键词摘要。",
         keywords=["关键词"],
+        category="Agent 开发",
     )
     semantic_card = store.save_card(
         question="语义问题？",
         answer="语义答案。",
         summary="语义摘要。",
         keywords=["语义"],
+        category="Agent 开发",
     )
     tools = KnowledgeTools(
         store,
@@ -189,6 +219,7 @@ def test_hybrid_search_combines_keyword_and_semantic_scores(tmp_path):
         answer="vibe coding 是 AI 辅助编程范式。",
         summary="vibe coding 强调人机协作。",
         keywords=["vibe coding"],
+        category="Agent 开发",
     )
     tools = KnowledgeTools(
         store,
@@ -215,12 +246,14 @@ def test_hybrid_search_returns_top_weak_candidate_with_warning(tmp_path):
         answer="弱相关答案。",
         summary="弱相关摘要。",
         keywords=["弱相关"],
+        category="Agent 开发",
     )
     weaker_card = store.save_card(
         question="更弱相关问题？",
         answer="更弱相关答案。",
         summary="更弱相关摘要。",
         keywords=["更弱相关"],
+        category="Agent 开发",
     )
     tools = KnowledgeTools(
         store,
@@ -244,6 +277,7 @@ def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tm
         answer="低相关答案。",
         summary="低相关摘要。",
         keywords=["低相关"],
+        category="Agent 开发",
     )
     tools = KnowledgeTools(
         store,
@@ -257,6 +291,128 @@ def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tm
     assert result["message"] == "没有找到足够相关的本地知识卡片。"
 
 
+def test_search_and_recent_cards_filter_by_category(tmp_path):
+    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools.save_qa_card(
+        {
+            "question": "Agent 问题？",
+            "answer": "Agent 答案。",
+            "summary": "Agent 摘要。",
+            "keywords": ["共同词"],
+            "category": "Agent 开发",
+        }
+    )
+    search_saved = tools.save_qa_card(
+        {
+            "question": "检索问题？",
+            "answer": "检索答案。",
+            "summary": "检索摘要。",
+            "keywords": ["共同词"],
+            "category": "检索与知识库",
+        }
+    )
+
+    searched = tools.search_qa_cards({"query": "共同词", "category": "检索与知识库"})
+    recent = tools.list_recent_cards({"limit": 10, "category": "检索与知识库"})
+
+    assert [card["card_id"] for card in searched["cards"]] == [search_saved["card_id"]]
+    assert [card["card_id"] for card in recent["cards"]] == [search_saved["card_id"]]
+
+
+def test_hybrid_search_filters_semantic_candidates_by_category(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    agent_card = store.save_card(
+        question="Agent 语义问题？",
+        answer="Agent 语义答案。",
+        summary="Agent 语义摘要。",
+        keywords=["语义"],
+        category="Agent 开发",
+    )
+    search_card = store.save_card(
+        question="检索语义问题？",
+        answer="检索语义答案。",
+        summary="检索语义摘要。",
+        keywords=["语义"],
+        category="检索与知识库",
+    )
+    tools = KnowledgeTools(
+        store,
+        semantic_index=FakeSemanticIndex(hits=[FakeHit(agent_card.id, 0.91), FakeHit(search_card.id, 0.86)]),
+    )
+
+    result = tools.hybrid_search_qa_cards(
+        {"query": "没有关键词命中", "category": "检索与知识库", "limit": 5}
+    )
+
+    assert result["ok"] is True
+    assert [card["card_id"] for card in result["cards"]] == [search_card.id]
+    assert result["cards"][0]["category"] == "检索与知识库"
+
+
+def test_hybrid_search_over_fetches_semantic_hits_when_category_filters(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    first_agent_card = store.save_card(
+        question="第一个 Agent 语义问题？",
+        answer="第一个 Agent 语义答案。",
+        summary="第一个 Agent 语义摘要。",
+        keywords=["不命中"],
+        category="Agent 开发",
+    )
+    second_agent_card = store.save_card(
+        question="第二个 Agent 语义问题？",
+        answer="第二个 Agent 语义答案。",
+        summary="第二个 Agent 语义摘要。",
+        keywords=["不命中"],
+        category="Agent 开发",
+    )
+    search_card = store.save_card(
+        question="检索语义问题？",
+        answer="检索语义答案。",
+        summary="检索语义摘要。",
+        keywords=["不命中"],
+        category="检索与知识库",
+    )
+    semantic_index = FakeSemanticIndex(
+        hits=[
+            FakeHit(first_agent_card.id, 0.96),
+            FakeHit(second_agent_card.id, 0.95),
+            FakeHit(search_card.id, 0.90),
+        ]
+    )
+    tools = KnowledgeTools(store, semantic_index=semantic_index)
+
+    result = tools.hybrid_search_qa_cards(
+        {"query": "没有关键词命中", "category": "检索与知识库", "limit": 2}
+    )
+
+    assert result["ok"] is True
+    assert [card["card_id"] for card in result["cards"]] == [search_card.id]
+    assert semantic_index.search_limits == [20]
+
+
+def test_hybrid_search_does_not_fallback_across_category(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    agent_card = store.save_card(
+        question="Agent 语义问题？",
+        answer="Agent 语义答案。",
+        summary="Agent 语义摘要。",
+        keywords=["语义"],
+        category="Agent 开发",
+    )
+    tools = KnowledgeTools(
+        store,
+        semantic_index=FakeSemanticIndex(hits=[FakeHit(agent_card.id, 0.91)]),
+    )
+
+    result = tools.hybrid_search_qa_cards(
+        {"query": "没有关键词命中", "category": "检索与知识库", "limit": 5}
+    )
+
+    assert result["ok"] is True
+    assert result["cards"] == []
+    assert result["message"] == "指定 category 下没有找到相关本地知识卡片。"
+
+
 def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
     store = SQLiteStore(tmp_path / "knowledge.db")
     first = store.save_card(
@@ -264,12 +420,14 @@ def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
         answer="已向量化答案。",
         summary="已向量化摘要。",
         keywords=["已向量化"],
+        category="Agent 开发",
     )
     second = store.save_card(
         question="未向量化问题？",
         answer="未向量化答案。",
         summary="未向量化摘要。",
         keywords=["未向量化"],
+        category="Agent 开发",
     )
     store.mark_card_vectorized(first.id)
     semantic_index = FakeSemanticIndex()
@@ -292,6 +450,7 @@ def test_rebuild_qa_semantic_index_keeps_failed_cards_unvectorized(tmp_path):
         answer="失败答案。",
         summary="失败摘要。",
         keywords=["失败"],
+        category="Agent 开发",
     )
     tools = KnowledgeTools(
         store,
@@ -316,6 +475,7 @@ def test_save_update_delete_sync_semantic_index_best_effort(tmp_path):
             "answer": "同步答案。",
             "summary": "同步摘要。",
             "keywords": ["同步"],
+            "category": "Agent 开发",
         }
     )
     updated = tools.update_qa_card({"card_id": saved["card_id"], "summary": "更新摘要。"})
@@ -387,6 +547,7 @@ def test_tool_dispatcher_display_output_includes_hybrid_ranking_fields(tmp_path)
                 "semantic_score": 0.67,
                 "source_type": "manual_qa",
                 "created_at": "2026-05-30T00:00:00+00:00",
+                "category": "检索与知识库",
                 "internal": "hidden",
             }
         ],
@@ -414,6 +575,7 @@ def test_tool_dispatcher_display_output_includes_hybrid_ranking_fields(tmp_path)
                 "semantic_score": 0.67,
                 "source_type": "manual_qa",
                 "created_at": "2026-05-30T00:00:00+00:00",
+                "category": "检索与知识库",
             }
         ],
         "warning": "warn",
@@ -429,6 +591,7 @@ def test_tool_dispatcher_handles_update_and_delete_tools(tmp_path):
             "answer": "旧答案。",
             "summary": "旧摘要。",
             "keywords": ["旧"],
+            "category": "Agent 开发",
         }
     )
 
