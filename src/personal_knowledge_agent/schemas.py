@@ -11,6 +11,7 @@ class QACard:
     answer: str
     summary: str
     keywords: list[str]
+    category: str
     source_type: str
     created_at: str
     updated_at: str
@@ -26,6 +27,7 @@ class SearchResult:
     score: int
     source_type: str
     created_at: str
+    category: str
 
 
 @dataclass(frozen=True)

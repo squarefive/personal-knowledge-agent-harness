@@ -105,7 +105,7 @@ last_updated: "2026-06-08"
 | `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
 | `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
 | `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 做语义召回；通过 `is_vectorized` 标记历史卡片是否已写入语义索引，并通过 `hybrid_search_qa_cards` 合并排序 | 已完成 |
-| `v0.5` | 标签和分类 | `qa_cards` 直接增加 tags / category 字段；保存时由模型生成，用户可通过 update 工具手动修改；标签多选，分类单选 | 规划中，未实现 |
+| `v0.5` | 分类 | `qa_cards` 增加必填 category 字段；category 由模型按语义主归属生成，用户可通过 update 工具手动修改；本阶段不新增 tags，keywords 继续承担检索词职责 | 规划中，未实现 |
 | `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并后的新卡片内容由模型生成；`merge_qa_cards` 必须经过 PreToolUse permission gate，确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须经过 PreToolUse permission gate；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
 
@@ -122,6 +122,7 @@ last_updated: "2026-06-08"
   10. DashScope / Qwen `text-embedding-v4` 是 v0.4 的默认远程 embedding 服务；DeepSeek 继续作为主 LLM，不承担 embedding 职责。
   11. 删除卡片时必须物理删除 SQLite 卡片，并尽力删除 Qdrant 向量；v0.7 引入 Kuzu 后，再同步处理 Kuzu 中只由该卡片支撑的来源链接。
   12. Web UI 不随 v0.2-v0.7 后端路线同步扩展；后续另行设计和实现。
+  13. v0.5 不新增 tags；tags 与 keywords 当前职责容易重叠，等 v0.6 去重合并和 v0.7 图谱后再基于真实知识聚类与实体关系重新设计。
 
 - **行为约束**:
   1. 凡是涉及长期记忆的动作，必须通过工具完成。
@@ -401,7 +402,8 @@ last_updated: "2026-06-08"
   "question": "原始问题，非空字符串",
   "answer": "原始答案，非空字符串",
   "summary": "简明摘要，非空字符串",
-  "keywords": ["关键词列表，至少 1 个"]
+  "keywords": ["关键词列表，至少 1 个"],
+  "category": "语义主归属分类，非空字符串"
 }
 ```
 
@@ -412,7 +414,8 @@ last_updated: "2026-06-08"
   "ok": true,
   "card_id": "本地唯一卡片 ID",
   "source_type": "manual_qa",
-  "created_at": "ISO 8601 时间"
+  "created_at": "ISO 8601 时间",
+  "category": "语义主归属分类"
 }
 ```
 
@@ -421,12 +424,14 @@ last_updated: "2026-06-08"
   - `answer`
   - `summary`
   - `keywords`
+  - `category`
 
 - **可展示输出字段**:
   - `ok`
   - `card_id`
   - `source_type`
   - `created_at`
+  - `category`
   - `error_code`
   - `message`
 
@@ -434,7 +439,7 @@ last_updated: "2026-06-08"
   写入 SQLite `qa_cards` 表。
 
 - **失败处理**:  
-  输入缺少必填字段、字段为空或数据库写入失败时，返回 `ok: false`、`error_code` 和 `message`。工具失败时 Agent 不得声称保存成功。
+  输入缺少必填字段、字段为空、category 非法或数据库写入失败时，返回 `ok: false`、`error_code` 和 `message`。工具失败时 Agent 不得声称保存成功。
 
 #### `search_qa_cards`
 
@@ -446,7 +451,8 @@ last_updated: "2026-06-08"
 ```json
 {
   "query": "用户问题或检索词，非空字符串",
-  "limit": 5
+  "limit": 5,
+  "category": "可选；用户明确限定分类时传入"
 }
 ```
 
@@ -463,7 +469,8 @@ last_updated: "2026-06-08"
       "answer_snippet": "答案片段",
       "score": 3,
       "source_type": "manual_qa",
-      "created_at": "ISO 8601 时间"
+      "created_at": "ISO 8601 时间",
+      "category": "语义主归属分类"
     }
   ]
 }
@@ -472,6 +479,7 @@ last_updated: "2026-06-08"
 - **可展示输入字段**:
   - `query`
   - `limit`
+  - `category`
 
 - **可展示输出字段**:
   - `ok`
@@ -482,6 +490,7 @@ last_updated: "2026-06-08"
   - `cards.score`
   - `cards.source_type`
   - `cards.created_at`
+  - `cards.category`
   - `error_code`
   - `message`
 
@@ -711,7 +720,7 @@ last_updated: "2026-06-08"
 | `v0.3` | `update_qa_card` | 更新 Q&A 当前卡片 | 是 | 是 |
 | `v0.3` | `delete_qa_card` | 物理删除 Q&A 卡片 | 是 | 是 |
 | `v0.4` | `hybrid_search_qa_cards` / `rebuild_qa_semantic_index` | 执行 SQLite LIKE + Qdrant 语义召回的混合检索；把未向量化的历史 Q&A 卡片写入 Qdrant local index | 重建和保存/更新/删除后的索引同步有副作用，检索无副作用 | 否 |
-| `v0.5` | `save_qa_card` / `update_qa_card` tags-category 扩展 | 保存时写入模型生成的 tags/category，用户可手动更新 | 是 | 否 |
+| `v0.5` | `save_qa_card` / `update_qa_card` category 扩展 | 保存时写入模型生成的 category，用户可手动更新；tags 暂不引入 | 是 | 保存否；更新沿用 `update_qa_card` 确认 |
 | `v0.6` | `detect_duplicate_cards` / `merge_qa_cards` | 检测重复候选；确认后创建合并新卡片并物理删除原卡片 | 合并有副作用 | 合并需要确认 |
 | `v0.7` | `extract_graph_candidates` / `confirm_graph_candidate` | 从卡片抽取实体关系候选，并在确认后写入 Kuzu | 确认写入有副作用 | 是 |
 | `v0.7` | `search_graph_context` | 查询实体和关系上下文，并返回可追溯 card_id | 否 | 否 |
@@ -1084,29 +1093,59 @@ v0.4 hybrid 候选使用规则：
 - **用户可见反馈**:
   hybrid 完整成功时返回候选结果和评分解释字段；向量部分未启用或失败时说明已降级为本地关键词检索。`rebuild_qa_semantic_index` 返回处理总数、成功数量、失败数量和失败 card_id 列表。不得把 Qdrant payload 或 hybrid 候选摘要当作完整事实来源。
 
-### 5.13 v0.5 tags / category
+### 5.13 v0.5 category
 
 1. 用户录入 Q&A。
-2. 模型生成 summary、keywords、tags 和 category。
-3. `save_qa_card` 将 tags 和 category 随 Q&A 卡片写入 SQLite。
-4. 用户后续可以通过 `update_qa_card` 手动修改 tags 和 category。
-5. tags 是多选，category 是单选。
-6. tags / category 更新不触发 PreToolUse permission ask。
+2. 模型生成 summary、keywords 和 category。
+3. `save_qa_card` 将 category 随 Q&A 卡片写入 SQLite。
+4. 用户后续可以通过 `update_qa_card` 手动修改 category；该操作沿用 `update_qa_card` 现有权限确认规则。
+5. v0.5 不新增 tags；keywords 继续作为检索词，category 表示卡片的语义主归属分类。
+6. category 是必填结构字段，不允许为空，不允许使用兜底分类。
+7. 历史卡片必须通过 `scripts/backfill-qa-categories.py` 调用当前 DeepSeek LLM 生成 category，不得默认写入“其他”。
+
+category 生成规则：
+
+1. category 只能有一个。
+2. category 必须是 1-24 个字符的短名词短语。
+3. category 不允许为空。
+4. category 不允许为“其他”“未分类”“杂项”“默认分类”“未知”“待分类”。
+5. category 不得是函数名、字段名、模型名、数据库名、工具名或 API 名。
+6. 具体技术实体、函数名、字段名和英文术语应进入 keywords，而不是 category。
+7. 不确定时也必须选择最接近的具体稳定主题分类。
+8. 生成时优先复用已有分类或以下推荐方向：Agent 开发、LLM 基础、工具调用、上下文管理、Prompt 工程、检索与知识库、向量检索、知识治理、数据存储、AI 编程经验、工程架构、调试排错、开发工具、框架选型、权限机制、项目使用说明。
+
+category 搜索规则：
+
+1. 保存时 category 必填。
+2. 更新时 category 可选。
+3. 搜索时 category 是可选参数。
+4. 只有用户明确限定分类时，模型才给 `search_qa_cards`、`hybrid_search_qa_cards` 或 `list_recent_cards` 传 category。
+5. 用户未明确限定分类时，不传 category，执行全库搜索。
+6. 一旦传了 category，它就是硬过滤条件。
+7. 指定 category 下无结果时，不跨分类兜底。
+8. `hybrid_search_qa_cards` 不把 category 写入 Qdrant payload；Qdrant 仍按 query 召回，最终通过 SQLite 回源应用 category 精确过滤。
+
+历史 backfill 规则：
+
+1. `scripts/backfill-qa-categories.py` 不是 Agent 工具，只能作为本地维护脚本执行。
+2. 脚本读取 category 为空的历史卡片，调用当前 DeepSeek LLM 生成 category。
+3. 任意历史卡片生成失败或 category 非法时，脚本停止，不重建约束表。
+4. 全部历史卡片 category 合法后，脚本重建 `qa_cards` 表并加 `NOT NULL` + `CHECK` 约束。
 
 - **成功条件**:
-  卡片读回时包含 tags 和 category。
+  卡片读回时包含 category；搜索和列表可按 category 精确过滤；SQLite 和工具层都能拒绝非法 category。
 
 - **失败条件**:
-  tags 不是字符串数组、category 不是字符串或字段为空值非法。
+  category 为空、超过长度限制、属于兜底词、使用函数名/字段名/模型名/数据库名/工具名/API 名，或历史 backfill 失败。
 
 - **用户可见反馈**:
-  保存或更新后展示当前 tags 和 category。
+  保存或更新后展示当前 category；指定 category 搜索为空时说明该分类下没有找到相关本地知识卡片。
 
 ### 5.14 v0.6 去重和合并
 
 1. Agent 调用 `detect_duplicate_cards`，基于 SQLite LIKE 和 Qdrant 召回相似卡片。
 2. 工具返回可能重复的 card_id、相似分数和相似原因，不写数据库。
-3. 模型生成合并后的新 question、answer、summary、keywords、tags 和 category。
+3. 模型生成合并后的新 question、answer、summary、keywords 和 category。
 4. 模型请求调用 `merge_qa_cards`。
 5. `merge_qa_cards` 进入 PreToolUse permission gate。
 6. 用户允许后，工具创建新卡片，物理删除原卡片，并尽力同步 Qdrant。
@@ -1374,13 +1413,13 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   - 更新卡片内容时必须把 `is_vectorized` 重置为 `0`。
   - 成功写入 Qdrant 后才能把 `is_vectorized` 标记为 `1`。
 
-- **v0.5 `qa_cards` tags / category 扩展**:
-  - `tags`: `TEXT`，JSON 字符串，保存模型生成或用户手动更新的标签数组。
-  - `category`: `TEXT`，可为空，保存模型生成或用户手动更新的单个分类。
+- **v0.5 `qa_cards` category 扩展**:
+  - `category`: `TEXT NOT NULL`，保存模型生成或用户手动更新的单个语义主归属分类。
+  - 数据库必须通过 `CHECK` 约束拒绝空 category 和兜底分类：`其他`、`未分类`、`杂项`、`默认分类`、`未知`、`待分类`。
 
 - **v0.6 Duplicate / Merge**:
   - `duplicate_candidates`: 运行时结构，不入库。
-  - `merge_qa_cards` 输入必须包含模型生成的新 question、answer、summary、keywords、tags 和 category。
+  - `merge_qa_cards` 输入必须包含模型生成的新 question、answer、summary、keywords 和 category。
   - 合并成功后创建新卡片，物理删除原卡片，并尽力同步 Qdrant。
 
 - **v0.7 Kuzu Graph**:
