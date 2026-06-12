@@ -24,19 +24,15 @@ elements.chatForm.addEventListener("submit", async (event) => {
   if (!message || state.busy) return;
 
   appendMessage("user", "你", message);
+  const agentMessage = appendAgentRunMessage();
   elements.messageInput.value = "";
   setBusy(true, "Agent 正在处理");
 
   try {
-    const result = await postJson("/api/chat", { message });
-    if (!result.ok) {
-      appendMessage("error", "错误", result.message || "本轮没有完成。");
-      return;
-    }
-    appendMessage("agent", "Agent", result.answer || "");
+    await streamChat(message, agentMessage);
     await loadRecentCards();
   } catch (error) {
-    appendMessage("error", "错误", String(error));
+    renderRunError(agentMessage, String(error));
   } finally {
     setBusy(false, "本地 Web UI 已就绪");
   }
@@ -65,18 +61,6 @@ elements.refreshCardsButton.addEventListener("click", async () => {
   await loadRecentCards();
 });
 
-async function postJson(url, payload) {
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  return response.json();
-}
-
 async function getJson(url) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -100,6 +84,131 @@ function appendMessage(kind, role, body) {
   message.append(roleNode, bodyNode);
   elements.messages.append(message);
   elements.messages.scrollTop = elements.messages.scrollHeight;
+  return message;
+}
+
+function appendAgentRunMessage() {
+  const message = document.createElement("article");
+  message.className = "message agent-message run-message";
+
+  const roleNode = document.createElement("div");
+  roleNode.className = "message-role";
+  roleNode.textContent = "Agent";
+
+  const steps = document.createElement("div");
+  steps.className = "run-steps";
+
+  const answer = document.createElement("div");
+  answer.className = "message-body answer-body";
+
+  message.append(roleNode, steps, answer);
+  message._steps = steps;
+  message._answer = answer;
+  message._answerText = "";
+  elements.messages.append(message);
+  elements.messages.scrollTop = elements.messages.scrollHeight;
+  return message;
+}
+
+async function streamChat(message, agentMessage) {
+  const response = await fetch("/api/chat/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message }),
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const rawEvent of events) {
+      const dataLine = rawEvent
+        .split("\n")
+        .find((line) => line.startsWith("data:"));
+      if (!dataLine) continue;
+      renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+    }
+  }
+  if (buffer.trim()) {
+    const dataLine = buffer
+      .split("\n")
+      .find((line) => line.startsWith("data:"));
+    if (dataLine) {
+      renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+    }
+  }
+}
+
+function renderAgentEvent(message, event) {
+  switch (event.event_type) {
+    case "user_input_received":
+      addStep(message, "收到输入");
+      break;
+    case "llm_call_started":
+      addStep(message, "调用模型");
+      break;
+    case "llm_call_finished":
+      addStep(message, event.tool_calls_count ? `模型返回 ${event.tool_calls_count} 个工具调用` : "模型响应完成");
+      break;
+    case "tool_call_started":
+      addStep(message, `调用工具 ${event.tool_name || "unknown"}`);
+      break;
+    case "tool_call_finished":
+      addStep(message, `工具完成 ${event.tool_name || "unknown"}`);
+      break;
+    case "evidence_checked":
+      addStep(message, "证据检查完成");
+      break;
+    case "answer_delta":
+      appendAnswerDelta(message, event.text || "");
+      break;
+    case "final_answer_generated":
+      finishAnswer(message, event.answer || "");
+      break;
+    case "error":
+      renderRunError(message, event.message || "本轮没有完成。");
+      break;
+    default:
+      break;
+  }
+  elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+function addStep(message, text) {
+  const step = document.createElement("div");
+  step.className = "run-step";
+  step.textContent = text;
+  message._steps.append(step);
+}
+
+function appendAnswerDelta(message, text) {
+  if (!text) return;
+  message._answerText += text;
+  message._answer.textContent = message._answerText;
+}
+
+function finishAnswer(message, answer) {
+  if (!message._answerText || message._answerText !== answer) {
+    message._answerText = answer;
+    message._answer.textContent = answer;
+  }
+  message.classList.add("run-complete");
+}
+
+function renderRunError(message, body) {
+  message.classList.add("error-message");
+  addStep(message, "运行失败");
+  if (!message._answerText) {
+    message._answer.textContent = body;
+  }
 }
 
 function setBusy(busy, text) {

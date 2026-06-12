@@ -1,15 +1,16 @@
 :root {
   color-scheme: light;
-  --bg: #f6f3ed;
-  --panel: #fffdfa;
-  --panel-strong: #f0f6f4;
-  --text: #20211f;
-  --muted: #686d67;
-  --line: #d9d3c7;
-  --accent: #236b5a;
-  --accent-strong: #174d42;
-  --danger: #9d2f2f;
-  --shadow: 0 14px 36px rgba(40, 38, 33, 0.12);
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --panel-strong: #eef4f8;
+  --text: #1f2933;
+  --muted: #657384;
+  --line: #d9e1ea;
+  --accent: #256d85;
+  --accent-strong: #164b61;
+  --success: #287a55;
+  --danger: #a33a3a;
+  --shadow: 0 14px 34px rgba(31, 41, 51, 0.1);
 }
 
 * {
@@ -54,6 +55,7 @@ button {
   background: var(--panel);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+  border-radius: 8px;
 }
 
 .chat-pane {
@@ -109,6 +111,7 @@ h3 {
   background: var(--panel-strong);
   color: var(--accent-strong);
   font-size: 18px;
+  border-radius: 8px;
 }
 
 .messages {
@@ -122,12 +125,13 @@ h3 {
   padding: 14px 16px;
   border: 1px solid var(--line);
   background: #ffffff;
+  border-radius: 8px;
 }
 
 .user-message {
   margin-left: auto;
-  background: #edf5f2;
-  border-color: #bdd8cf;
+  background: #eaf4f7;
+  border-color: #bdd5de;
 }
 
 .agent-message {
@@ -152,6 +156,38 @@ h3 {
   white-space: pre-wrap;
   line-height: 1.58;
   overflow-wrap: anywhere;
+}
+
+.run-message {
+  display: grid;
+  gap: 10px;
+}
+
+.run-steps {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.run-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.run-step::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.answer-body:empty {
+  min-height: 20px;
 }
 
 .composer,
@@ -196,6 +232,7 @@ h3 {
   background: var(--accent);
   color: #ffffff;
   font-weight: 700;
+  border-radius: 8px;
 }
 
 .composer button:disabled {
@@ -239,6 +276,7 @@ h3 {
   background: #ffffff;
   color: var(--text);
   text-align: left;
+  border-radius: 8px;
 }
 
 .card-row:hover,
@@ -251,6 +289,7 @@ h3 {
   display: block;
   margin-bottom: 6px;
   font-size: 14px;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
@@ -262,10 +301,15 @@ h3 {
   line-height: 1.45;
 }
 
+.card-row p {
+  margin-bottom: 8px;
+}
+
 .card-detail {
   border: 1px solid var(--line);
   background: #ffffff;
   padding: 14px;
+  border-radius: 8px;
 }
 
 .card-detail dl {

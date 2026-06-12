@@ -9,6 +9,7 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "prompt-toolkit>=3.0.0",
   "qdrant-client>=1.11.0",
+  "rich>=13.7.0",
   "uvicorn>=0.30.0",
 ]
 

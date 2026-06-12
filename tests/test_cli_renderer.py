@@ -59,6 +59,19 @@ def test_cli_renderer_does_not_truncate_final_answer():
     assert answer in output
 
 
+def test_cli_renderer_renders_answer_delta_without_repeating_final_answer():
+    stream = StringIO()
+    renderer = CliRenderer(stream=stream)
+
+    renderer.render(AgentEvent(run_id="run_1", event_type="answer_delta", payload={"text": "你"}))
+    renderer.render(AgentEvent(run_id="run_1", event_type="answer_delta", payload={"text": "好"}))
+    renderer.render(AgentEvent(run_id="run_1", event_type="final_answer_generated", payload={"answer": "你好"}))
+
+    output = stream.getvalue()
+    assert "你好" in output
+    assert output.count("你好") == 1
+
+
 def test_cli_renderer_renders_memory_candidates():
     stream = StringIO()
     renderer = CliRenderer(stream=stream)

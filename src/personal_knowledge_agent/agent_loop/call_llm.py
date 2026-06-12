@@ -26,6 +26,7 @@ class LLMCallStep:
                 messages=messages,
                 tools=tools,
                 system_prompt=system_prompt,
+                on_text_delta=lambda text: self.emit(run_id, "answer_delta", turn=turn, text=text),
             )
         except Exception as exc:
             self.emit(

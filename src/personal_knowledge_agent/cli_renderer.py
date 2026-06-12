@@ -5,16 +5,28 @@ from typing import Any, TextIO
 
 from .events import AgentEvent
 
+try:
+    from rich.console import Console
+except ImportError:  # pragma: no cover - dependency is declared, this keeps local imports resilient.
+    Console = None
+
 
 class CliRenderer:
     def __init__(self, *, stream: TextIO, max_text_length: int = 240):
         self.stream = stream
         self.max_text_length = max_text_length
+        self._answer_parts: list[str] = []
+        self._answer_open = False
+        use_rich = bool(getattr(stream, "isatty", lambda: False)())
+        self._console = Console(file=stream, force_terminal=True, markup=False) if Console and use_rich else None
 
     def render(self, event: AgentEvent) -> None:
+        if event.event_type == "answer_delta":
+            self._write_answer_delta(str(event.payload.get("text", "")))
+            return
+
         if event.event_type == "final_answer_generated":
-            self._section("Final Answer")
-            self._write(event.payload.get("answer", ""))
+            self._finish_answer(str(event.payload.get("answer", "")))
             return
 
         payload = self._truncate(event.payload)
@@ -47,10 +59,39 @@ class CliRenderer:
         self._write(f"\n-- {title}")
 
     def _write(self, text: Any) -> None:
+        if self._console is not None:
+            self._console.print(text)
+            return
         print(text, file=self.stream)
+
+    def _write_raw(self, text: str, *, end: str = "") -> None:
+        print(text, end=end, file=self.stream, flush=True)
 
     def _dump(self, value: Any) -> None:
         self._write(json.dumps(value, ensure_ascii=False, indent=2))
+
+    def _write_answer_delta(self, text: str) -> None:
+        if not text:
+            return
+        if not self._answer_open:
+            self._section("Final Answer")
+            self._answer_open = True
+        self._answer_parts.append(text)
+        self._write_raw(text)
+
+    def _finish_answer(self, answer: str) -> None:
+        streamed_answer = "".join(self._answer_parts)
+        if not streamed_answer:
+            self._section("Final Answer")
+            self._write(answer)
+        elif streamed_answer != answer:
+            self._write_raw("\n")
+            self._section("Final Answer (verified)")
+            self._write(answer)
+        else:
+            self._write_raw("\n")
+        self._answer_parts = []
+        self._answer_open = False
 
     def _truncate(self, value: Any) -> Any:
         if isinstance(value, str):

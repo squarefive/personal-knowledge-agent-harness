@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import json
+import queue
 import threading
 from pathlib import Path
 from typing import Any, Protocol
 
 from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..agent_factory import create_agent_components
 from ..config import AgentConfig, load_config
-from ..events import AgentEvent
+from ..events import AgentEvent, new_run_id
 from ..permissions import default_approval_callback
 
 
@@ -39,9 +41,17 @@ def create_web_app(
 ) -> FastAPI:
     events: list[dict[str, Any]] = []
     agent_lock = threading.Lock()
+    active_event_queue: queue.Queue[dict[str, Any] | object] | None = None
+    active_event_queue_lock = threading.Lock()
 
     def collect_event(event: AgentEvent) -> None:
-        events.append(event.to_log_dict())
+        event_dict = event.to_log_dict()
+        if event.event_type != "answer_delta":
+            events.append(event_dict)
+        with active_event_queue_lock:
+            current_queue = active_event_queue
+        if current_queue is not None:
+            current_queue.put(event_dict)
 
     if agent is None or tools is None:
         components = create_agent_components(
@@ -66,17 +76,52 @@ def create_web_app(
     def health() -> dict[str, Any]:
         return {"ok": True}
 
-    @app.post("/api/chat")
-    def chat(request: ChatRequest) -> dict[str, Any]:
+    @app.post("/api/chat/stream")
+    def chat_stream(request: ChatRequest) -> StreamingResponse:
         message = request.message.strip()
-        if not message:
-            return _error("invalid_input", "message must be a non-empty string")
-        try:
-            with agent_lock:
-                answer = agent.run(message)
-        except Exception as exc:
-            return _error("agent_error", f"Agent run failed: {exc}")
-        return {"ok": True, "answer": answer, "events": events[-20:]}
+        event_queue: queue.Queue[dict[str, Any] | object] = queue.Queue()
+        done = object()
+
+        def run_agent() -> None:
+            nonlocal active_event_queue
+            if not message:
+                event_queue.put(_event_error("invalid_input", "message must be a non-empty string"))
+                event_queue.put(done)
+                return
+            try:
+                with agent_lock:
+                    with active_event_queue_lock:
+                        active_event_queue = event_queue
+                    try:
+                        event_count_before = event_queue.qsize()
+                        answer = agent.run(message)
+                        if event_queue.qsize() == event_count_before and isinstance(answer, str):
+                            event_queue.put(
+                                {
+                                    "run_id": new_run_id(),
+                                    "event_type": "final_answer_generated",
+                                    "answer": answer,
+                                }
+                            )
+                    finally:
+                        with active_event_queue_lock:
+                            active_event_queue = None
+            except Exception as exc:
+                event_queue.put(_event_error("agent_error", f"Agent run failed: {exc}"))
+            finally:
+                event_queue.put(done)
+
+        def event_stream():
+            thread = threading.Thread(target=run_agent, daemon=True)
+            thread.start()
+            while True:
+                item = event_queue.get()
+                if item is done:
+                    break
+                yield _sse(item)
+            thread.join(timeout=1)
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
 
     @app.get("/api/cards/recent")
     def recent_cards(limit: int = Query(default=10, ge=1, le=50)) -> dict[str, Any]:
@@ -110,3 +155,16 @@ def create_web_app(
 
 def _error(error_code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error_code": error_code, "message": message}
+
+
+def _event_error(error_code: str, message: str) -> dict[str, Any]:
+    return {
+        "run_id": new_run_id(),
+        "event_type": "error",
+        "error_code": error_code,
+        "message": message,
+    }
+
+
+def _sse(data: dict[str, Any]) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
