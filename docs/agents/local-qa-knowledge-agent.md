@@ -3,7 +3,7 @@ module: "local-qa-knowledge-agent"
 title: "本地个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-06-08"
+last_updated: "2026-06-14"
 ---
 
 # 本地个人 Q&A 知识库 Agent 开发上下文
@@ -241,15 +241,21 @@ last_updated: "2026-06-08"
 - **Web Runtime 职责**:
   - 作为 `pka web` 和 `python -m personal_knowledge_agent.web` 的本地浏览器入口。
   - 启动时加载 `.env` 和环境变量配置。
-  - 通过 `agent_factory.py` 创建 AgentLoop 及其依赖。
+  - 通过 `agent_factory.py` 按 `session_id` 创建 AgentLoop 及其依赖。
   - 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
   - 提供静态 HTML/CSS/JS 页面。
-  - 通过流式聊天接口接收用户输入并调用 AgentLoop。
+  - 通过流式聊天接口接收用户输入并调用对应 session 的 AgentLoop。
+  - 提供会话创建、会话列表、会话重命名和会话历史消息读取 API。
   - 提供最近卡片、搜索卡片和卡片详情 API。
   - Web 输入层只负责采集用户输入，不判断知识录入或问答意图。
   - Web API 不直接操作 SQLite，不绕过 Tools 或 Store 边界。
-  - Web 聊天接口只保留流式接口，不保留非流式 `/api/chat` 聊天路径。
-  - Web Runtime 必须只转发本轮 AgentLoop 事件，不得使用全局尾部事件拼接本轮流程。
+  - Web 聊天接口只保留流式 `/api/chat/stream`，不保留非流式 `/api/chat` 聊天路径。
+  - `/api/chat/stream` 请求体支持可选 `session_id`；未提供时使用 `default` session。
+  - `session_id` 是本地 Harness 概念；DeepSeek API 不接收也不感知 `session_id`。
+  - Web Runtime 必须根据 `session_id` 选择本地对应 AgentLoop 的 runtime `messages[]`，并将该 messages 传给 DeepSeek。
+  - Web Runtime 必须只转发当前 session 当前请求的 AgentLoop 事件，不得使用全局尾部事件拼接本轮流程。
+  - Web Runtime 必须按 session 隔离 AgentLoop、runtime `messages[]`、transcript、metadata 和事件队列。
+  - 同一 session 的聊天请求必须串行执行；不同 session 不得共享 runtime `messages[]`。
   - Web Runtime 不缓存 `answer_delta` 到全局事件列表或 JSONL 开发日志。
   - Web 第一版只覆盖 Chat + Cards，不提供编辑、删除、合并或复杂知识管理能力。
   - Web Runtime 的单轮 AgentLoop 执行失败时，应返回结构化错误，不得声称保存、查询或回答成功。
@@ -278,7 +284,11 @@ last_updated: "2026-06-08"
   - `MemoryStore` 负责 `.memory/*.md` 的读写、frontmatter 解析和内容校验。
   - `MemoryIndex` 负责 `.memory/MEMORY.md` 的读取、校验和更新。
   - `SessionTranscript` 负责 `.sessions/<session_id>/transcript.jsonl` 的追加和读取。
+  - `SessionTranscript` 负责校验 `session_id`，避免路径穿越或非法 session 目录。
+  - `SessionTranscript` 负责从 transcript 派生用户可见历史消息，只返回 user message 和 assistant 最终回答，不返回 tool result、assistant tool call、system prompt 或完整内部 payload。
   - `SessionMetadata` 负责 `.sessions/<session_id>/metadata.json` 的读写。
+  - `SessionMetadata` 负责保存 session 标题、标题来源和最后用户消息。
+  - `SessionMetadata` 负责列出本地 `.sessions/*/metadata.json`，供 Web 会话列表使用。
   - `SessionRestore` 负责从 transcript / summary 恢复 runtime `messages[]`。
   - `SessionSummarizer` 负责长 transcript 的 summary 生成和失败降级。
 
@@ -907,28 +917,49 @@ pka
 
 `pka` 启动后进入持续交互，用户可以连续录入 Q&A 或提问。
 
-### 5.5 Web 持续交互
+### 5.5 Web 多会话持续交互
 
 1. 用户运行 `pka web`，或使用 `python -m personal_knowledge_agent.web` 模块入口。
 2. Web Runtime 调用配置加载器读取 `.env` 和环境变量。
-3. Web Runtime 通过 `agent_factory.py` 创建 AgentLoop 及其依赖。
-4. Web Runtime 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
-5. Web Runtime 提供静态 HTML 页面，并可自动打开浏览器访问本地服务。
-6. 用户在 HTML 页面输入 Q&A 录入请求或问题。
-7. 流式聊天接口将输入交给 AgentLoop，并把本轮事件实时转发给 HTML 页面。
-8. AgentLoop 按 5.1 或 5.2 流程调用 LLM 和工具。
-9. HTML 页面实时展示调用流程和最终回答增量，并以 `final_answer_generated` 作为权威最终答案。
+3. Web Runtime 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
+4. HTML 页面启动后请求会话列表；如果没有会话，则创建一个新 session。
+5. 用户点击某个会话时，HTML 页面请求该 session 的历史消息并渲染。
+6. 用户可以手动重命名当前 session；用户手动命名后自动标题不得覆盖该标题。
+7. 用户在当前 session 输入 Q&A 录入请求或问题。
+8. 流式聊天接口将输入交给该 session 对应的 AgentLoop，并把本轮事件实时转发给 HTML 页面。
+9. AgentLoop 按 5.1 或 5.2 流程调用 LLM 和工具。
+10. Web Runtime 将本轮可恢复消息写入 `.sessions/<session_id>/transcript.jsonl`。
+11. HTML 页面实时展示调用流程和最终回答增量，并以 `final_answer_generated` 作为权威最终答案。
 
 - **成功条件**:  
-  用户无需使用 CLI，即可在本地浏览器中连续录入知识和提问。
+  用户无需使用 CLI，即可在本地浏览器中创建多个会话、切换会话、重命名会话、连续录入知识和提问；点击某个会话后能看到该会话历史聊天记录。
 
 - **失败条件**:  
-  `.env` 或环境变量缺少 `DEEPSEEK_API_KEY`，DeepSeek / SQLite 初始化失败，本地端口不可用，静态页面加载失败，或单轮 AgentLoop 执行失败。
+  `.env` 或环境变量缺少 `DEEPSEEK_API_KEY`，DeepSeek / SQLite 初始化失败，本地端口不可用，静态页面加载失败，session_id 非法，session 不存在，历史消息读取失败，或单轮 AgentLoop 执行失败。
 
 - **用户可见反馈**:  
   启动失败时输出明确错误；运行中模型或工具失败时，流式接口返回结构化错误事件，HTML 展示本轮失败说明。不得声称保存、查询或回答成功。
 
-### 5.6 Web 知识卡片浏览
+### 5.6 Web 会话列表和历史恢复
+
+1. HTML 页面请求 `GET /api/sessions`。
+2. Web API 读取 `.sessions/*/metadata.json`，按 `updated_at` 倒序返回 session 列表。
+3. 如果不存在任何 session，HTML 页面请求 `POST /api/sessions` 创建新 session。
+4. 用户点击某个 session，HTML 页面请求 `GET /api/sessions/{session_id}/messages`。
+5. Web API 从 `.sessions/<session_id>/transcript.jsonl` 派生用户可见消息。
+6. HTML 页面清空当前聊天区并渲染该 session 的 user / assistant 历史消息。
+7. 浏览器刷新时，HTML 页面优先恢复上次选中的 session_id；如果该 session 不存在，则选择最近更新 session。
+
+- **成功条件**:  
+  Web UI 展示可切换的会话列表；点击会话能展示该会话历史 user / assistant 聊天记录；刷新页面后能恢复当前会话的可见历史。
+
+- **失败条件**:  
+  session_id 非法，metadata 不存在，transcript 读取失败，metadata 格式非法，或历史消息中缺少可展示字段。
+
+- **用户可见反馈**:  
+  无会话时显示空状态并允许创建会话；历史为空时显示空聊天区；读取失败时展示结构化错误，不伪造历史消息。
+
+### 5.7 Web 知识卡片浏览
 
 1. HTML 页面请求最近卡片、搜索卡片或卡片详情。
 2. Web API 调用后端封装的卡片读取能力。
@@ -946,7 +977,7 @@ pka
 - **用户可见反馈**:  
   有记录时展示卡片；无记录时展示空状态；读取失败时展示错误原因。Web UI 不得生成虚假卡片或虚假来源。
 
-### 5.7 CLI 实时运行过程展示
+### 5.8 CLI 实时运行过程展示
 
 1. CLI Runtime 收到用户输入后生成本轮 `run_id`。
 2. Agent Loop 在收到输入、调用 LLM、收到最终回答文本增量、收到 LLM 响应、调用工具、收到工具结果、判断证据和生成最终回答时产生结构化事件。
@@ -963,9 +994,9 @@ pka
 - **用户可见反馈**:  
   CLI Renderer 或 Logger 失败时向 stderr 输出简短提示，但不得影响 Agent 工具执行和最终回答。
 
-### 5.8 Turn-start 上下文准备
+### 5.9 Turn-start 上下文准备
 
-1. CLI Runtime 选择或创建默认 session：`.sessions/default/`。
+1. CLI Runtime 选择或创建默认 session：`.sessions/default/`；Web Runtime 根据当前 `session_id` 选择或创建对应 session。
 2. Session Restore 读取 `metadata.json` 和 `transcript.jsonl`。
 3. 如果 transcript 未超过预算，原样恢复 runtime `messages[]`。
 4. 如果 transcript 超过预算，优先使用 summarizer 生成或更新 `summary.md`，并用 summary message + recent messages 恢复。
@@ -984,7 +1015,7 @@ pka
 - **用户可见反馈**:
   session 恢复失败时使用空 messages 或 first+recent 降级恢复，并向 stderr 或 CLI 事件提示一次；不得影响 Q&A 主流程的工具检索和回答。
 
-### 5.9 上下文压缩
+### 5.10 上下文压缩
 
 1. AgentLoop 执行工具调用并获得 tool result。
 2. ToolCallStep 将 tool result 序列化后交给 ContextCompactor 检查长度。
@@ -1269,6 +1300,8 @@ source_ref: "conversation:2026-05-31"
 
 `transcript.jsonl` 是 runtime `messages[]` 的可恢复持久化记录，采用 append-only JSONL。
 
+`session_id` 必须只包含 ASCII 字母、数字、下划线和连字符，长度必须在 1 到 64 之间。任何包含路径分隔符、`.`、空白字符或其他字符的 session_id 都必须被拒绝。
+
 格式：
 
 ```json
@@ -1284,6 +1317,17 @@ source_ref: "conversation:2026-05-31"
 | `created_at` | `TEXT` | 是 | ISO 8601 时间 |
 | `message` | `OBJECT` | 是 | 可恢复到 LLM `messages[]` 的消息 |
 
+Web 历史消息 API 必须从 transcript 派生用户可见消息：
+
+| 派生字段 | 类型 | 说明 |
+|---|---|---|
+| `role` | `TEXT` | 仅允许 `user` 或 `assistant` |
+| `content` | `TEXT` | user 原始输入或 assistant 最终回答文本 |
+| `created_at` | `TEXT` | 来源 transcript event 创建时间 |
+| `event_id` | `INTEGER` | 来源 transcript event_id |
+
+Web 历史消息不得返回 assistant tool call、tool result、system prompt、完整 LLM messages、API key、secret 或未声明为可展示的内部 payload。
+
 ### 6.6 `.sessions/<session_id>/metadata.json`
 
 `metadata.json` 是 session 管理索引，不是上下文本体。
@@ -1297,6 +1341,9 @@ source_ref: "conversation:2026-05-31"
   "updated_at": "2026-05-31T10:30:00Z",
   "cwd": "/path/to/project",
   "model": "deepseek-v4-flash",
+  "title": "SQLite 检索问题",
+  "title_source": "auto",
+  "last_user_message": "SQLite LIKE 检索怎么做？",
   "transcript_path": ".sessions/default/transcript.jsonl",
   "summary_path": ".sessions/default/summary.md",
   "artifacts_dir": ".sessions/default/artifacts",
@@ -1308,6 +1355,8 @@ source_ref: "conversation:2026-05-31"
   "last_restore_mode": "full / summary_plus_recent / first_and_recent"
 }
 ```
+
+`title_source` 只允许 `auto` 或 `user`。新建空会话的默认标题为 `新会话`，`title_source` 为 `auto`。当用户发送第一条或后续用户消息时，如果 `title_source` 仍为 `auto`，Runtime 可以用用户消息前 30 个字符生成标题；如果用户已手动重命名，Runtime 不得自动覆盖标题。
 
 ### 6.7 `.sessions/<session_id>/summary.md`
 
@@ -1461,6 +1510,10 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
 | CLI Renderer 失败 | 渲染事件时发生异常 | 不影响工具执行和 Agent 最终回答 | 向 stderr 输出简短错误 |
 | Web 服务启动失败 | 端口不可用、配置缺失或 Web app 初始化失败 | 不启动 Web Runtime，不创建虚假会话 | 输出明确启动失败原因 |
+| Web session_id 非法 | session_id 为空、过长或包含非法字符 / 路径穿越字符 | 不创建或读取 session | HTML 展示 session 无效 |
+| Web session 不存在 | 用户请求不存在的 session 历史 | 不伪造会话或历史消息 | HTML 展示 session 不存在并可重新选择 |
+| Web session 历史读取失败 | transcript 不存在、格式非法或不可读 | 不伪造历史消息 | HTML 展示历史读取失败 |
+| Web session 重命名失败 | 标题为空、过长或 metadata 无法写入 | 不声称重命名成功 | HTML 展示重命名失败原因 |
 | Web chat 执行失败 | 流式聊天接口调用 AgentLoop 失败 | 返回结构化错误事件，不声称本轮完成 | HTML 展示本轮失败说明 |
 | 流式回答最终修正 | `final_answer_generated` 与已展示的 `answer_delta` 累计文本不一致 | 以 `final_answer_generated` 为权威最终答案，只做一次正文节点修正 | HTML / CLI 不反复重绘，不伪造未校验证据 |
 | Web 卡片读取失败 | 最近卡片、搜索或详情 API 读取失败 | 返回结构化错误，不生成虚假卡片 | HTML 展示错误原因 |
@@ -1511,6 +1564,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   3. summarizer 最多重试 3 次。
   4. summarizer 失败后使用 first N messages + recovery notice + recent N messages 恢复。
   5. summary 失败不得阻断 CLI 启动或 Q&A 主流程。
+  6. Web 历史消息恢复只影响 UI 展示，不得改变 Q&A 来源判断。
+  7. Web 历史消息读取失败不得被解释为本地知识库缺少依据。
 
 - **Memory candidate 降级原则**:
   1. 当前实现只生成 memory candidate 事件，不自动写入长期 memory。
@@ -1538,7 +1593,11 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   14. `MemoryStore` 能读取合法 `.memory/*.md`。
   15. `MemoryStore` 对 frontmatter 缺失或非法 type 返回结构化错误。
   16. `SessionTranscript` 能追加和读取 `.sessions/<session_id>/transcript.jsonl`。
+  16a. `SessionTranscript` 拒绝非法 session_id。
+  16b. `SessionTranscript` 能从 transcript 派生 Web 可展示历史消息，并过滤 tool result 与内部 payload。
   17. `SessionMetadata` 能创建、读取和更新 `.sessions/<session_id>/metadata.json`。
+  17a. `SessionMetadata` 能列出 `.sessions/*/metadata.json`，并按 updated_at 倒序返回。
+  17b. `SessionMetadata` 能重命名 session，并防止自动标题覆盖用户标题。
   18. `SessionRestore` 能短 transcript 原样恢复 messages。
   19. `SessionRestore` 能长 transcript 使用 summary + recent messages 恢复。
   20. summarizer 失败时能使用 first N + recovery notice + recent N 降级恢复。
@@ -1547,6 +1606,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   23. `MemoryExtractor` 只生成候选，不直接写入长期 memory。
   24. user / feedback candidate 默认不自动写入长期 memory。
   25. `agent_factory.py` 能创建 AgentLoop 及其依赖，并可被 CLI Runtime 和 Web Runtime 复用。
+  26. `agent_factory.py` 支持指定 session_id 创建 AgentLoop。
 
 - **集成测试**:
   1. Agent Loop 能接收 fake LLM 的 tool call，执行工具并回填 tool result。
@@ -1569,9 +1629,12 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   18. turn-end 能生成 memory candidates 并通过 `memory_candidates_generated` 事件暴露候选。
   19. CLI 入口能在默认模式启动 CLI，并能通过 `pka web` 分发到 Web Runtime。
   20. Web Runtime 能用 fake AgentLoop 处理一次流式聊天请求。
-  21. Web Runtime 能返回最近卡片、搜索卡片和卡片详情的结构化结果。
-  22. Web Runtime 在 AgentLoop 或卡片读取失败时返回结构化错误。
-  23. CLI Runtime 不把 `answer_delta` 写入 JSONL 开发日志，但仍记录 `final_answer_generated`。
+  21. Web Runtime 能创建 session、列出 session、重命名 session、读取 session 历史消息。
+  22. Web Runtime 能按 session_id 隔离多会话聊天上下文和事件队列。
+  23. Web Runtime 对同一 session 串行执行聊天请求。
+  24. Web Runtime 能返回最近卡片、搜索卡片和卡片详情的结构化结果。
+  25. Web Runtime 在 AgentLoop、session 读取或卡片读取失败时返回结构化错误。
+  26. CLI Runtime 不把 `answer_delta` 写入 JSONL 开发日志，但仍记录 `final_answer_generated`。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
@@ -1594,6 +1657,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   18. Web Runtime 遇到高风险工具 ask 时不得阻塞等待终端输入。
   19. Web Runtime 不保留非流式 `/api/chat` 聊天路径。
   20. Web Runtime 不把 `answer_delta` 缓存到全局事件列表。
+  21. 多个 Web session 不得共享 runtime `messages[]`。
+  22. Web 历史消息 API 不得返回 tool result、assistant tool call、system prompt 或完整内部 payload。
 
 - **可选 Live Smoke Test**:
   1. 仅在存在 `DEEPSEEK_API_KEY` 时运行。
