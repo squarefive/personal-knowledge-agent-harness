@@ -55,12 +55,13 @@ class DeepSeekClient:
         tool_accumulator = _ToolCallAccumulator()
         for data in self._post_stream("/chat/completions", payload):
             delta = ((data.get("choices") or [{}])[0].get("delta")) or {}
+            tool_call_deltas = delta.get("tool_calls") or []
             content = delta.get("content")
-            if content:
+            if content and not tool_call_deltas:
                 text_parts.append(content)
                 if on_text_delta is not None:
                     on_text_delta(content)
-            tool_accumulator.add_delta(delta.get("tool_calls") or [])
+            tool_accumulator.add_delta(tool_call_deltas)
         return LLMResponse(
             text="".join(text_parts) or None,
             tool_calls=tool_accumulator.to_tool_calls(),
@@ -133,6 +134,7 @@ class DeepSeekClient:
         if isinstance(exc, error.URLError):
             return str(exc.reason)
         return str(exc)
+
 
 class _ToolCallAccumulator:
     def __init__(self) -> None:

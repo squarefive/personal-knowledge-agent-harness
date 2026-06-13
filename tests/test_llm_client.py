@@ -189,3 +189,46 @@ def test_deepseek_client_accumulates_streamed_tool_calls(monkeypatch):
     assert response.tool_calls[0].id == "call_1"
     assert response.tool_calls[0].name == "search_qa_cards"
     assert response.tool_calls[0].arguments == {"query": "SQLite"}
+
+
+def test_deepseek_client_does_not_emit_text_delta_for_tool_call_chunks(monkeypatch):
+    deltas = []
+
+    def fake_urlopen(req, timeout):
+        return FakeStreamResponse(
+            [
+                {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": "not final",
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call_1",
+                                        "function": {
+                                            "name": "search_qa_cards",
+                                            "arguments": "{\"query\": \"SQLite\"}",
+                                        },
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+
+    monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
+
+    client = DeepSeekClient(api_key="key")
+    response = client.chat(
+        messages=[],
+        tools=[],
+        system_prompt="system",
+        on_text_delta=deltas.append,
+    )
+
+    assert deltas == []
+    assert response.text is None
+    assert response.tool_calls[0].arguments == {"query": "SQLite"}
