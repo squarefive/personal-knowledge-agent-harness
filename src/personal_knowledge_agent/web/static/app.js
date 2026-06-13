@@ -98,13 +98,19 @@ function appendAgentRunMessage() {
   const steps = document.createElement("div");
   steps.className = "run-steps";
 
+  const drafts = document.createElement("div");
+  drafts.className = "drafts";
+
   const answer = document.createElement("div");
   answer.className = "message-body answer-body";
 
-  message.append(roleNode, steps, answer);
+  message.append(roleNode, steps, drafts, answer);
   message._steps = steps;
+  message._drafts = drafts;
   message._answer = answer;
   message._answerText = "";
+  message._turnDrafts = new Map();
+  message._activeAnswerTurn = null;
   elements.messages.append(message);
   elements.messages.scrollTop = elements.messages.scrollHeight;
   return message;
@@ -156,19 +162,19 @@ function renderAgentEvent(message, event) {
       addStep(message, "调用模型");
       break;
     case "llm_call_finished":
-      addStep(message, event.tool_calls_count ? `模型返回 ${event.tool_calls_count} 个工具调用` : "模型响应完成");
+      finishLlmTurn(message, event);
       break;
     case "tool_call_started":
-      addStep(message, `调用工具 ${event.tool_name || "unknown"}`);
+      addToolStep(message, event);
       break;
     case "tool_call_finished":
-      addStep(message, `工具完成 ${event.tool_name || "unknown"}`);
+      addStep(message, summarizeToolResult(event));
       break;
     case "evidence_checked":
-      addStep(message, "证据检查完成");
+      addStep(message, event.source_count ? `已核对 ${event.source_count} 条来源` : "未使用本地来源");
       break;
     case "answer_delta":
-      appendAnswerDelta(message, event.text || "");
+      appendAnswerDelta(message, event.turn ?? 0, event.text || "");
       break;
     case "final_answer_generated":
       finishAnswer(message, event.answer || "");
@@ -187,19 +193,26 @@ function addStep(message, text) {
   step.className = "run-step";
   step.textContent = text;
   message._steps.append(step);
+  return step;
 }
 
-function appendAnswerDelta(message, text) {
+function appendAnswerDelta(message, turn, text) {
   if (!text) return;
-  message._answerText += text;
-  message._answer.textContent = message._answerText;
+  const draft = getTurnDraft(message, turn);
+  draft.text += text;
+  if (message._activeAnswerTurn === turn) {
+    message._answerText = draft.text;
+    message._answer.textContent = draft.text;
+    return;
+  }
+  draft.node.textContent = draft.text;
 }
 
 function finishAnswer(message, answer) {
   if (!message._answerText || message._answerText !== answer) {
     message._answerText = answer;
-    message._answer.textContent = answer;
   }
+  renderMarkdown(message._answer, message._answerText);
   message.classList.add("run-complete");
 }
 
@@ -208,6 +221,210 @@ function renderRunError(message, body) {
   addStep(message, "运行失败");
   if (!message._answerText) {
     message._answer.textContent = body;
+  }
+}
+
+function getTurnDraft(message, turn) {
+  if (message._turnDrafts.has(turn)) {
+    return message._turnDrafts.get(turn);
+  }
+  const node = document.createElement("div");
+  node.className = "draft-note";
+  message._drafts.append(node);
+  const draft = { text: "", node };
+  message._turnDrafts.set(turn, draft);
+  return draft;
+}
+
+function finishLlmTurn(message, event) {
+  const turn = event.turn ?? 0;
+  const toolCallsCount = Number(event.tool_calls_count || 0);
+  const draft = message._turnDrafts.get(turn);
+  if (toolCallsCount > 0) {
+    addStep(message, `准备调用 ${toolCallsCount} 个工具`);
+    if (draft && draft.text.trim()) {
+      draft.node.classList.add("draft-muted");
+    }
+    return;
+  }
+  if (draft) {
+    message._activeAnswerTurn = turn;
+    message._answerText = draft.text;
+    message._answer.textContent = draft.text;
+    draft.node.remove();
+  }
+  addStep(message, "模型响应完成");
+}
+
+function addToolStep(message, event) {
+  const details = document.createElement("details");
+  details.className = "tool-step";
+
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  label.textContent = toolDisplayName(event.tool_name);
+
+  const hint = document.createElement("span");
+  hint.className = "tool-hint";
+  hint.textContent = "点击查看参数";
+
+  summary.append(label, hint);
+
+  const body = document.createElement("div");
+  body.className = "tool-detail";
+
+  const name = document.createElement("div");
+  name.textContent = `工具：${event.tool_name || "unknown"}`;
+
+  const params = document.createElement("pre");
+  params.textContent = JSON.stringify(event.input || {}, null, 2);
+
+  body.append(name, params);
+  details.append(summary, body);
+  message._steps.append(details);
+}
+
+function toolDisplayName(toolName) {
+  const labels = {
+    hybrid_search_qa_cards: "搜索本地知识库",
+    search_qa_cards: "搜索本地知识库",
+    save_qa_card: "保存知识卡片",
+    read_qa_card: "读取知识卡片",
+    list_recent_cards: "读取最近卡片",
+    update_qa_card: "更新知识卡片",
+    delete_qa_card: "删除知识卡片",
+  };
+  return labels[toolName] || "调用工具";
+}
+
+function summarizeToolResult(event) {
+  const output = event.output || {};
+  if (Array.isArray(output.cards)) {
+    return output.cards.length ? `找到 ${output.cards.length} 条记录` : "未找到相关记录";
+  }
+  if (output.card_id) {
+    return "知识卡片已保存";
+  }
+  return `${toolDisplayName(event.tool_name)}完成`;
+}
+
+function renderMarkdown(container, markdown) {
+  container.classList.add("markdown-body");
+  container.replaceChildren();
+  const lines = markdown.split(/\r?\n/);
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) {
+      index += 1;
+      continue;
+    }
+    if (/^---+$/.test(line.trim())) {
+      container.append(document.createElement("hr"));
+      index += 1;
+      continue;
+    }
+    if (/^\|.+\|$/.test(line.trim()) && index + 1 < lines.length && /^\|[\s:-]+\|/.test(lines[index + 1].trim())) {
+      const tableLines = [line, lines[index + 1]];
+      index += 2;
+      while (index < lines.length && /^\|.+\|$/.test(lines[index].trim())) {
+        tableLines.push(lines[index]);
+        index += 1;
+      }
+      container.append(renderMarkdownTable(tableLines));
+      continue;
+    }
+    const headingMatch = line.match(/^(#{1,4})\s+(.+)$/);
+    if (headingMatch) {
+      const level = Math.min(headingMatch[1].length + 2, 6);
+      const heading = document.createElement(`h${level}`);
+      appendInlineMarkdown(heading, headingMatch[2]);
+      container.append(heading);
+      index += 1;
+      continue;
+    }
+    const listMatch = line.match(/^(\d+\.\s+|[-*]\s+)(.+)$/);
+    if (listMatch) {
+      const ordered = /^\d+\./.test(listMatch[1]);
+      const list = document.createElement(ordered ? "ol" : "ul");
+      while (index < lines.length) {
+        const itemMatch = lines[index].match(/^(\d+\.\s+|[-*]\s+)(.+)$/);
+        if (!itemMatch || (/^\d+\./.test(itemMatch[1]) !== ordered)) break;
+        const item = document.createElement("li");
+        appendInlineMarkdown(item, itemMatch[2]);
+        list.append(item);
+        index += 1;
+      }
+      container.append(list);
+      continue;
+    }
+    const paragraphLines = [line];
+    index += 1;
+    while (index < lines.length && lines[index].trim() && !/^(#{1,4})\s+/.test(lines[index]) && !/^(\d+\.\s+|[-*]\s+)/.test(lines[index]) && !/^---+$/.test(lines[index].trim()) && !/^\|.+\|$/.test(lines[index].trim())) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    const paragraph = document.createElement("p");
+    appendInlineMarkdown(paragraph, paragraphLines.join("\n"), { preserveBreaks: true });
+    container.append(paragraph);
+  }
+}
+
+function renderMarkdownTable(lines) {
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
+  const rows = lines.filter((_, index) => index !== 1).map(parseTableRow);
+  for (const [rowIndex, cells] of rows.entries()) {
+    const row = document.createElement("tr");
+    for (const cell of cells) {
+      const node = document.createElement(rowIndex === 0 ? "th" : "td");
+      appendInlineMarkdown(node, cell);
+      row.append(node);
+    }
+    (rowIndex === 0 ? thead : tbody).append(row);
+  }
+  table.append(thead, tbody);
+  return table;
+}
+
+function parseTableRow(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function appendInlineMarkdown(parent, text, options = {}) {
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let lastIndex = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > lastIndex) {
+      appendText(parent, text.slice(lastIndex, match.index), options);
+    }
+    const token = match[0];
+    if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      parent.append(strong);
+    } else {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.append(code);
+    }
+    lastIndex = match.index + token.length;
+  }
+  if (lastIndex < text.length) {
+    appendText(parent, text.slice(lastIndex), options);
+  }
+}
+
+function appendText(parent, text, options) {
+  if (!options.preserveBreaks || !text.includes("\n")) {
+    parent.append(document.createTextNode(text));
+    return;
+  }
+  const parts = text.split("\n");
+  for (const [index, part] of parts.entries()) {
+    if (index > 0) parent.append(document.createElement("br"));
+    if (part) parent.append(document.createTextNode(part));
   }
 }
 

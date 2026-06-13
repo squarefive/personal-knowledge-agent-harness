@@ -91,6 +91,76 @@ def test_finalize_answer_replaces_model_source_section_with_trusted_sources():
     assert "原始问题: 什么是最小闭环？" in trusted.answer
 
 
+def test_extract_sources_from_list_recent_cards_result():
+    messages = [
+        assistant_tool_call("call_1", "list_recent_cards", {"limit": 50}),
+        tool_result(
+            "call_1",
+            {
+                "ok": True,
+                "cards": [
+                    {
+                        "card_id": "qa_1",
+                        "question": "什么是skills",
+                        "summary": "Skills 是通过学习掌握的能力。",
+                        "source_type": "manual_qa",
+                        "created_at": "2026-06-13T09:12:28+00:00",
+                    }
+                ],
+            },
+        ),
+    ]
+
+    sources = extract_sources(messages)
+
+    assert len(sources) == 1
+    assert sources[0].card_id == "qa_1"
+    assert sources[0].question == "什么是skills"
+    assert sources[0].evidence_kind == "searched"
+
+
+def test_hybrid_search_and_read_same_card_are_counted_once():
+    messages = [
+        assistant_tool_call("call_1", "hybrid_search_qa_cards", {"query": "skills", "limit": 3}),
+        tool_result(
+            "call_1",
+            {
+                "ok": True,
+                "cards": [
+                    {
+                        "card_id": "qa_1",
+                        "question": "什么是skills",
+                        "summary": "Skills 是通过学习掌握的能力。",
+                        "answer_snippet": "Skills 是通过学习掌握的能力。",
+                        "source_type": "manual_qa",
+                        "created_at": "2026-06-13T09:12:28+00:00",
+                    }
+                ],
+            },
+        ),
+        assistant_tool_call("call_2", "read_qa_card", {"card_id": "qa_1"}),
+        tool_result(
+            "call_2",
+            {
+                "ok": True,
+                "card": {
+                    "card_id": "qa_1",
+                    "question": "什么是skills",
+                    "answer": "Skills 是通过学习掌握的能力。",
+                    "summary": "Skills 是通过学习掌握的能力。",
+                    "source_type": "manual_qa",
+                    "created_at": "2026-06-13T09:12:28+00:00",
+                },
+            },
+        ),
+    ]
+
+    trusted = finalize_answer("回答正文。", messages)
+
+    assert trusted.source_count == 1
+    assert trusted.answer.count("card_id: qa_1") == 1
+
+
 def test_finalize_answer_does_not_use_previous_turn_messages():
     previous_turn = [
         assistant_tool_call("call_1", "search_qa_cards", {"query": "最小闭环"}),
