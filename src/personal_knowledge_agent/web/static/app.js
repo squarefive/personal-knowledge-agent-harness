@@ -1,6 +1,7 @@
 const state = {
   cards: [],
   busy: false,
+  selectedCardId: null,
 };
 
 const elements = {
@@ -17,6 +18,27 @@ const elements = {
   cardsList: document.querySelector("#cardsList"),
   cardDetail: document.querySelector("#cardDetail"),
 };
+
+const cardTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const detailTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
 
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -436,7 +458,8 @@ function setBusy(busy, text) {
 
 async function loadRecentCards() {
   elements.cardsTitle.textContent = "最近卡片";
-  const result = await getJson("/api/cards/recent?limit=10");
+  setCardsLoading(true);
+  const result = await getJson("/api/cards/recent?limit=10").finally(() => setCardsLoading(false));
   if (!result.ok) {
     renderCards([], result.message || "读取最近卡片失败。");
     return;
@@ -446,7 +469,10 @@ async function loadRecentCards() {
 
 async function searchCards(query) {
   elements.cardsTitle.textContent = "搜索结果";
-  const result = await getJson(`/api/cards/search?q=${encodeURIComponent(query)}&limit=10`);
+  setCardsLoading(true);
+  const result = await getJson(`/api/cards/search?q=${encodeURIComponent(query)}&limit=10`).finally(() =>
+    setCardsLoading(false),
+  );
   if (!result.ok) {
     renderCards([], result.message || "搜索失败。");
     return;
@@ -456,8 +482,12 @@ async function searchCards(query) {
 
 function renderCards(cards, emptyText = "暂无卡片。") {
   state.cards = cards;
+  if (!cards.some((card) => card.card_id === state.selectedCardId)) {
+    state.selectedCardId = null;
+  }
   elements.cardsCount.textContent = String(cards.length);
   elements.cardsList.replaceChildren();
+  elements.cardsList.setAttribute("aria-busy", "false");
 
   if (!cards.length) {
     const empty = document.createElement("div");
@@ -471,6 +501,11 @@ function renderCards(cards, emptyText = "暂无卡片。") {
     const button = document.createElement("button");
     button.className = "card-row";
     button.type = "button";
+    button.dataset.cardId = card.card_id || "";
+    button.setAttribute("aria-pressed", String(card.card_id === state.selectedCardId));
+    if (card.card_id === state.selectedCardId) {
+      button.classList.add("is-selected");
+    }
     button.addEventListener("click", () => loadCardDetail(card.card_id));
 
     const question = document.createElement("strong");
@@ -481,7 +516,7 @@ function renderCards(cards, emptyText = "暂无卡片。") {
 
     const meta = document.createElement("div");
     meta.className = "card-meta";
-    meta.textContent = `${card.source_type || "unknown"} · ${card.created_at || ""}`;
+    meta.textContent = [card.source_type || "unknown", formatTimestamp(card.created_at)].filter(Boolean).join(" · ");
 
     button.append(question, summary, meta);
     elements.cardsList.append(button);
@@ -490,6 +525,8 @@ function renderCards(cards, emptyText = "暂无卡片。") {
 
 async function loadCardDetail(cardId) {
   if (!cardId) return;
+  state.selectedCardId = cardId;
+  markSelectedCard(cardId);
   const result = await getJson(`/api/cards/${encodeURIComponent(cardId)}`);
   if (!result.ok) {
     elements.cardDetail.className = "card-detail empty-state";
@@ -511,9 +548,36 @@ function renderCardDetail(card) {
   addDetail(list, "summary", card.summary);
   addDetail(list, "keywords", keywords);
   addDetail(list, "source_type", card.source_type);
-  addDetail(list, "created_at", card.created_at);
-  addDetail(list, "updated_at", card.updated_at);
+  addDetail(list, "创建时间", formatTimestamp(card.created_at, { detail: true }));
+  addDetail(list, "更新时间", formatTimestamp(card.updated_at, { detail: true }));
   elements.cardDetail.append(list);
+}
+
+function formatTimestamp(value, options = {}) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const formatter = options.detail ? detailTimeFormatter : cardTimeFormatter;
+  const suffix = options.detail ? " (UTC+8)" : "";
+  return `${formatter.format(date)}${suffix}`;
+}
+
+function setCardsLoading(loading) {
+  elements.cardsList.setAttribute("aria-busy", String(loading));
+  if (!loading) return;
+  elements.cardsList.replaceChildren();
+  const loadingNode = document.createElement("div");
+  loadingNode.className = "empty-state";
+  loadingNode.textContent = "正在读取卡片...";
+  elements.cardsList.append(loadingNode);
+}
+
+function markSelectedCard(cardId) {
+  for (const button of elements.cardsList.querySelectorAll(".card-row")) {
+    const selected = button.dataset.cardId === cardId;
+    button.classList.toggle("is-selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
 }
 
 function addDetail(list, label, value) {
