@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
 MAX_RENDERED_SOURCES = 5
 SOURCE_HEADING_RE = re.compile(r"(?m)^来源[:：]\s*$")
+SOURCE_TIMEZONE = timezone(timedelta(hours=8))
 UNSUPPORTED_CLAIMS = (
     "根据本地知识库",
     "根据知识卡片",
@@ -21,6 +23,7 @@ class SourceEvidence:
     question: str
     source_type: str
     created_at: str
+    created_at_display: str
     evidence_kind: str
 
 
@@ -89,7 +92,7 @@ def render_sources(sources: list[SourceEvidence]) -> str:
                 f"- card_id: {source.card_id}",
                 f"  原始问题: {source.question}",
                 f"  source_type: {source.source_type}",
-                f"  created_at: {source.created_at}",
+                f"  created_at: {source.created_at_display}",
             ]
         )
     return "\n".join(lines)
@@ -169,14 +172,26 @@ def _source_from_mapping(
     source_type = payload.get("source_type")
     created_at = payload.get("created_at")
     if not all(isinstance(value, str) and value.strip() for value in (card_id, source_question, source_type, created_at)):
-        return SourceEvidence("", "", "", "", "")
+        return SourceEvidence("", "", "", "", "", "")
+    created_at_text = created_at.strip()
     return SourceEvidence(
         card_id=card_id.strip(),
         question=source_question.strip(),
         source_type=source_type.strip(),
-        created_at=created_at.strip(),
+        created_at=created_at_text,
+        created_at_display=_format_source_timestamp(created_at_text),
         evidence_kind=evidence_kind,
     )
+
+
+def _format_source_timestamp(value: str) -> str:
+    try:
+        timestamp = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(SOURCE_TIMEZONE).strftime("%Y/%m/%d %H:%M:%S (UTC+8)")
 
 
 def _parse_json_object(value: Any) -> dict[str, Any]:

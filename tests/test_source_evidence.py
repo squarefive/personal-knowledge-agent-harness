@@ -57,6 +57,8 @@ def test_extract_sources_from_save_qa_card_uses_arguments_for_question():
     assert len(sources) == 1
     assert sources[0].card_id == "qa_1"
     assert sources[0].question == "什么是最小闭环？"
+    assert sources[0].created_at == "2026-06-07T00:00:00+00:00"
+    assert sources[0].created_at_display == "2026/06/07 08:00:00 (UTC+8)"
     assert sources[0].evidence_kind == "saved"
 
 
@@ -89,6 +91,8 @@ def test_finalize_answer_replaces_model_source_section_with_trusted_sources():
     assert "qa_fake" not in trusted.answer
     assert "card_id: qa_1" in trusted.answer
     assert "原始问题: 什么是最小闭环？" in trusted.answer
+    assert "created_at: 2026/06/07 08:00:00 (UTC+8)" in trusted.answer
+    assert "created_at: 2026-06-07T00:00:00+00:00" not in trusted.answer
 
 
 def test_extract_sources_from_list_recent_cards_result():
