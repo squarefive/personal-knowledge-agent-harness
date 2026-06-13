@@ -49,7 +49,8 @@ def run_cli() -> int:
                 rendered_final_answer = True
         except Exception as exc:
             print(f"CLI 渲染失败：{exc}", file=sys.stderr)
-        event_logger.write(event)
+        if event.event_type != "answer_delta":
+            event_logger.write(event)
 
     try:
         config = load_config()

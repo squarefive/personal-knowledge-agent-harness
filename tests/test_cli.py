@@ -2,6 +2,7 @@ import tomllib
 from pathlib import Path
 
 from personal_knowledge_agent import __main__ as cli
+from personal_knowledge_agent.events import AgentEvent
 from personal_knowledge_agent.permissions import ApprovalRequest
 
 
@@ -24,6 +25,39 @@ def test_run_cli_processes_input_and_exit(monkeypatch, capsys):
     assert "本地 Q&A 知识库 Agent 已启动" in output
     assert "Agent> reply: 帮我记一条知识" in output
     assert "已退出" in output
+
+
+def test_run_cli_does_not_log_answer_delta(monkeypatch):
+    class FakeAgent:
+        def __init__(self, event_sink):
+            self.event_sink = event_sink
+
+        def run(self, text):
+            self.event_sink(AgentEvent(run_id="run_1", event_type="answer_delta", payload={"text": "你"}))
+            self.event_sink(
+                AgentEvent(run_id="run_1", event_type="final_answer_generated", payload={"answer": "你好"})
+            )
+            return "你好"
+
+    written = []
+    inputs = iter(["你好", "/exit"])
+    monkeypatch.setattr(cli, "load_config", lambda: object())
+    monkeypatch.setattr(
+        cli,
+        "create_agent",
+        lambda config, event_sink=None, approval_callback=None: FakeAgent(event_sink),
+    )
+    monkeypatch.setattr(cli, "create_prompt_session", lambda: object())
+    monkeypatch.setattr(cli, "prompt_user", lambda session: next(inputs))
+    monkeypatch.setattr(
+        cli,
+        "AsyncJsonlLogger",
+        lambda: type("FakeLogger", (), {"write": lambda self, event: written.append(event), "close": lambda self: None})(),
+    )
+
+    assert cli.run_cli() == 0
+
+    assert [event.event_type for event in written] == ["final_answer_generated"]
 
 
 def test_run_cli_reports_startup_error(monkeypatch, capsys):

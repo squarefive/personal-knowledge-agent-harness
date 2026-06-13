@@ -4,6 +4,7 @@ import time
 from fastapi.testclient import TestClient
 
 from personal_knowledge_agent.config import AgentConfig
+from personal_knowledge_agent.events import AgentEvent
 from personal_knowledge_agent.permissions import ApprovalRequest
 from personal_knowledge_agent.web.app import create_web_app
 
@@ -91,16 +92,37 @@ def make_client(agent=None, tools=None):
     return TestClient(app)
 
 
-def test_chat_returns_agent_answer():
+def read_sse_events(response):
+    events = []
+    for block in response.text.strip().split("\n\n"):
+        if not block:
+            continue
+        line = next(line for line in block.splitlines() if line.startswith("data:"))
+        import json
+
+        events.append(json.loads(line.removeprefix("data:").strip()))
+    return events
+
+
+def test_chat_stream_returns_agent_answer():
     agent = FakeAgent()
     client = make_client(agent=agent)
 
-    response = client.post("/api/chat", json={"message": "  你好  "})
+    response = client.post("/api/chat/stream", json={"message": "  你好  "})
 
     assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert response.json()["answer"] == "reply: 你好"
+    events = read_sse_events(response)
+    assert events[-1]["event_type"] == "final_answer_generated"
+    assert events[-1]["answer"] == "reply: 你好"
     assert agent.inputs == ["你好"]
+
+
+def test_chat_route_is_removed():
+    client = make_client()
+
+    response = client.post("/api/chat", json={"message": "你好"})
+
+    assert response.status_code == 404
 
 
 def test_web_runtime_uses_default_denial_approval_callback(tmp_path, monkeypatch):
@@ -129,21 +151,57 @@ def test_web_runtime_uses_default_denial_approval_callback(tmp_path, monkeypatch
 def test_chat_rejects_empty_message():
     client = make_client()
 
-    response = client.post("/api/chat", json={"message": " "})
+    response = client.post("/api/chat/stream", json={"message": " "})
 
     assert response.status_code == 200
-    assert response.json()["ok"] is False
-    assert response.json()["error_code"] == "invalid_input"
+    events = read_sse_events(response)
+    assert events[-1]["event_type"] == "error"
+    assert events[-1]["error_code"] == "invalid_input"
 
 
 def test_chat_returns_structured_error_on_agent_failure():
     client = make_client(agent=FakeAgent(fail=True))
 
-    response = client.post("/api/chat", json={"message": "你好"})
+    response = client.post("/api/chat/stream", json={"message": "你好"})
 
     assert response.status_code == 200
-    assert response.json()["ok"] is False
-    assert response.json()["error_code"] == "agent_error"
+    events = read_sse_events(response)
+    assert events[-1]["event_type"] == "error"
+    assert events[-1]["error_code"] == "agent_error"
+
+
+def test_chat_stream_does_not_cache_answer_delta(tmp_path, monkeypatch):
+    class EventAgent:
+        def __init__(self, sink):
+            self.sink = sink
+
+        def run(self, user_input):
+            self.sink(AgentEvent(run_id="run_1", event_type="answer_delta", payload={"text": "你"}))
+            self.sink(
+                AgentEvent(run_id="run_1", event_type="final_answer_generated", payload={"answer": "你好"})
+            )
+            return "你好"
+
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None):
+        return type("Components", (), {"agent": EventAgent(event_sink), "tools": FakeTools()})()
+
+    import personal_knowledge_agent.web.app as app_module
+
+    monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    app = create_web_app(config=config)
+    client = TestClient(app)
+
+    response = client.post("/api/chat/stream", json={"message": "你好"})
+
+    assert response.status_code == 200
+    events = read_sse_events(response)
+    assert [event["event_type"] for event in events] == ["answer_delta", "final_answer_generated"]
+    assert [event["event_type"] for event in app.state.agent_events] == ["final_answer_generated"]
 
 
 def test_chat_serializes_agent_access():
@@ -151,9 +209,9 @@ def test_chat_serializes_agent_access():
     client = make_client(agent=agent)
 
     def send_message(text):
-        response = client.post("/api/chat", json={"message": text})
+        response = client.post("/api/chat/stream", json={"message": text})
         assert response.status_code == 200
-        assert response.json()["ok"] is True
+        assert read_sse_events(response)[-1]["event_type"] == "final_answer_generated"
 
     threads = [
         threading.Thread(target=send_message, args=("one",)),

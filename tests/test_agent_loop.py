@@ -13,7 +13,7 @@ class FakeLLM:
         self.responses = list(responses)
         self.calls = []
 
-    def chat(self, *, messages, tools, system_prompt):
+    def chat(self, *, messages, tools, system_prompt, on_text_delta=None):
         self.calls.append(
             {
                 "messages": copy.deepcopy(messages),
@@ -21,7 +21,10 @@ class FakeLLM:
                 "system_prompt": system_prompt,
             }
         )
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if response.text and on_text_delta is not None:
+            on_text_delta(response.text)
+        return response
 
 
 def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
@@ -73,6 +76,7 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
         "tool_call_started",
         "tool_call_finished",
         "llm_call_started",
+        "answer_delta",
         "llm_call_finished",
         "evidence_checked",
         "final_answer_generated",
@@ -98,6 +102,7 @@ def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
     assert [event.event_type for event in events] == [
         "user_input_received",
         "llm_call_started",
+        "answer_delta",
         "llm_call_finished",
         "evidence_checked",
         "final_answer_generated",

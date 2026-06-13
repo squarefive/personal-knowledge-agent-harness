@@ -145,7 +145,7 @@ def _sources_from_result(
     if tool_name == "save_qa_card":
         question = arguments.get("question")
         return [_source_from_mapping(result, question=question, evidence_kind="saved")]
-    if tool_name == "search_qa_cards":
+    if tool_name in {"search_qa_cards", "list_recent_cards", "hybrid_search_qa_cards"}:
         cards = result.get("cards")
         if not isinstance(cards, list):
             return []

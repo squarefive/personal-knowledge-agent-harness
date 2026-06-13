@@ -94,7 +94,7 @@ last_updated: "2026-06-08"
 | 后台任务 | 未完成 | 当前明确不做后台任务；没有后台 Wiki 同步、索引构建、批量摘要、任务状态、完成通知或失败重试。 |
 | 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；更新和删除确认已实现；合并、覆盖和图谱确认等后续高风险操作尚未实现。v0.4 语义索引重建是系统维护工具，不作为高风险确认操作。 |
 | 长期偏好记忆 | 部分完成 | 已支持读取 Agent memory index 和相关 memory，并能生成 memory candidates 事件；尚未实现偏好写入确认闭环，以及偏好查看、修改、删除。 |
-| Web Chat + Cards | 部分完成 | 已实现本地 HTML 聊天入口、`POST /api/chat`、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
+| Web Chat + Cards | 部分完成 | 已实现本地 HTML 聊天入口、流式聊天接口、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
 
 以上状态仅描述当前代码已实现能力，不代表最终版设计已被纳入当前 Agent 边界。若要实现未完成模块，必须先更新本文档中的角色边界、工具契约、数据模型、核心流程、失败模式和测试要求，并单独提交文档变更后再进入代码实现。
 
@@ -151,8 +151,11 @@ last_updated: "2026-06-08"
   - 调用 Tool Dispatcher 执行工具。
   - 将 tool result 回填 messages。
   - 在没有 tool calls 时返回最终回答。
-  - 在关键阶段产生结构化运行事件，包括 `user_input_received`、`llm_call_started`、`llm_call_finished`、`tool_call_started`、`tool_call_finished`、`evidence_checked`、`final_answer_generated` 和 `error`。
+  - AgentLoop 的主运行骨架保持 `run(user_input) -> str`，不得为了展示层流式效果新增第二套 Agent 主入口。
+  - 在关键阶段产生结构化运行事件，包括 `user_input_received`、`llm_call_started`、`answer_delta`、`llm_call_finished`、`tool_call_started`、`tool_call_finished`、`evidence_checked`、`final_answer_generated` 和 `error`。
+  - `answer_delta` 只表示最终回答文本的实时增量，用于 CLI / Web 展示；`final_answer_generated` 仍是 evidence check 后的权威最终答案。
   - 运行事件用于 CLI 实时展示和本地开发日志，不作为长期知识来源。
+  - `answer_delta` 默认不写入 JSONL 开发日志，避免 token 级事件刷屏；JSONL 日志仍记录 `final_answer_generated` 的完整最终答案。
   - 运行事件只描述可审计过程，不暴露模型完整思考链。
 
 - **Agent Factory 职责**:
@@ -207,12 +210,14 @@ last_updated: "2026-06-08"
 - **LLM Client 职责**:
   - 作为 DeepSeek API 的薄适配层。
   - 接收 messages、tools 和 system_prompt。
-  - 发起 DeepSeek chat 请求。
+  - 发起 DeepSeek streaming chat 请求，并在收到最终回答文本增量时调用可选 delta callback。
   - 对 DeepSeek 临时故障执行有上限的有限重试，不得无限阻塞 CLI。
   - 可重试错误包括网络连接类错误、timeout、SSL EOF，以及 HTTP 429、500、503。
   - 不可重试错误包括 HTTP 400、401、402、422，以及响应解析错误和 tool call 参数解析错误。
   - 重试耗尽后抛出明确错误，错误信息不得包含 API key、完整 headers、完整 payload 或完整 system prompt。
   - 将 DeepSeek 响应转换为统一的 LLMResponse。
+  - DeepSeek 流式 tool call 分片只能在 LLM Client 内部聚合为完整 ToolCall 后返回，不得把半截 JSON 参数暴露给 CLI / Web UI。
+  - LLM Client 不产出 AgentEvent，不包含 CLI、Web、SSE 或 UI 展示逻辑。
   - 不包含 Agent 业务判断逻辑。
 
 - **CLI Runtime 职责**:
@@ -225,8 +230,9 @@ last_updated: "2026-06-08"
   - 支持 `/exit` 和 `/quit` 退出。
   - 实时接收 Agent Loop 事件。
   - 将事件交给 CLI Renderer 渲染。
-  - 将事件投递给 Async JSONL Logger。
+  - 将除 `answer_delta` 以外的事件投递给 Async JSONL Logger。
   - CLI 展示长文本时必须做确定性截断。
+  - CLI 最终回答应使用 DeepSeek streaming 的真实文本增量展示；收到 `final_answer_generated` 后只做收尾或权威答案修正，不重复打印同一段最终回答。
   - 单轮 AgentLoop 执行失败时，应展示本轮失败提示并继续等待下一轮输入。
   - 单轮模型或工具运行失败不得导致 CLI 进程退出；启动阶段不可恢复错误、用户输入 `/exit` 或 `/quit` 除外。
   - 不直接操作 SQLite。
@@ -238,10 +244,13 @@ last_updated: "2026-06-08"
   - 通过 `agent_factory.py` 创建 AgentLoop 及其依赖。
   - 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
   - 提供静态 HTML/CSS/JS 页面。
-  - 接收用户聊天输入并调用 AgentLoop。
+  - 通过流式聊天接口接收用户输入并调用 AgentLoop。
   - 提供最近卡片、搜索卡片和卡片详情 API。
   - Web 输入层只负责采集用户输入，不判断知识录入或问答意图。
   - Web API 不直接操作 SQLite，不绕过 Tools 或 Store 边界。
+  - Web 聊天接口只保留流式接口，不保留非流式 `/api/chat` 聊天路径。
+  - Web Runtime 必须只转发本轮 AgentLoop 事件，不得使用全局尾部事件拼接本轮流程。
+  - Web Runtime 不缓存 `answer_delta` 到全局事件列表或 JSONL 开发日志。
   - Web 第一版只覆盖 Chat + Cards，不提供编辑、删除、合并或复杂知识管理能力。
   - Web Runtime 的单轮 AgentLoop 执行失败时，应返回结构化错误，不得声称保存、查询或回答成功。
 
@@ -250,7 +259,8 @@ last_updated: "2026-06-08"
   - LLM 阶段展示阶段名、开始、结束和失败状态。
   - Tool call 展示工具名和可展示输入字段。
   - Tool result 展示工具名、状态、耗时和可展示输出字段。
-  - Final answer 展示最终回答和来源。
+  - `answer_delta` 以类似本地 Codex 的方式追加展示最终回答文本。
+  - Final answer 事件用于回答收尾和权威答案修正，不应重复打印已经通过 `answer_delta` 展示的完整回答。
   - 不展示原始 LLM messages、system prompt、API key、secret、完整内部 payload 或模型完整思考链。
 
 - **Tools 职责**:
@@ -874,7 +884,7 @@ v0.2 实现必须保持低侵入：
 5. 用户输入 Q&A 录入请求或问题。
 6. CLI Runtime 将输入交给 AgentLoop。
 7. AgentLoop 按 5.1 或 5.2 流程调用 LLM 和工具。
-8. CLI Runtime 打印 Agent 最终回答。
+8. CLI Runtime 以流式增量展示 Agent 最终回答，并在最终事件到达后完成收尾。
 9. 用户输入 `/exit` 或 `/quit` 时退出。
 
 - **成功条件**:  
@@ -905,9 +915,9 @@ pka
 4. Web Runtime 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
 5. Web Runtime 提供静态 HTML 页面，并可自动打开浏览器访问本地服务。
 6. 用户在 HTML 页面输入 Q&A 录入请求或问题。
-7. `POST /api/chat` 将输入交给 AgentLoop。
+7. 流式聊天接口将输入交给 AgentLoop，并把本轮事件实时转发给 HTML 页面。
 8. AgentLoop 按 5.1 或 5.2 流程调用 LLM 和工具。
-9. Web API 返回结构化结果，HTML 展示 Agent 最终回答和基础状态。
+9. HTML 页面实时展示调用流程和最终回答增量，并以 `final_answer_generated` 作为权威最终答案。
 
 - **成功条件**:  
   用户无需使用 CLI，即可在本地浏览器中连续录入知识和提问。
@@ -916,7 +926,7 @@ pka
   `.env` 或环境变量缺少 `DEEPSEEK_API_KEY`，DeepSeek / SQLite 初始化失败，本地端口不可用，静态页面加载失败，或单轮 AgentLoop 执行失败。
 
 - **用户可见反馈**:  
-  启动失败时输出明确错误；运行中模型或工具失败时，Web API 返回结构化错误，HTML 展示本轮失败说明。不得声称保存、查询或回答成功。
+  启动失败时输出明确错误；运行中模型或工具失败时，流式接口返回结构化错误事件，HTML 展示本轮失败说明。不得声称保存、查询或回答成功。
 
 ### 5.6 Web 知识卡片浏览
 
@@ -939,13 +949,13 @@ pka
 ### 5.7 CLI 实时运行过程展示
 
 1. CLI Runtime 收到用户输入后生成本轮 `run_id`。
-2. Agent Loop 在收到输入、调用 LLM、收到 LLM 响应、调用工具、收到工具结果、判断证据和生成最终回答时产生结构化事件。
+2. Agent Loop 在收到输入、调用 LLM、收到最终回答文本增量、收到 LLM 响应、调用工具、收到工具结果、判断证据和生成最终回答时产生结构化事件。
 3. CLI Renderer 在主线程实时渲染事件。
-4. Async JSONL Logger 在后台线程异步写入本地 `.logs/agent.log`。
+4. Async JSONL Logger 在后台线程异步写入本地 `.logs/agent.log`，但默认跳过 token 级 `answer_delta` 事件。
 5. 最终回答仍必须符合来源要求；依据不足时仍必须明确拒答。
 
 - **成功条件**:  
-  用户能在 CLI 中实时看到 LLM 阶段、tool call、tool result、证据判断和最终回答；本地 JSONL 日志能记录同一批事件。
+  用户能在 CLI 中实时看到 LLM 阶段、tool call、tool result、证据判断和最终回答增量；本地 JSONL 日志能记录除 `answer_delta` 以外的审计事件和完整最终回答。
 
 - **失败条件**:  
   CLI Renderer 渲染失败、日志队列满、日志写入失败或日志 flush 超时。
@@ -1451,7 +1461,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
 | CLI Renderer 失败 | 渲染事件时发生异常 | 不影响工具执行和 Agent 最终回答 | 向 stderr 输出简短错误 |
 | Web 服务启动失败 | 端口不可用、配置缺失或 Web app 初始化失败 | 不启动 Web Runtime，不创建虚假会话 | 输出明确启动失败原因 |
-| Web chat 执行失败 | `POST /api/chat` 调用 AgentLoop 失败 | 返回结构化错误，不声称本轮完成 | HTML 展示本轮失败说明 |
+| Web chat 执行失败 | 流式聊天接口调用 AgentLoop 失败 | 返回结构化错误事件，不声称本轮完成 | HTML 展示本轮失败说明 |
+| 流式回答最终修正 | `final_answer_generated` 与已展示的 `answer_delta` 累计文本不一致 | 以 `final_answer_generated` 为权威最终答案，只做一次正文节点修正 | HTML / CLI 不反复重绘，不伪造未校验证据 |
 | Web 卡片读取失败 | 最近卡片、搜索或详情 API 读取失败 | 返回结构化错误，不生成虚假卡片 | HTML 展示错误原因 |
 | Web 静态页面加载失败 | 静态文件缺失或服务异常 | 不影响数据库内容，不声称 Agent 已启动完成 | 浏览器或终端展示加载失败 |
 | 日志队列满 | Async JSONL Logger 队列达到上限 | 不阻塞 Agent Loop，丢弃日志事件 | stderr 最多提示一次 |
@@ -1487,6 +1498,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   5. 日志写入失败、队列满和 flush 超时不得影响 Agent 工具执行和最终回答。
   6. Python 标准库 `logging` 仅保留底层库级异常和不可恢复错误，不承担 Agent loop trace 职责。
   7. 不记录 API key、完整 prompt、完整 messages、secret 或未声明为可展示的内部 payload。
+  8. `answer_delta` 只服务实时 UI 展示，默认不写入 JSONL 开发日志；完整最终答案由 `final_answer_generated` 记录。
 
 - **配置安全规则**:
   1. `.env` 必须通过 `.git/info/exclude` 在本地忽略，不要求提交仓库级 `.gitignore`。
@@ -1515,7 +1527,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   3. `SQLiteStore.list_recent_cards` 能按 created_at 倒序返回。
   4. `KnowledgeTools.save_qa_card` 能校验必填字段。
   5. `KnowledgeTools.read_qa_card` 对不存在 ID 返回结构化 not_found。
-  6. `DeepSeekClient` 请求构造和响应解析使用 mock 测试。
+  6. `DeepSeekClient` streaming 请求构造、文本增量回调、tool call 分片聚合和响应解析使用 mock 测试。
   7. `DeepSeekClient` 能对可重试网络错误和 HTTP 429、500、503 执行有限重试。
   8. `DeepSeekClient` 对 HTTP 400、401、402、422 不重试。
   9. `DeepSeekClient` 重试耗尽时返回明确错误且不泄露 API key、headers、完整 payload 或 system prompt。
@@ -1556,9 +1568,10 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   17. turn-end 能把可恢复 message 追加到 transcript。
   18. turn-end 能生成 memory candidates 并通过 `memory_candidates_generated` 事件暴露候选。
   19. CLI 入口能在默认模式启动 CLI，并能通过 `pka web` 分发到 Web Runtime。
-  20. Web Runtime 能用 fake AgentLoop 处理一次 `POST /api/chat`。
+  20. Web Runtime 能用 fake AgentLoop 处理一次流式聊天请求。
   21. Web Runtime 能返回最近卡片、搜索卡片和卡片详情的结构化结果。
   22. Web Runtime 在 AgentLoop 或卡片读取失败时返回结构化错误。
+  23. CLI Runtime 不把 `answer_delta` 写入 JSONL 开发日志，但仍记录 `final_answer_generated`。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
@@ -1579,6 +1592,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   16. 高风险工具被用户允许时才执行 handler。
   17. 普通工具不得触发 approval callback。
   18. Web Runtime 遇到高风险工具 ask 时不得阻塞等待终端输入。
+  19. Web Runtime 不保留非流式 `/api/chat` 聊天路径。
+  20. Web Runtime 不把 `answer_delta` 缓存到全局事件列表。
 
 - **可选 Live Smoke Test**:
   1. 仅在存在 `DEEPSEEK_API_KEY` 时运行。
@@ -1587,6 +1602,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   4. 再完成一次检索回答。
   5. 启动 `pka web` 并在浏览器完成一次聊天、最近卡片刷新、搜索和详情查看。
   6. 不把 API key 写入仓库或日志。
+  7. CLI / Web 最终回答能展示真实 DeepSeek streaming 文本增量。
 
 - **验收清单**:
   1. 符合本文档定义的能力边界。
@@ -1599,7 +1615,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   8. `.sessions/<session_id>/summary.md` 只保存长 transcript 的 compact summary。
   9. compact 只缩减上下文窗口，不替代长期 memory。
   10. Web Runtime 只作为本地 Chat + Cards 入口，不改变 Agent 的工具和记忆边界。
-  11. 第一版不包含 Wiki、文件监听、周报、多 Agent、向量库和后台任务。
+  11. Web 聊天只暴露流式接口，流程展示和回答增量不绕过 AgentLoop。
+  12. 第一版不包含 Wiki、文件监听、周报、多 Agent、向量库和后台任务。
 
 ---
 
@@ -1613,3 +1630,4 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | `2026-06-02` | 标记最终版功能清单相对当前实现的完成状态 | 帮助区分当前第一版闭环、部分 Harness 能力和最终版未实现模块 | `TBD` |
 | `2026-06-02` | 补充 Web Runtime、Chat + Cards UI 和 agent_factory 设计边界 | 支持本地浏览器聊天入口和基础 Q&A 卡片浏览 | `TBD` |
 | `2026-06-07` | 将工具列表、上下文压缩、memory candidate 和 Web 状态调整为当前代码实现边界 | 修正文档中把内部机制和未完成写入闭环描述为当前 LLM 可调用工具的问题 | `TBD` |
+| `2026-06-13` | 补充 DeepSeek streaming、`answer_delta`、Web 流式聊天接口和日志过滤边界 | 支持本地 Codex 风格实时流程展示和最终回答真流式输出 | `TBD` |

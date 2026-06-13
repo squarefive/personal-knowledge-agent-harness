@@ -5,7 +5,7 @@ import logging
 import os
 import ssl
 import time
-from typing import Any
+from typing import Any, Callable, Iterator
 from urllib import error, request
 
 from .schemas import LLMResponse, ToolCall
@@ -41,6 +41,7 @@ class DeepSeekClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         system_prompt: str,
+        on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         request_messages = [{"role": "system", "content": system_prompt}, *messages]
         payload = {
@@ -48,11 +49,25 @@ class DeepSeekClient:
             "messages": request_messages,
             "tools": tools,
             "tool_choice": "auto",
+            "stream": True,
         }
-        data = self._post_json("/chat/completions", payload)
-        return self._parse_response(data)
+        text_parts: list[str] = []
+        tool_accumulator = _ToolCallAccumulator()
+        for data in self._post_stream("/chat/completions", payload):
+            delta = ((data.get("choices") or [{}])[0].get("delta")) or {}
+            tool_call_deltas = delta.get("tool_calls") or []
+            content = delta.get("content")
+            if content and not tool_call_deltas:
+                text_parts.append(content)
+                if on_text_delta is not None:
+                    on_text_delta(content)
+            tool_accumulator.add_delta(tool_call_deltas)
+        return LLMResponse(
+            text="".join(text_parts) or None,
+            tool_calls=tool_accumulator.to_tool_calls(),
+        )
 
-    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post_stream(self, path: str, payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = request.Request(
             f"{self.base_url}{path}",
@@ -65,13 +80,17 @@ class DeepSeekClient:
         )
         attempts = self.max_retries + 1
         for attempt in range(attempts):
+            emitted = False
             try:
                 with request.urlopen(req, timeout=self.timeout_seconds) as response:
-                    return json.loads(response.read().decode("utf-8"))
+                    for event_data in self._iter_sse_response(response):
+                        emitted = True
+                        yield event_data
+                    return
             except error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
                 logger.error("llm.deepseek.http_error", extra={"status": exc.code})
-                if exc.code in RETRYABLE_HTTP_STATUSES and attempt < self.max_retries:
+                if not emitted and exc.code in RETRYABLE_HTTP_STATUSES and attempt < self.max_retries:
                     self._sleep_before_retry(attempt)
                     continue
                 raise RuntimeError(
@@ -79,13 +98,30 @@ class DeepSeekClient:
                 ) from exc
             except RETRYABLE_NETWORK_ERRORS as exc:
                 logger.error("llm.deepseek.url_error")
-                if attempt < self.max_retries:
+                if not emitted and attempt < self.max_retries:
                     self._sleep_before_retry(attempt)
                     continue
                 raise RuntimeError(
                     f"DeepSeek request failed after {attempt + 1} attempts: {self._error_reason(exc)}"
                 ) from exc
         raise RuntimeError("DeepSeek request failed unexpectedly")
+
+    @staticmethod
+    def _iter_sse_response(response: Any) -> Iterator[dict[str, Any]]:
+        while True:
+            raw_line = response.readline()
+            if not raw_line:
+                return
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line or not line.startswith("data:"):
+                continue
+            data = line.removeprefix("data:").strip()
+            if data == "[DONE]":
+                return
+            try:
+                yield json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise RuntimeError("Invalid DeepSeek streaming response") from exc
 
     def _sleep_before_retry(self, attempt: int) -> None:
         if not self.retry_backoff_seconds:
@@ -99,25 +135,42 @@ class DeepSeekClient:
             return str(exc.reason)
         return str(exc)
 
-    @staticmethod
-    def _parse_response(data: dict[str, Any]) -> LLMResponse:
-        choices = data.get("choices") or []
-        if not choices:
-            raise RuntimeError("DeepSeek response did not include choices")
-        message = choices[0].get("message") or {}
-        tool_calls: list[ToolCall] = []
-        for index, raw_call in enumerate(message.get("tool_calls") or []):
+
+class _ToolCallAccumulator:
+    def __init__(self) -> None:
+        self._items: dict[int, dict[str, Any]] = {}
+
+    def add_delta(self, deltas: list[dict[str, Any]]) -> None:
+        for fallback_index, raw_call in enumerate(deltas):
+            index = raw_call.get("index", fallback_index)
+            item = self._items.setdefault(
+                index,
+                {"id": None, "name": "", "arguments": ""},
+            )
+            if raw_call.get("id"):
+                item["id"] = raw_call["id"]
             function = raw_call.get("function") or {}
-            raw_arguments = function.get("arguments") or "{}"
+            if function.get("name"):
+                item["name"] += function["name"]
+            if function.get("arguments"):
+                item["arguments"] += function["arguments"]
+
+    def to_tool_calls(self) -> list[ToolCall]:
+        tool_calls: list[ToolCall] = []
+        for index in sorted(self._items):
+            item = self._items[index]
+            if not item["name"]:
+                continue
+            raw_arguments = item["arguments"] or "{}"
             try:
-                arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+                arguments = json.loads(raw_arguments)
             except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Invalid tool call arguments for {function.get('name')}") from exc
+                raise RuntimeError(f"Invalid tool call arguments for {item['name']}") from exc
             tool_calls.append(
                 ToolCall(
-                    id=raw_call.get("id") or f"tool_call_{index}",
-                    name=function.get("name") or "",
+                    id=item["id"] or f"tool_call_{index}",
+                    name=item["name"],
                     arguments=arguments,
                 )
             )
-        return LLMResponse(text=message.get("content"), tool_calls=tool_calls)
+        return tool_calls
