@@ -1,10 +1,17 @@
 const state = {
   cards: [],
   busy: false,
+  sessions: [],
+  activeSessionId: null,
   selectedCardId: null,
 };
 
 const elements = {
+  sessionsList: document.querySelector("#sessionsList"),
+  sessionStatus: document.querySelector("#sessionStatus"),
+  newSessionButton: document.querySelector("#newSessionButton"),
+  renameSessionButton: document.querySelector("#renameSessionButton"),
+  activeSessionTitle: document.querySelector("#activeSessionTitle"),
   chatForm: document.querySelector("#chatForm"),
   messageInput: document.querySelector("#messageInput"),
   sendButton: document.querySelector("#sendButton"),
@@ -43,7 +50,7 @@ const detailTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const message = elements.messageInput.value.trim();
-  if (!message || state.busy) return;
+  if (!message || state.busy || !state.activeSessionId) return;
 
   appendMessage("user", "你", message);
   const agentMessage = appendAgentRunMessage();
@@ -52,12 +59,39 @@ elements.chatForm.addEventListener("submit", async (event) => {
 
   try {
     await streamChat(message, agentMessage);
+    await loadSessions();
+    renderActiveSessionTitle();
     await loadRecentCards();
   } catch (error) {
     renderRunError(agentMessage, String(error));
   } finally {
     setBusy(false, "本地 Web UI 已就绪");
   }
+});
+
+elements.newSessionButton.addEventListener("click", async () => {
+  if (state.busy) return;
+  const session = await createSession();
+  await activateSession(session.session_id);
+});
+
+elements.renameSessionButton.addEventListener("click", async () => {
+  if (!state.activeSessionId) return;
+  const activeSession = state.sessions.find((session) => session.session_id === state.activeSessionId);
+  const nextTitle = window.prompt("重命名会话", activeSession?.title || "");
+  if (nextTitle === null) return;
+  const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: nextTitle }),
+  });
+  const result = await response.json();
+  if (!result.ok) {
+    setBusy(false, result.message || "重命名失败");
+    return;
+  }
+  await loadSessions();
+  renderActiveSessionTitle();
 });
 
 elements.messageInput.addEventListener("keydown", (event) => {
@@ -89,6 +123,123 @@ async function getJson(url) {
     throw new Error(`HTTP ${response.status}`);
   }
   return response.json();
+}
+
+async function initializeApp() {
+  await loadSessions();
+  const savedSessionId = window.localStorage.getItem("active_session_id");
+  const savedSession = state.sessions.find((session) => session.session_id === savedSessionId);
+  if (savedSession) {
+    await activateSession(savedSession.session_id);
+    return;
+  }
+  if (state.sessions.length > 0) {
+    await activateSession(state.sessions[0].session_id);
+    return;
+  }
+  const session = await createSession();
+  await activateSession(session.session_id);
+}
+
+async function createSession() {
+  const response = await fetch("/api/sessions", { method: "POST" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const result = await response.json();
+  if (!result.ok) {
+    throw new Error(result.message || "创建会话失败");
+  }
+  await loadSessions();
+  return result.session;
+}
+
+async function loadSessions() {
+  const result = await getJson("/api/sessions");
+  if (!result.ok) {
+    elements.sessionStatus.textContent = result.message || "读取失败";
+    renderSessions([]);
+    return;
+  }
+  state.sessions = result.sessions || [];
+  renderSessions(state.sessions);
+}
+
+async function activateSession(sessionId) {
+  state.activeSessionId = sessionId;
+  window.localStorage.setItem("active_session_id", sessionId);
+  renderSessions(state.sessions);
+  renderActiveSessionTitle();
+  await loadSessionMessages(sessionId);
+}
+
+async function loadSessionMessages(sessionId) {
+  const result = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+  if (!result.ok) {
+    resetMessages(result.message || "读取会话历史失败。");
+    return;
+  }
+  renderHistoryMessages(result.messages || []);
+}
+
+function renderSessions(sessions) {
+  elements.sessionStatus.textContent = sessions.length ? `${sessions.length} 个会话` : "暂无会话";
+  elements.sessionsList.replaceChildren();
+  if (!sessions.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state session-empty";
+    empty.textContent = "还没有会话。";
+    elements.sessionsList.append(empty);
+    return;
+  }
+  for (const session of sessions) {
+    const button = document.createElement("button");
+    button.className = "session-row";
+    button.type = "button";
+    button.dataset.sessionId = session.session_id;
+    button.classList.toggle("is-active", session.session_id === state.activeSessionId);
+    button.addEventListener("click", () => {
+      if (!state.busy) {
+        activateSession(session.session_id).catch((error) => setBusy(false, String(error)));
+      }
+    });
+
+    const title = document.createElement("strong");
+    title.textContent = session.title || "新会话";
+
+    const meta = document.createElement("span");
+    meta.textContent = session.last_user_message || session.updated_at || session.session_id;
+
+    button.append(title, meta);
+    elements.sessionsList.append(button);
+  }
+}
+
+function renderActiveSessionTitle() {
+  const activeSession = state.sessions.find((session) => session.session_id === state.activeSessionId);
+  elements.activeSessionTitle.textContent = activeSession?.title || "Personal Knowledge Agent";
+}
+
+function resetMessages(message) {
+  elements.messages.replaceChildren();
+  const greeting = appendMessage("agent", "Agent", message);
+  greeting.classList.add("intro-message");
+}
+
+function renderHistoryMessages(messages) {
+  elements.messages.replaceChildren();
+  if (!messages.length) {
+    resetMessages("你好。你可以录入一条 Q&A，也可以提问，我会基于本地知识库回答。");
+    return;
+  }
+  for (const message of messages) {
+    if (message.role === "user") {
+      appendMessage("user", "你", message.content || "");
+      continue;
+    }
+    const node = appendMessage("agent", "Agent", "");
+    renderMarkdown(node.querySelector(".message-body"), message.content || "");
+  }
 }
 
 function appendMessage(kind, role, body) {
@@ -142,7 +293,7 @@ async function streamChat(message, agentMessage) {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ session_id: state.activeSessionId, message }),
   });
   if (!response.ok || !response.body) {
     throw new Error(`HTTP ${response.status}`);
@@ -587,6 +738,10 @@ function addDetail(list, label, value) {
   description.textContent = value || "";
   list.append(term, description);
 }
+
+initializeApp().catch((error) => {
+  resetMessages(String(error));
+});
 
 loadRecentCards().catch((error) => {
   renderCards([], String(error));

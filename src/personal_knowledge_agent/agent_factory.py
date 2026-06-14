@@ -32,6 +32,7 @@ def create_agent_components(
     config: AgentConfig,
     event_sink: Callable[[AgentEvent], None] | None = None,
     approval_callback: Callable[[ApprovalRequest], bool] | None = None,
+    session_id: str = "default",
 ) -> AgentComponents:
     store = SQLiteStore(config.knowledge_db_path)
     workspace_root = Path.cwd()
@@ -39,8 +40,8 @@ def create_agent_components(
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
     )
-    transcript = SessionTranscript(workspace_root)
-    metadata_store = SessionMetadataStore(workspace_root, model=config.deepseek_model)
+    transcript = SessionTranscript(workspace_root, session_id=session_id)
+    metadata_store = SessionMetadataStore(workspace_root, session_id=session_id, model=config.deepseek_model)
     restore_result = SessionRestore(
         transcript=transcript,
         metadata_store=metadata_store,
@@ -85,9 +86,11 @@ def create_agent(
     config: AgentConfig,
     event_sink: Callable[[AgentEvent], None] | None = None,
     approval_callback: Callable[[ApprovalRequest], bool] | None = None,
+    session_id: str = "default",
 ) -> AgentLoop:
     return create_agent_components(
         config,
         event_sink=event_sink,
         approval_callback=approval_callback,
+        session_id=session_id,
     ).agent

@@ -4,18 +4,21 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .metadata import utc_now
+from .metadata import utc_now, validate_session_id
+
+FIRST_EVENT_ID_INCREMENT = 1
+UNKNOWN_EVENT_ID = 0
 
 
 class SessionTranscript:
     def __init__(self, root: str | Path, *, session_id: str = "default"):
         self.root = Path(root)
-        self.session_id = session_id
-        self.session_dir = self.root / ".sessions" / session_id
+        self.session_id = validate_session_id(session_id)
+        self.session_dir = self.root / ".sessions" / self.session_id
         self.path = self.session_dir / "transcript.jsonl"
 
     def append_message(self, message: dict[str, Any]) -> int:
-        event_id = self.event_count() + 1
+        event_id = self.event_count() + FIRST_EVENT_ID_INCREMENT
         self.session_dir.mkdir(parents=True, exist_ok=True)
         event = {
             "event_id": event_id,
@@ -47,3 +50,25 @@ class SessionTranscript:
 
     def event_count(self) -> int:
         return len(self.load_events())
+
+    def load_display_messages(self) -> list[dict[str, Any]]:
+        messages: list[dict[str, Any]] = []
+        for event in self.load_events():
+            message = event.get("message")
+            if event.get("type") != "message" or not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            content = message.get("content")
+            if role not in {"user", "assistant"} or not isinstance(content, str):
+                continue
+            if role == "assistant" and (message.get("tool_calls") or message.get("tool_call_id")):
+                continue
+            messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "created_at": event.get("created_at", ""),
+                    "event_id": event.get("event_id", UNKNOWN_EVENT_ID),
+                }
+            )
+        return messages

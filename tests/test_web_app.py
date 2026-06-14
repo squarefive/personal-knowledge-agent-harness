@@ -128,7 +128,7 @@ def test_chat_route_is_removed():
 def test_web_runtime_uses_default_denial_approval_callback(tmp_path, monkeypatch):
     captured = {}
 
-    def fake_create_agent_components(config, event_sink=None, approval_callback=None):
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
         captured["approval_callback"] = approval_callback
         return type("Components", (), {"agent": FakeAgent(), "tools": FakeTools()})()
 
@@ -182,7 +182,7 @@ def test_chat_stream_does_not_cache_answer_delta(tmp_path, monkeypatch):
             )
             return "你好"
 
-    def fake_create_agent_components(config, event_sink=None, approval_callback=None):
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
         return type("Components", (), {"agent": EventAgent(event_sink), "tools": FakeTools()})()
 
     import personal_knowledge_agent.web.app as app_module
@@ -273,3 +273,68 @@ def test_read_card_preserves_tool_error():
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert response.json()["error_code"] == "not_found"
+
+
+def test_create_and_list_sessions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = make_client()
+
+    created = client.post("/api/sessions")
+    listed = client.get("/api/sessions")
+
+    assert created.status_code == 200
+    assert created.json()["ok"] is True
+    assert created.json()["session"]["title"] == "新会话"
+    assert listed.json()["sessions"][0]["session_id"] == created.json()["session"]["session_id"]
+
+
+def test_rename_session(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = make_client()
+    session_id = client.post("/api/sessions").json()["session"]["session_id"]
+
+    response = client.patch(f"/api/sessions/{session_id}", json={"title": "  新标题  "})
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["session"]["title"] == "新标题"
+    assert response.json()["session"]["title_source"] == "user"
+
+
+def test_read_session_messages_returns_display_messages(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    client = make_client()
+    session_id = client.post("/api/sessions").json()["session"]["session_id"]
+
+    from personal_knowledge_agent.session_memory import SessionTranscript
+
+    transcript = SessionTranscript(tmp_path, session_id=session_id)
+    transcript.append_message({"role": "user", "content": "你好"})
+    transcript.append_message({"role": "assistant", "content": "你好。"})
+
+    response = client.get(f"/api/sessions/{session_id}/messages")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert [message["role"] for message in response.json()["messages"]] == ["user", "assistant"]
+
+
+def test_chat_stream_accepts_session_id():
+    agent = FakeAgent()
+    client = make_client(agent=agent)
+
+    response = client.post("/api/chat/stream", json={"session_id": "chat_1", "message": "你好"})
+
+    assert response.status_code == 200
+    assert read_sse_events(response)[-1]["answer"] == "reply: 你好"
+    assert agent.inputs == ["你好"]
+
+
+def test_chat_stream_defaults_to_default_session():
+    agent = FakeAgent()
+    client = make_client(agent=agent)
+
+    response = client.post("/api/chat/stream", json={"message": "你好"})
+
+    assert response.status_code == 200
+    assert read_sse_events(response)[-1]["answer"] == "reply: 你好"

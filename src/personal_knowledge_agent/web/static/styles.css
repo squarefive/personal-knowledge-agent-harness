@@ -46,7 +46,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 420px);
+  grid-template-columns: 260px minmax(0, 1fr) minmax(340px, 420px);
   gap: 12px;
   height: 100vh;
   height: 100dvh;
@@ -55,6 +55,7 @@ button {
   padding: 12px;
 }
 
+.sessions-pane,
 .chat-pane,
 .cards-pane {
   min-width: 0;
@@ -67,11 +68,17 @@ button {
   box-shadow: var(--shadow);
 }
 
+.sessions-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .chat-pane {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.sessions-header,
 .pane-header,
 .cards-header {
   display: flex;
@@ -82,6 +89,13 @@ button {
   padding: 14px 18px;
   border-bottom: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.88);
+}
+
+.pane-header > div,
+.sessions-header > div,
+.cards-header > div {
+  min-width: 0;
+  flex: 1;
 }
 
 h1,
@@ -109,11 +123,64 @@ h3 {
 }
 
 .pane-header p,
+.sessions-header p,
 .cards-header p,
 .section-title span {
   margin-top: 4px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.sessions-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+}
+
+.session-row {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  border-radius: 8px;
+}
+
+.session-row:hover,
+.session-row:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.session-row.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.session-row strong,
+.session-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-row strong {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.session-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.session-empty {
+  padding: 8px;
 }
 
 #statusText {
@@ -610,6 +677,7 @@ h3 {
     min-height: auto;
   }
 
+  .sessions-pane,
   .chat-pane {
     min-height: 70vh;
     min-height: 70dvh;
@@ -629,6 +697,7 @@ h3 {
     padding: 10px;
   }
 
+  .sessions-header,
   .pane-header,
   .cards-header {
     min-height: 68px;
