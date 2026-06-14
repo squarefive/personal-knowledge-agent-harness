@@ -81,11 +81,11 @@ last_updated: "2026-06-14"
 
 | 模块 | 状态 | 当前实现边界 |
 |---|---|---|
-| Q&A 知识管理 | 部分完成 | 已实现保存 Q&A 卡片、读取卡片、LIKE 检索和最近卡片列表；尚未实现标题、分类、标签、编辑、删除、导入和导出。 |
+| Q&A 知识管理 | 部分完成 | 已实现保存 Q&A 卡片、读取卡片、LIKE 检索、hybrid 检索、最近卡片列表、更新、删除和 category；尚未实现标题、标签、导入和导出。 |
 | Markdown Wiki 管理 | 未完成 | 当前 Agent 明确不包含 Wiki、文件监听和自动索引；不得声称支持 Wiki 绑定、Markdown chunk、hash 或增量同步。 |
 | 统一知识检索 | 部分完成 | 已实现 `search_qa_cards` SQLite LIKE 检索和 `hybrid_search_qa_cards` 混合检索；尚未实现过滤器、检索调试或统一 `search_knowledge`。 |
-| 来源追踪 | 部分完成 | Q&A 来源可追溯到 card_id、question、source_type 和 created_at；尚未支持 Markdown chunk、代码经验、手动笔记等来源类型，也没有程序级最终回答来源校验。 |
-| 分类与标签体系 | 未完成 | 当前只保存 keywords，不存在分类/标签模型、列表、重命名、合并或相似标签建议。 |
+| 来源追踪 | 部分完成 | Q&A 来源可追溯到 card_id、question、source_type 和 created_at；程序会从本轮真实工具结果重写来源区块并清理无证据来源声明；尚未支持 Markdown chunk、代码经验、手动笔记等来源类型。 |
+| 分类与标签体系 | 部分完成 | 已支持单一 category 的生成、保存、更新和过滤；当前没有 tags、标签列表、分类列表、标签重命名、标签合并或相似标签建议。 |
 | 知识去重与合并 | 未完成 | 当前明确不做去重合并；没有重复检测、相似知识检测、合并建议、差异展示、用户确认合并或原始来源保留流程。 |
 | 代码经验管理 | 未完成 | 当前没有报错记录、解决方案、代码片段、项目复盘、错误信息检索或面试复盘素材生成能力。 |
 | 复习系统 | 未完成 | 当前没有复习卡、今日待复习、复习结果、间隔重复、按标签/分类复习或自动小测题。 |
@@ -105,7 +105,7 @@ last_updated: "2026-06-14"
 | `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
 | `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
 | `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 做语义召回；通过 `is_vectorized` 标记历史卡片是否已写入语义索引，并通过 `hybrid_search_qa_cards` 合并排序 | 已完成 |
-| `v0.5` | 分类 | `qa_cards` 增加必填 category 字段；category 由模型按语义主归属生成，用户可通过 update 工具手动修改；本阶段不新增 tags，keywords 继续承担检索词职责 | 规划中，未实现 |
+| `v0.5` | 分类 | `qa_cards` 增加必填 category 字段；category 由模型按语义主归属生成，用户可通过 update 工具手动修改；本阶段不新增 tags，keywords 继续承担检索词职责 | 已完成 |
 | `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并后的新卡片内容由模型生成；`merge_qa_cards` 必须经过 PreToolUse permission gate，确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须经过 PreToolUse permission gate；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
 
@@ -301,7 +301,8 @@ last_updated: "2026-06-14"
   - `.sessions/<session_id>/metadata.json` 是 session 管理索引，不参与 Q&A 回答。
   - `.sessions/<session_id>/artifacts/` 保存 compact 后可回读的大输出，不是长期事实来源。
   - DeepSeek 是第一版 LLM 服务。
-  - 第一版不引入向量库、外部知识库或后台任务。
+  - Qdrant local mode 仅作为 Q&A 语义索引，不是事实源。
+  - 第一版不引入外部知识库或后台任务。
 
 - **Logging 职责**:
   - Async JSONL Logger 是 Agent run 过程的唯一结构化开发日志。
@@ -403,8 +404,12 @@ last_updated: "2026-06-14"
 |---|---|---|---|---|
 | `save_qa_card` | 保存 Q&A 卡片 | 用户明确提供 Q&A 并要求记录时 | 是 | 否 |
 | `search_qa_cards` | 检索相关 Q&A 卡片 | 用户提出问题时 | 否 | 否 |
+| `hybrid_search_qa_cards` | 混合检索相关 Q&A 卡片 | 用户提出本地知识库问题时优先调用 | 否 | 否 |
 | `read_qa_card` | 读取完整 Q&A 卡片 | 需要核对完整来源时 | 否 | 否 |
+| `update_qa_card` | 更新 Q&A 当前卡片 | 用户明确要求修改已有卡片时 | 是 | 是 |
+| `delete_qa_card` | 物理删除 Q&A 卡片 | 用户明确要求删除已有卡片时 | 是 | 是 |
 | `list_recent_cards` | 列出最近保存卡片 | 用户要求查看最近记录或保存后确认时 | 否 | 否 |
+| `rebuild_qa_semantic_index` | 重建 Q&A 语义索引 | 本地维护历史卡片向量化状态时 | 是 | 否 |
 | `list_memory_index` | 列出 Agent memory 索引 | turn-start 或模型需要了解可用记忆时 | 否 | 否 |
 | `read_memory` | 读取指定 Agent memory 全文 | 当前请求需要某条长期记忆时 | 否 | 否 |
 
@@ -412,7 +417,7 @@ last_updated: "2026-06-14"
 
 #### `save_qa_card`
 
-- **职责**:  
+- **职责**:
   保存一条用户提供的 Q&A 卡片。模型负责生成 summary 和 keywords，工具负责写入 SQLite。
 
 - **输入**:
@@ -455,15 +460,15 @@ last_updated: "2026-06-14"
   - `error_code`
   - `message`
 
-- **副作用**:  
+- **副作用**:
   写入 SQLite `qa_cards` 表。
 
-- **失败处理**:  
+- **失败处理**:
   输入缺少必填字段、字段为空、category 非法或数据库写入失败时，返回 `ok: false`、`error_code` 和 `message`。工具失败时 Agent 不得声称保存成功。
 
 #### `search_qa_cards`
 
-- **职责**:  
+- **职责**:
   根据用户问题检索本地 Q&A 卡片，返回候选结果供 Agent 判断依据是否足够。
 
 - **输入**:
@@ -514,15 +519,91 @@ last_updated: "2026-06-14"
   - `error_code`
   - `message`
 
-- **副作用**:  
+- **副作用**:
   无。
 
-- **失败处理**:  
+- **失败处理**:
   输入为空时返回结构化错误。没有检索结果时返回 `ok: true` 和空 `cards`，不得生成虚假结果。
+
+#### `hybrid_search_qa_cards`
+
+- **职责**:
+  默认问答检索工具。结合 SQLite LIKE 和 Qdrant 语义召回检索本地 Q&A 知识卡片；语义索引不可用或失败时降级为 SQLite LIKE。
+
+- **输入**:
+
+```json
+{
+  "query": "用户问题或检索词，非空字符串",
+  "limit": 5,
+  "category": "可选；用户明确限定分类时传入"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": true,
+  "cards": [
+    {
+      "rank": 1,
+      "card_id": "卡片 ID",
+      "question": "原始问题",
+      "summary": "摘要",
+      "answer_snippet": "答案片段",
+      "score": 0.82,
+      "final_score": 0.82,
+      "match_level": "strong / medium / weak",
+      "matched_by": ["keyword", "semantic"],
+      "keyword_score": 3,
+      "keyword_score_norm": 1.0,
+      "semantic_score": 0.7,
+      "source_type": "manual_qa",
+      "created_at": "ISO 8601 时间",
+      "category": "语义主归属分类"
+    }
+  ],
+  "warning": "可选；降级或弱相关候选提示",
+  "message": "可选；无足够相关候选提示"
+}
+```
+
+- **可展示输入字段**:
+  - `query`
+  - `limit`
+  - `category`
+
+- **可展示输出字段**:
+  - `ok`
+  - `cards.rank`
+  - `cards.card_id`
+  - `cards.question`
+  - `cards.summary`
+  - `cards.answer_snippet`
+  - `cards.score`
+  - `cards.final_score`
+  - `cards.match_level`
+  - `cards.matched_by`
+  - `cards.keyword_score`
+  - `cards.keyword_score_norm`
+  - `cards.semantic_score`
+  - `cards.source_type`
+  - `cards.created_at`
+  - `cards.category`
+  - `warning`
+  - `message`
+  - `error_code`
+
+- **副作用**:
+  检索本身无副作用。
+
+- **失败处理**:
+  输入为空时返回结构化错误。语义索引未启用或失败时返回关键词检索结果并附带 warning。没有足够相关候选时返回 `ok: true` 和空 `cards`，不得生成虚假结果。
 
 #### `read_qa_card`
 
-- **职责**:  
+- **职责**:
   根据 card_id 读取完整 Q&A 卡片，用于核对来源和组织回答。
 
 - **输入**:
@@ -544,6 +625,7 @@ last_updated: "2026-06-14"
     "answer": "原始答案",
     "summary": "摘要",
     "keywords": ["关键词"],
+    "category": "语义主归属分类",
     "source_type": "manual_qa",
     "created_at": "ISO 8601 时间",
     "updated_at": "ISO 8601 时间"
@@ -561,28 +643,132 @@ last_updated: "2026-06-14"
   - `card.answer`
   - `card.summary`
   - `card.keywords`
+  - `card.category`
   - `card.source_type`
   - `card.created_at`
   - `card.updated_at`
   - `error_code`
   - `message`
 
-- **副作用**:  
+- **副作用**:
   无。
 
-- **失败处理**:  
+- **失败处理**:
   card_id 为空时返回结构化错误。找不到卡片时返回 `ok: false`、`error_code: "not_found"` 和 `message`，Agent 不得引用该卡片作为来源。
+
+#### `update_qa_card`
+
+- **职责**:
+  更新一条已有 Q&A 卡片的当前内容。更新不保存历史版本；执行前必须经过 harness 权限确认。
+
+- **输入**:
+
+```json
+{
+  "card_id": "卡片 ID，非空字符串",
+  "question": "可选；新的原始问题",
+  "answer": "可选；新的原始答案",
+  "summary": "可选；新的摘要",
+  "keywords": ["可选；新的关键词列表"],
+  "category": "可选；新的语义主归属分类"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": true,
+  "card": {
+    "card_id": "卡片 ID",
+    "question": "原始问题",
+    "answer": "原始答案",
+    "summary": "摘要",
+    "keywords": ["关键词"],
+    "category": "语义主归属分类",
+    "source_type": "manual_qa",
+    "created_at": "ISO 8601 时间",
+    "updated_at": "ISO 8601 时间"
+  }
+}
+```
+
+- **可展示输入字段**:
+  - `card_id`
+  - `question`
+  - `answer`
+  - `summary`
+  - `keywords`
+  - `category`
+
+- **可展示输出字段**:
+  - `ok`
+  - `card.card_id`
+  - `card.question`
+  - `card.answer`
+  - `card.summary`
+  - `card.keywords`
+  - `card.category`
+  - `card.source_type`
+  - `card.created_at`
+  - `card.updated_at`
+  - `error_code`
+  - `message`
+
+- **副作用**:
+  更新 SQLite `qa_cards` 表；内容变更后将 `is_vectorized` 重置为 `0`，并尽力同步 Qdrant 语义索引。
+
+- **失败处理**:
+  card_id 为空、没有提供任何更新字段、字段非法、category 非法或权限拒绝时返回结构化错误。找不到卡片时返回 `ok: false`、`error_code: "not_found"`。
+
+#### `delete_qa_card`
+
+- **职责**:
+  物理删除一条 Q&A 卡片。删除不使用软删除；执行前必须经过 harness 权限确认。
+
+- **输入**:
+
+```json
+{
+  "card_id": "卡片 ID，非空字符串"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": true,
+  "deleted_card_id": "卡片 ID"
+}
+```
+
+- **可展示输入字段**:
+  - `card_id`
+
+- **可展示输出字段**:
+  - `ok`
+  - `deleted_card_id`
+  - `error_code`
+  - `message`
+
+- **副作用**:
+  从 SQLite `qa_cards` 表物理删除卡片，并尽力删除 Qdrant 语义索引中的对应向量。
+
+- **失败处理**:
+  card_id 为空或权限拒绝时返回结构化错误。找不到卡片时返回 `ok: false`、`error_code: "not_found"`。
 
 #### `list_recent_cards`
 
-- **职责**:  
+- **职责**:
   列出最近保存的 Q&A 卡片，方便用户确认本地知识库内容。
 
 - **输入**:
 
 ```json
 {
-  "limit": 10
+  "limit": 10,
+  "category": "可选；用户明确限定分类时传入"
 }
 ```
 
@@ -597,6 +783,7 @@ last_updated: "2026-06-14"
       "question": "原始问题",
       "summary": "摘要",
       "keywords": ["关键词"],
+      "category": "语义主归属分类",
       "source_type": "manual_qa",
       "created_at": "ISO 8601 时间"
     }
@@ -606,6 +793,7 @@ last_updated: "2026-06-14"
 
 - **可展示输入字段**:
   - `limit`
+  - `category`
 
 - **可展示输出字段**:
   - `ok`
@@ -613,16 +801,63 @@ last_updated: "2026-06-14"
   - `cards.question`
   - `cards.summary`
   - `cards.keywords`
+  - `cards.category`
   - `cards.source_type`
   - `cards.created_at`
   - `error_code`
   - `message`
 
-- **副作用**:  
+- **副作用**:
   无。
 
-- **失败处理**:  
+- **失败处理**:
   limit 非法时使用安全默认值。数据库读取失败时返回 `ok: false`、`error_code` 和 `message`。
+
+#### `rebuild_qa_semantic_index`
+
+- **职责**:
+  把尚未向量化的历史 Q&A 卡片写入 Qdrant 本地语义索引。该工具是本地维护入口，不改变 SQLite 事实内容。
+
+- **输入**:
+
+```json
+{
+  "limit": "可选；本次最多处理的未向量化卡片数"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": true,
+  "status": "ok / partial_failed / disabled",
+  "message": "可选；语义索引未启用时的说明",
+  "total": 10,
+  "indexed": 9,
+  "failed": 1,
+  "failed_card_ids": ["qa_..."]
+}
+```
+
+- **可展示输入字段**:
+  - `limit`
+
+- **可展示输出字段**:
+  - `ok`
+  - `status`
+  - `message`
+  - `total`
+  - `indexed`
+  - `failed`
+  - `failed_card_ids`
+  - `error_code`
+
+- **副作用**:
+  写入 Qdrant 本地语义索引；单张卡片写入成功后把 SQLite `qa_cards.is_vectorized` 标记为 `1`。
+
+- **失败处理**:
+  语义索引未启用时返回 `ok: true`、`status: "disabled"` 和说明。单张卡片失败时记录到 `failed_card_ids` 并继续处理后续卡片。
 
 #### `list_memory_index`
 
@@ -730,9 +965,9 @@ last_updated: "2026-06-14"
 - **Memory candidate**:
   当前 memory candidate 不是 LLM 可调用工具，也没有写入 `.memory/*.md`、更新 `.memory/MEMORY.md` 或 pending confirmation 队列。AgentLoop 只在 turn-end 通过 `MemoryExtractor` 生成候选，并发出 `memory_candidates_generated` 事件；候选不等于已写入长期 memory。
 
-### 3.4 v0.2-v0.7 规划工具边界
+### 3.4 v0.2-v0.7 工具演进边界
 
-以下工具仅为后续版本设计边界，当前代码尚未实现。实现前必须为对应版本单独提交更细的工具契约和测试。
+以下表格用于记录 v0.2-v0.7 的工具演进边界。其中 v0.2-v0.5 已实现的工具必须继续遵守上文当前工具契约；v0.6-v0.7 仍是后续规划，实现前必须为对应版本单独提交更细的工具契约和测试。
 
 | 版本 | 工具 / 机制 | 职责 | 是否有副作用 | 是否需要确认 |
 |---|---|---|---|---|
@@ -837,7 +1072,7 @@ v0.2 实现必须保持低侵入：
 1. 用户提供明确的 Q&A，并表达记录意图。
 2. Agent 判断这是知识录入。
 3. Agent 保留原始 question 和 answer。
-4. Agent 生成 summary 和 keywords。
+4. Agent 生成 summary、keywords 和 category。
 5. Agent 调用 `save_qa_card`。
 6. 工具写入 SQLite。
 7. Agent 向用户返回保存结果、card_id 和来源信息。
@@ -854,7 +1089,7 @@ v0.2 实现必须保持低侵入：
 ### 5.2 回答问题
 
 1. 用户提出问题。
-2. Agent 调用 `search_qa_cards` 检索 SQLite。
+2. Agent 优先调用 `hybrid_search_qa_cards` 检索本地 Q&A 卡片；必要时使用 `search_qa_cards` 作为关键词检索和降级兜底。
 3. Agent 判断候选卡片是否相关且足够。
 4. 必要时调用 `read_qa_card` 读取完整卡片。
 5. Agent 基于检索结果回答。
@@ -874,7 +1109,7 @@ v0.2 实现必须保持低侵入：
 1. 用户要求查看最近记录，或保存后需要确认。
 2. Agent 调用 `list_recent_cards`。
 3. 工具按创建时间倒序返回卡片摘要。
-4. Agent 展示最近卡片的 card_id、原始问题、summary、keywords 和 created_at。
+4. Agent 展示最近卡片的 card_id、原始问题、summary、keywords、category 和 created_at。
 
 - **成功条件**:  
   返回最近卡片列表，可以为空。
@@ -1214,9 +1449,11 @@ category 搜索规则：
 | `answer` | `TEXT` | 是 | 用户提供的原始答案 |
 | `summary` | `TEXT` | 是 | 模型整理出的简明摘要 |
 | `keywords` | `TEXT` | 是 | JSON 字符串，保存关键词数组 |
+| `category` | `TEXT` | 是 | 模型生成或用户手动更新的单个语义主归属分类 |
 | `source_type` | `TEXT` | 是 | 第一版固定为 `manual_qa` |
 | `created_at` | `TEXT` | 是 | 系统生成的 ISO 8601 创建时间 |
 | `updated_at` | `TEXT` | 是 | 系统生成的 ISO 8601 更新时间 |
+| `is_vectorized` | `INTEGER` | 是 | `0` 表示尚未向量化或内容更新后需重新向量化；`1` 表示已成功写入 Qdrant |
 
 建表 SQL：
 
@@ -1227,9 +1464,14 @@ CREATE TABLE IF NOT EXISTS qa_cards (
   answer TEXT NOT NULL,
   summary TEXT NOT NULL,
   keywords TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (
+    length(trim(category)) BETWEEN 1 AND 24
+    AND category NOT IN ('其他', '未分类', '杂项', '默认分类', '未知', '待分类')
+  ),
   source_type TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  is_vectorized INTEGER NOT NULL DEFAULT 0
 );
 ```
 
@@ -1238,9 +1480,11 @@ CREATE TABLE IF NOT EXISTS qa_cards (
 1. `id` 必须由工具或 Store 生成，模型不得自称某个未落库 ID 已存在。
 2. `question`、`answer`、`summary` 不得为空。
 3. `keywords` 在工具输入中是字符串数组，入库时序列化为 JSON 字符串。
-4. `source_type` 第一版固定为 `manual_qa`。
-5. `created_at` 和 `updated_at` 必须由系统生成。
-6. DeepSeek API key 不得写入数据库、代码、文档或日志。
+4. `category` 必须是 1-24 个字符的具体稳定短名词短语，不得为空，不得使用兜底分类：`其他`、`未分类`、`杂项`、`默认分类`、`未知`、`待分类`。
+5. `source_type` 第一版固定为 `manual_qa`。
+6. `created_at` 和 `updated_at` 必须由系统生成。
+7. 新建卡片默认 `is_vectorized = 0`；更新卡片内容时必须重置为 `0`；成功写入 Qdrant 后才能标记为 `1`。
+8. DeepSeek API key 不得写入数据库、代码、文档或日志。
 
 ### 6.3 `.memory/MEMORY.md`
 
@@ -1672,7 +1916,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 - **验收清单**:
   1. 符合本文档定义的能力边界。
   2. SQLite `qa_cards` 是 Q&A 知识库唯一长期记忆来源。
-  3. 四个工具契约稳定可测。
+  3. 当前 LLM 可调用工具契约稳定可测。
   4. DeepSeek 只出现在薄 LLM Client 中。
   5. Q&A 知识库和 Agent memory 保持分离。
   6. `.memory/*.md` 是用户可见的 Agent 长期工作记忆来源。
@@ -1681,7 +1925,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   9. compact 只缩减上下文窗口，不替代长期 memory。
   10. Web Runtime 只作为本地 Chat + Cards 入口，不改变 Agent 的工具和记忆边界。
   11. Web 聊天只暴露流式接口，流程展示和回答增量不绕过 AgentLoop。
-  12. 第一版不包含 Wiki、文件监听、周报、多 Agent、向量库和后台任务。
+  12. 第一版不包含 Wiki、文件监听、周报、多 Agent、外部知识库和后台任务；Qdrant 仅作为 Q&A 语义索引，不是事实源。
 
 ---
 
