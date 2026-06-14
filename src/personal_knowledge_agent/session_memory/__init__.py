@@ -1,5 +1,5 @@
 from .compact_tool_result import ContextCompactor
-from .metadata import SessionMetadataStore, utc_now
+from .metadata import SessionMetadataStore, utc_now, validate_session_id
 from .restore_session import SessionRestore
 from .summarize_session import SessionSummarizer
 from .transcript import SessionTranscript
@@ -10,5 +10,6 @@ __all__ = [
     "SessionRestore",
     "SessionSummarizer",
     "SessionTranscript",
+    "validate_session_id",
     "utc_now",
 ]

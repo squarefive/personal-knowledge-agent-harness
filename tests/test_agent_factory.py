@@ -47,3 +47,17 @@ def test_create_agent_accepts_approval_callback(tmp_path, monkeypatch):
     agent = create_agent(config, approval_callback=approve)
 
     assert agent.tool_call_step.approval_callback is approve
+
+
+def test_create_agent_components_accepts_session_id(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+
+    create_agent_components(config, session_id="chat_1")
+
+    assert (tmp_path / ".sessions" / "chat_1" / "metadata.json").exists()
+    assert not (tmp_path / ".sessions" / "default" / "metadata.json").exists()

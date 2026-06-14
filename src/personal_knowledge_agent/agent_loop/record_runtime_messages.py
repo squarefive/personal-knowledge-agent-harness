@@ -25,9 +25,9 @@ class RuntimeMessageRecorder:
                 self.transcript.append_message(message)
             except Exception:
                 pass
-        self._update_metadata_counts()
+        self._update_metadata_counts(message)
 
-    def _update_metadata_counts(self) -> None:
+    def _update_metadata_counts(self, message: dict[str, Any]) -> None:
         if self.metadata_store is None:
             return
         try:
@@ -36,6 +36,13 @@ class RuntimeMessageRecorder:
                 message_count = len(self.transcript.load_messages())
             else:
                 message_count = len(self.messages)
+            if message.get("role") == "user" and isinstance(message.get("content"), str):
+                self.metadata_store.update_after_user_message(
+                    message["content"],
+                    event_count=event_count,
+                    message_count=message_count,
+                )
+                return
             self.metadata_store.update_counts(event_count=event_count, message_count=message_count)
         except Exception:
             pass

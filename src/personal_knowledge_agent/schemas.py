@@ -65,6 +65,9 @@ class SessionMetadata:
     transcript_path: str
     summary_path: str
     artifacts_dir: str
+    title: str = "新会话"
+    title_source: str = "auto"
+    last_user_message: str | None = None
     event_count: int = 0
     message_count: int = 0
     compacted_until_event_id: int = 0
