@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from personal_knowledge_agent.qa_semantic_index import QASemanticIndex
+from personal_knowledge_agent.qa_data_access import QACardSemanticIndex as QASemanticIndex
 from personal_knowledge_agent.schemas import QACard
 
 

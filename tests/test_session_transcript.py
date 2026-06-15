@@ -1,6 +1,6 @@
 import pytest
 
-from personal_knowledge_agent.session_memory import SessionTranscript
+from personal_knowledge_agent.agent_context.conversation_sessions import ConversationTranscriptRepository as SessionTranscript
 
 
 def test_session_transcript_appends_and_loads_messages(tmp_path):

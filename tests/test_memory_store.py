@@ -1,6 +1,6 @@
 import pytest
 
-from personal_knowledge_agent.agent_memory import MemoryStore
+from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryDocumentRepository as MemoryStore
 from personal_knowledge_agent.schemas import MemoryIndexEntry
 
 

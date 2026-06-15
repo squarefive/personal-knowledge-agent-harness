@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Protocol
 
 from personal_knowledge_agent.config import load_config
-from personal_knowledge_agent.llm_client import DeepSeekClient
-from personal_knowledge_agent.qa_store.sqlite_store import SQLiteStore
+from personal_knowledge_agent.llm_clients import DeepSeekChatClient as DeepSeekClient
+from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
 from personal_knowledge_agent.schemas import LLMResponse, QACard
 
 

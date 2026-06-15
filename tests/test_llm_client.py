@@ -5,7 +5,7 @@ from urllib import error
 import pytest
 
 from personal_knowledge_agent import llm_client
-from personal_knowledge_agent.llm_client import DeepSeekClient
+from personal_knowledge_agent.llm_clients import DeepSeekChatClient as DeepSeekClient
 
 
 class FakeStreamResponse:

@@ -1,4 +1,4 @@
-from personal_knowledge_agent.agent_memory import MemoryExtractor
+from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryCandidateExtractor as MemoryExtractor
 from personal_knowledge_agent.schemas import MemoryIndex, MemoryIndexEntry
 
 

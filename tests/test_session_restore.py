@@ -1,4 +1,4 @@
-from personal_knowledge_agent.session_memory import SessionMetadataStore, SessionRestore, SessionTranscript
+from personal_knowledge_agent.agent_context.conversation_sessions import ConversationSessionMetadataRepository as SessionMetadataStore, ConversationSessionRestorer as SessionRestore, ConversationTranscriptRepository as SessionTranscript
 
 
 class FakeSummarizer:

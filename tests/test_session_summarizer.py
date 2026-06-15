@@ -1,5 +1,5 @@
 from personal_knowledge_agent.schemas import LLMResponse
-from personal_knowledge_agent.session_memory import SessionSummarizer
+from personal_knowledge_agent.agent_context.conversation_sessions import ConversationSessionSummarizer as SessionSummarizer
 
 
 class FakeLLM:

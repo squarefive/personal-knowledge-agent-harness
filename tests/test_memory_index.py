@@ -1,6 +1,6 @@
 import pytest
 
-from personal_knowledge_agent.agent_memory import MemoryIndexStore
+from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore
 
 
 def test_load_memory_index_returns_empty_when_missing(tmp_path):

@@ -1,7 +1,7 @@
 from personal_knowledge_agent.agent_factory import create_agent, create_agent_components
-from personal_knowledge_agent.agent_loop import AgentLoop
+from personal_knowledge_agent.agent_runtime import AgentLoopRunner as AgentLoop
 from personal_knowledge_agent.config import AgentConfig
-from personal_knowledge_agent.tools import KnowledgeTools
+from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
 
 
 def test_create_agent_components_returns_agent_and_tools(tmp_path, monkeypatch):

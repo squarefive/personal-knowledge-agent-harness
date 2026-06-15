@@ -1,9 +1,10 @@
 import pytest
 
-from personal_knowledge_agent.agent_memory import MemoryIndexStore, MemoryStore
-from personal_knowledge_agent.qa_store import SQLiteStore
+from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore, AgentMemoryDocumentRepository as MemoryStore
+from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
 from personal_knowledge_agent.schemas import ToolCall
-from personal_knowledge_agent.tools import KnowledgeTools, ToolDispatcher
+from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
+from personal_knowledge_agent.tool_runtime import ToolDispatcher
 
 
 class FakeSemanticIndex:
