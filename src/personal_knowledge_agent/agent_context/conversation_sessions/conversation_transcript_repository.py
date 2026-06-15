@@ -10,7 +10,7 @@ FIRST_EVENT_ID_INCREMENT = 1
 UNKNOWN_EVENT_ID = 0
 
 
-class SessionTranscript:
+class ConversationTranscriptRepository:
     def __init__(self, root: str | Path, *, session_id: str = "default"):
         self.root = Path(root)
         self.session_id = validate_session_id(session_id)
@@ -72,6 +72,3 @@ class SessionTranscript:
                 }
             )
         return messages
-
-
-ConversationTranscriptRepository = SessionTranscript

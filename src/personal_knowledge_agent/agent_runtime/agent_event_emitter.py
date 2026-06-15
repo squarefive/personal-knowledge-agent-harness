@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..events import AgentEvent
+from .agent_events import AgentEvent
 
 EventSink = Callable[[AgentEvent], None]
 

@@ -3,6 +3,7 @@ from .conversation_session_metadata_repository import (
     utc_now,
     validate_session_id,
 )
+from .conversation_session_models import CompactRecord, SessionMetadata, SessionRestoreResult
 from .conversation_session_restorer import ConversationSessionRestorer
 from .conversation_session_summarizer import ConversationSessionSummarizer
 from .conversation_transcript_repository import ConversationTranscriptRepository
@@ -14,6 +15,9 @@ __all__ = [
     "ConversationSessionSummarizer",
     "ConversationTranscriptRepository",
     "ToolResultCompactor",
+    "CompactRecord",
+    "SessionMetadata",
+    "SessionRestoreResult",
     "utc_now",
     "validate_session_id",
 ]

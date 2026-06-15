@@ -7,12 +7,12 @@ import threading
 from pathlib import Path
 from typing import Final
 
-from .events import AgentEvent
+from ..agent_runtime.agent_events import AgentEvent
 
 _STOP: Final = object()
 
 
-class AsyncJsonlLogger:
+class AgentEventJsonlLogger:
     def __init__(
         self,
         path: str | Path = ".logs/agent.log",

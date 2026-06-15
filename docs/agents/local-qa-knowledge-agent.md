@@ -161,8 +161,9 @@ last_updated: "2026-06-16"
   - `answer_delta` 默认不写入 JSONL 开发日志，避免 token 级事件刷屏；JSONL 日志仍记录 `final_answer_generated` 的完整最终答案。
   - 运行事件只描述可审计过程，不暴露模型完整思考链。
 
-- **Agent Factory 职责**:
-  - `agent_factory.py` 负责创建 Agent loop runner 及其依赖，包括 Q&A 数据访问、Agent tools、ToolDispatcher、DeepSeekChatClient、conversation session、Agent profile memory 和 tool result compactor。
+- **Agent Bootstrap 职责**:
+  - `agent_component_factory.py` 负责创建 Agent loop runner 及其依赖，包括 Q&A 数据访问、Agent tools、ToolDispatcher、DeepSeekChatClient、conversation session、Agent profile memory 和 tool result compactor。
+  - `agent_runtime_config.py` 负责从 `.env` 和环境变量加载 Agent 运行配置。
   - 供 CLI Runtime 和 Web Runtime 复用同一套 Agent 装配逻辑。
   - 不负责 CLI 输入、Web HTTP 请求、HTML 渲染、浏览器打开或进程启动。
 
@@ -249,7 +250,7 @@ last_updated: "2026-06-16"
 - **Web Runtime 职责**:
   - 作为 `pka web` 和 `python -m personal_knowledge_agent.web` 的本地浏览器入口。
   - 启动时加载 `.env` 和环境变量配置。
-  - 通过 `agent_factory.py` 按 `session_id` 创建 Agent loop runner 及其依赖。
+  - 通过 `agent_component_factory.py` 按 `session_id` 创建 Agent loop runner 及其依赖。
   - 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
   - 提供静态 HTML/CSS/JS 页面。
   - 通过流式聊天接口接收用户输入并调用对应 session 的 AgentLoop。
@@ -280,8 +281,9 @@ last_updated: "2026-06-16"
 - **Agent Tools 职责**:
   - 作为 LLM 可调用工具的 adapter，是 Agent 可执行动作的唯一入口。
   - 校验工具输入。
-  - Q&A knowledge tools 调用 Q&A data access 完成保存、检索、读取、更新、删除、最近卡片和语义索引维护。
-  - Agent memory tools 调用 Agent profile memory repository 完成 memory index 和 memory 全文读取。
+  - `QAKnowledgeToolHandlers` 只提供 Q&A 卡片保存、检索、读取、更新、删除、最近列表和语义索引维护工具。
+  - `AgentMemoryToolHandlers` 只提供 Agent profile memory index 和 memory 全文读取工具。
+  - 两组 tool handlers 由 `ToolDispatcher` 独立注册。
   - 不直接拼接最终自然语言回答。
   - 不负责上下文压缩；当前上下文压缩由 Agent runtime 内部的 Tool Result Compactor 自动完成。
   - 将成功、失败和未找到结果统一转换为结构化 tool result。
@@ -362,12 +364,16 @@ last_updated: "2026-06-16"
 | 路径 | 职责 |
 |---|---|
 | `pyproject.toml` | 声明项目依赖和 `pka` CLI script |
+| `src/personal_knowledge_agent/agent_bootstrap/` | Agent 运行配置加载和组件装配 |
+| `src/personal_knowledge_agent/agent_bootstrap/agent_component_factory.py` | 创建 Agent loop runner 及其依赖，供 CLI Runtime 和 Web Runtime 复用 |
+| `src/personal_knowledge_agent/agent_bootstrap/agent_runtime_config.py` | 从 `.env` 和环境变量加载 Agent 运行配置 |
 | `src/personal_knowledge_agent/agent_runtime/` | Agent loop 运行、LLM call、tool call、最终回答、来源证据和事件发射 |
 | `src/personal_knowledge_agent/agent_runtime/agent_loop_runner.py` | Agent loop 核心调用链 |
 | `src/personal_knowledge_agent/agent_runtime/agent_llm_call_runner.py` | 单次 Agent LLM 调用和对应事件 |
 | `src/personal_knowledge_agent/agent_runtime/agent_tool_call_runner.py` | 单次 Agent tool call、耗时、compact 和对应事件 |
 | `src/personal_knowledge_agent/agent_runtime/agent_answer_finalizer.py` | Agent 最终回答收尾和最大轮次停止 |
 | `src/personal_knowledge_agent/agent_runtime/answer_source_evidence.py` | 从本轮真实 tool result 提取和渲染回答来源证据 |
+| `src/personal_knowledge_agent/agent_runtime/agent_events.py` | Agent run 结构化事件契约 |
 | `src/personal_knowledge_agent/agent_runtime/agent_event_emitter.py` | Agent run 事件发射适配 |
 | `src/personal_knowledge_agent/agent_context/` | Agent 每轮上下文来源、conversation session 和 Agent profile memory |
 | `src/personal_knowledge_agent/agent_context/agent_prompt_builder.py` | 构建运行时 system prompt |
@@ -385,22 +391,22 @@ last_updated: "2026-06-16"
 | `src/personal_knowledge_agent/agent_tools/qa_knowledge_tools/qa_knowledge_tool_handlers.py` | Q&A 知识工具输入校验和 tool result 组装 |
 | `src/personal_knowledge_agent/agent_tools/agent_memory_tools/agent_memory_tool_handlers.py` | Agent memory 读取工具输入校验和 tool result 组装 |
 | `src/personal_knowledge_agent/qa_data_access/` | Q&A card 的 SQLite 和 Qdrant 数据访问 |
+| `src/personal_knowledge_agent/qa_data_access/qa_card_models.py` | Q&A card 和检索结果数据契约 |
 | `src/personal_knowledge_agent/qa_data_access/qa_card_repository.py` | Q&A card SQLite 初始化、写入、读取、检索 |
 | `src/personal_knowledge_agent/qa_data_access/qa_card_semantic_index.py` | Q&A card semantic index |
+| `src/personal_knowledge_agent/tool_runtime/tool_models.py` | Tool call 数据契约 |
 | `src/personal_knowledge_agent/tool_runtime/tool_dispatcher.py` | 工具分发和错误包装 |
-| `src/personal_knowledge_agent/events.py` | Agent run 结构化事件契约 |
-| `src/personal_knowledge_agent/agent_factory.py` | 创建 Agent loop runner 及其依赖，供 CLI Runtime 和 Web Runtime 复用 |
+| `src/personal_knowledge_agent/tool_runtime/tool_permission_policy.py` | 工具权限判断、审批请求和拒绝结果 |
 | `src/personal_knowledge_agent/apps/cli/cli_event_renderer.py` | CLI 实时事件渲染 |
-| `src/personal_knowledge_agent/jsonl_logger.py` | 异步 JSONL 开发日志 |
+| `src/personal_knowledge_agent/agent_observability/agent_event_jsonl_logger.py` | 异步 Agent event JSONL 开发日志 |
+| `src/personal_knowledge_agent/llm_clients/llm_models.py` | LLM response 数据契约 |
 | `src/personal_knowledge_agent/llm_clients/deepseek_chat_client.py` | DeepSeek chat 薄客户端 |
-| `src/personal_knowledge_agent/config.py` | 读取 `.env` 和环境变量，返回运行配置 |
 | `src/personal_knowledge_agent/__main__.py` | CLI 薄转发入口，供 `python -m personal_knowledge_agent` 和 `pka` 复用 |
 | `src/personal_knowledge_agent/apps/cli/cli_main.py` | CLI 持续交互入口和 `pka web` 子命令分发 |
 | `src/personal_knowledge_agent/apps/web/` | 本地 Web Runtime、Web API 和静态 HTML 页面 |
 | `src/personal_knowledge_agent/apps/web/web_app.py` | 创建本地 Web app，定义聊天和卡片浏览 API |
 | `src/personal_knowledge_agent/apps/web/web_main.py` | Web Runtime 启动入口 |
 | `src/personal_knowledge_agent/apps/web/static/` | Chat + Cards 的原生 HTML/CSS/JS 页面 |
-| `src/personal_knowledge_agent/schemas.py` | 轻量数据契约 |
 | `.knowledge/knowledge.db` | 本地知识库数据库文件 |
 | `.memory/MEMORY.md` | 用户可见 Agent memory 索引 |
 | `.memory/*.md` | 用户可见 Agent 长期记忆文档 |
@@ -975,10 +981,10 @@ last_updated: "2026-06-16"
 ### 3.3 当前非工具机制
 
 - **上下文压缩**:
-  当前上下文压缩不是 LLM 可调用工具。AgentLoop 在 tool result 超过阈值时，通过 `ContextCompactor.compact_tool_result()` 自动将原始 tool result 写入 `.sessions/<session_id>/artifacts/`，并通过 compact record 回填 tool result message 和 `context_compacted` 事件。
+  当前上下文压缩不是 LLM 可调用工具。`AgentLoopRunner` 在 tool result 超过阈值时，通过 `ToolResultCompactor.compact_tool_result()` 自动将原始 tool result 写入 `.sessions/<session_id>/artifacts/`，并通过 compact record 回填 tool result message 和 `context_compacted` 事件。
 
 - **Memory candidate**:
-  当前 memory candidate 不是 LLM 可调用工具，也没有写入 `.memory/*.md`、更新 `.memory/MEMORY.md` 或 pending confirmation 队列。AgentLoop 只在 turn-end 通过 `MemoryExtractor` 生成候选，并发出 `memory_candidates_generated` 事件；候选不等于已写入长期 memory。
+  当前 memory candidate 不是 LLM 可调用工具，也没有写入 `.memory/*.md`、更新 `.memory/MEMORY.md` 或 pending confirmation 队列。`AgentLoopRunner` 只在 turn-end 通过 `AgentMemoryCandidateExtractor` 生成候选，并发出 `memory_candidates_generated` 事件；候选不等于已写入长期 memory。
 
 ### 3.4 v0.2-v0.7 工具演进边界
 
@@ -1836,36 +1842,37 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 ## 8. 测试要求
 
 - **单元测试**:
-  1. `SQLiteStore.save_card` 能写入并读回 Q&A 卡片。
-  2. `SQLiteStore.search_cards` 能按 question、answer、summary、keywords 的 LIKE 命中返回结果。
-  3. `SQLiteStore.list_recent_cards` 能按 created_at 倒序返回。
-  4. `KnowledgeTools.save_qa_card` 能校验必填字段。
-  5. `KnowledgeTools.read_qa_card` 对不存在 ID 返回结构化 not_found。
-  6. `DeepSeekClient` streaming 请求构造、文本增量回调、tool call 分片聚合和响应解析使用 mock 测试。
-  7. `DeepSeekClient` 能对可重试网络错误和 HTTP 429、500、503 执行有限重试。
-  8. `DeepSeekClient` 对 HTTP 400、401、402、422 不重试。
-  9. `DeepSeekClient` 重试耗尽时返回明确错误且不泄露 API key、headers、完整 payload 或 system prompt。
+  1. `QACardRepository.save_card` 能写入并读回 Q&A 卡片。
+  2. `QACardRepository.search_cards` 能按 question、answer、summary、keywords 的 LIKE 命中返回结果。
+  3. `QACardRepository.list_recent_cards` 能按 created_at 倒序返回。
+  4. `QAKnowledgeToolHandlers.save_qa_card` 能校验必填字段。
+  5. `QAKnowledgeToolHandlers.read_qa_card` 对不存在 ID 返回结构化 not_found。
+  6. `AgentMemoryToolHandlers` 能独立读取 memory index 和 memory 全文。
+  7. `DeepSeekChatClient` streaming 请求构造、文本增量回调、tool call 分片聚合和响应解析使用 mock 测试。
+  8. `DeepSeekChatClient` 能对可重试网络错误和 HTTP 429、500、503 执行有限重试。
+  9. `DeepSeekChatClient` 对 HTTP 400、401、402、422 不重试。
+  9a. `DeepSeekChatClient` 重试耗尽时返回明确错误且不泄露 API key、headers、完整 payload 或 system prompt。
   10. `load_config` 能从 `.env` / 环境变量读取 `DEEPSEEK_API_KEY`、`DEEPSEEK_MODEL` 和 `KNOWLEDGE_DB_PATH`。
   11. 缺少 `DEEPSEEK_API_KEY` 时返回明确错误。
-  12. `MemoryIndex` 能读取 `.memory/MEMORY.md` 索引。
-  13. `MemoryIndex` 对缺少必填列或非法 type 返回结构化错误。
-  14. `MemoryStore` 能读取合法 `.memory/*.md`。
-  15. `MemoryStore` 对 frontmatter 缺失或非法 type 返回结构化错误。
-  16. `SessionTranscript` 能追加和读取 `.sessions/<session_id>/transcript.jsonl`。
-  16a. `SessionTranscript` 拒绝非法 session_id。
-  16b. `SessionTranscript` 能从 transcript 派生 Web 可展示历史消息，并过滤 tool result 与内部 payload。
-  17. `SessionMetadata` 能创建、读取和更新 `.sessions/<session_id>/metadata.json`。
-  17a. `SessionMetadata` 能列出 `.sessions/*/metadata.json`，并按 updated_at 倒序返回。
-  17b. `SessionMetadata` 能重命名 session，并防止自动标题覆盖用户标题。
-  18. `SessionRestore` 能短 transcript 原样恢复 messages。
-  19. `SessionRestore` 能长 transcript 使用 summary + recent messages 恢复。
+  12. `AgentMemoryIndexRepository` 能读取 `.memory/MEMORY.md` 索引。
+  13. `AgentMemoryIndexRepository` 对缺少必填列或非法 type 返回结构化错误。
+  14. `AgentMemoryDocumentRepository` 能读取合法 `.memory/*.md`。
+  15. `AgentMemoryDocumentRepository` 对 frontmatter 缺失或非法 type 返回结构化错误。
+  16. `ConversationTranscriptRepository` 能追加和读取 `.sessions/<session_id>/transcript.jsonl`。
+  16a. `ConversationTranscriptRepository` 拒绝非法 session_id。
+  16b. `ConversationTranscriptRepository` 能从 transcript 派生 Web 可展示历史消息，并过滤 tool result 与内部 payload。
+  17. `ConversationSessionMetadataRepository` 能创建、读取和更新 `.sessions/<session_id>/metadata.json`。
+  17a. `ConversationSessionMetadataRepository` 能列出 `.sessions/*/metadata.json`，并按 updated_at 倒序返回。
+  17b. `ConversationSessionMetadataRepository` 能重命名 session，并防止自动标题覆盖用户标题。
+  18. `ConversationSessionRestorer` 能短 transcript 原样恢复 messages。
+  19. `ConversationSessionRestorer` 能长 transcript 使用 summary + recent messages 恢复。
   20. summarizer 失败时能使用 first N + recovery notice + recent N 降级恢复。
-  21. `ContextCompactor` 对超过阈值的大输出生成 compact record。
+  21. `ToolResultCompactor` 对超过阈值的大输出生成 compact record。
   22. compact record 必须包含 artifact_path、summary、relevance 和 must_keep。
-  23. `MemoryExtractor` 只生成候选，不直接写入长期 memory。
+  23. `AgentMemoryCandidateExtractor` 只生成候选，不直接写入长期 memory。
   24. user / feedback candidate 默认不自动写入长期 memory。
-  25. `agent_factory.py` 能创建 AgentLoop 及其依赖，并可被 CLI Runtime 和 Web Runtime 复用。
-  26. `agent_factory.py` 支持指定 session_id 创建 AgentLoop。
+  25. `agent_component_factory.py` 能创建 `AgentLoopRunner` 及其依赖，并可被 CLI Runtime 和 Web Runtime 复用。
+  26. `agent_component_factory.py` 支持指定 session_id 创建 `AgentLoopRunner`。
 
 - **集成测试**:
   1. Agent Loop 能接收 fake LLM 的 tool call，执行工具并回填 tool result。
@@ -1956,3 +1963,4 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | `2026-06-07` | 将工具列表、上下文压缩、memory candidate 和 Web 状态调整为当前代码实现边界 | 修正文档中把内部机制和未完成写入闭环描述为当前 LLM 可调用工具的问题 | `TBD` |
 | `2026-06-13` | 补充 DeepSeek streaming、`answer_delta`、Web 流式聊天接口和日志过滤边界 | 支持本地 Codex 风格实时流程展示和最终回答真流式输出 | `TBD` |
 | `2026-06-16` | 明确 Agent 开发上下文只记录稳定设计边界，不记录任务计划 | 区分 Agent 设计约束与 AI Coding 协作过程 | `TBD` |
+| `2026-06-16` | 更新源码模块路径、正式实现名称和独立 tool handler 边界 | 完成架构目录迁移第二阶段前锁定实现边界 | `TBD` |

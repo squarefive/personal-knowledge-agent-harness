@@ -4,12 +4,11 @@ import sys
 
 from prompt_toolkit import PromptSession
 
-from ...agent_factory import create_agent
-from .cli_event_renderer import CliEventRenderer as CliRenderer
-from ...config import load_config
-from ...events import AgentEvent
-from ...jsonl_logger import AsyncJsonlLogger
-from ...permissions import ApprovalRequest
+from ...agent_bootstrap import create_agent, load_config
+from ...agent_observability import AgentEventJsonlLogger
+from ...agent_runtime import AgentEvent
+from ...tool_runtime import ApprovalRequest
+from .cli_event_renderer import CliEventRenderer
 
 EXIT_COMMANDS = {"/exit", "/quit"}
 
@@ -37,8 +36,8 @@ def approve_tool_call(session: PromptSession | None, request: ApprovalRequest) -
 
 
 def run_cli() -> int:
-    renderer = CliRenderer(stream=sys.stdout)
-    event_logger = AsyncJsonlLogger()
+    renderer = CliEventRenderer(stream=sys.stdout)
+    event_logger = AgentEventJsonlLogger()
     rendered_final_answer = False
 
     def handle_event(event: AgentEvent) -> None:

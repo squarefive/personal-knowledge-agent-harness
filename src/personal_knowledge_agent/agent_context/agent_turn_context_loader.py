@@ -3,9 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .agent_profile_memory import AgentMemoryDocumentRepository as MemoryStore
-from .agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore
-from ..schemas import MemoryDocument, MemoryIndex, MemoryIndexEntry
+from .agent_profile_memory import (
+    AgentMemoryDocumentRepository,
+    AgentMemoryIndexRepository,
+    MemoryDocument,
+    MemoryIndex,
+    MemoryIndexEntry,
+)
 
 
 @dataclass
@@ -18,8 +22,8 @@ class TurnContextLoader:
     def __init__(
         self,
         *,
-        memory_index_store: MemoryIndexStore | None = None,
-        memory_store: MemoryStore | None = None,
+        memory_index_store: AgentMemoryIndexRepository | None = None,
+        memory_store: AgentMemoryDocumentRepository | None = None,
     ):
         self.memory_index_store = memory_index_store
         self.memory_store = memory_store

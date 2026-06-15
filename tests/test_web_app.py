@@ -3,9 +3,9 @@ import time
 
 from fastapi.testclient import TestClient
 
-from personal_knowledge_agent.config import AgentConfig
-from personal_knowledge_agent.events import AgentEvent
-from personal_knowledge_agent.permissions import ApprovalRequest
+from personal_knowledge_agent.agent_bootstrap import AgentConfig
+from personal_knowledge_agent.agent_runtime import AgentEvent
+from personal_knowledge_agent.tool_runtime import ApprovalRequest
 from personal_knowledge_agent.apps.web import create_web_app
 
 
@@ -306,9 +306,9 @@ def test_read_session_messages_returns_display_messages(tmp_path, monkeypatch):
     client = make_client()
     session_id = client.post("/api/sessions").json()["session"]["session_id"]
 
-    from personal_knowledge_agent.agent_context.conversation_sessions import ConversationTranscriptRepository as SessionTranscript
+    from personal_knowledge_agent.agent_context.conversation_sessions import ConversationTranscriptRepository
 
-    transcript = SessionTranscript(tmp_path, session_id=session_id)
+    transcript = ConversationTranscriptRepository(tmp_path, session_id=session_id)
     transcript.append_message({"role": "user", "content": "你好"})
     transcript.append_message({"role": "assistant", "content": "你好。"})
 

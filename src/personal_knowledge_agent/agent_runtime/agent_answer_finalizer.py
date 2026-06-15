@@ -2,17 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..schemas import MemoryIndex
-from ..agent_context.agent_profile_memory.agent_memory_turn_finalizer import TurnMemoryFinalizer
+from ..agent_context.agent_profile_memory import AgentMemoryTurnFinalizer, MemoryIndex
 from .answer_source_evidence import finalize_answer
 
 
-class AnswerFinishStep:
+class AgentAnswerFinalizer:
     def __init__(
         self,
         *,
         append_message: Callable[[dict[str, Any]], None],
-        turn_memory_finalizer: TurnMemoryFinalizer,
+        turn_memory_finalizer: AgentMemoryTurnFinalizer,
         emit: Callable[..., None],
     ):
         self.append_message = append_message
@@ -89,6 +88,3 @@ class AnswerFinishStep:
             recent_messages=recent_messages,
             emit=self.emit,
         )
-
-
-AgentAnswerFinalizer = AnswerFinishStep

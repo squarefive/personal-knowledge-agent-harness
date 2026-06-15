@@ -4,8 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
-from personal_knowledge_agent.schemas import LLMResponse
+from personal_knowledge_agent.qa_data_access import QACardRepository
+from personal_knowledge_agent.llm_clients import LLMResponse
 
 
 def load_backfill_module():
@@ -30,7 +30,7 @@ class FakeCategoryClient:
 
 def create_legacy_store(tmp_path):
     db_path = tmp_path / "knowledge.db"
-    store = SQLiteStore(db_path)
+    store = QACardRepository(db_path)
     card = store.save_card(
         question="历史问题？",
         answer="历史答案。",
@@ -65,7 +65,7 @@ def create_legacy_store(tmp_path):
             """
         )
         conn.execute("DROP TABLE qa_cards_old")
-    return SQLiteStore(db_path), card.id
+    return QACardRepository(db_path), card.id
 
 
 def test_parse_category_strips_prefix_and_rejects_fallback():

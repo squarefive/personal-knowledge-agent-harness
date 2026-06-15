@@ -13,12 +13,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ...agent_factory import create_agent_components
-from ...config import AgentConfig, load_config
-from ...events import AgentEvent, new_run_id
-from ...permissions import default_approval_callback
-from ...schemas import SessionMetadata
-from ...agent_context.conversation_sessions import ConversationSessionMetadataRepository as SessionMetadataStore, ConversationTranscriptRepository as SessionTranscript, validate_session_id
+from ...agent_bootstrap import AgentConfig, create_agent_components, load_config
+from ...agent_context.conversation_sessions import (
+    ConversationSessionMetadataRepository,
+    ConversationTranscriptRepository,
+    SessionMetadata,
+    validate_session_id,
+)
+from ...agent_runtime import AgentEvent, new_run_id
+from ...tool_runtime import default_approval_callback
 
 SESSION_ID_SUFFIX_CHARS = 12
 THREAD_JOIN_TIMEOUT_SECONDS = 1
@@ -123,18 +126,24 @@ def create_web_app(
     @app.post("/api/sessions")
     def create_session() -> dict[str, Any]:
         session_id = f"session_{uuid.uuid4().hex[:SESSION_ID_SUFFIX_CHARS]}"
-        metadata = SessionMetadataStore(workspace_root, session_id=session_id).load_or_create()
+        metadata = ConversationSessionMetadataRepository(
+            workspace_root,
+            session_id=session_id,
+        ).load_or_create()
         return {"ok": True, "session": _metadata_payload(metadata)}
 
     @app.get("/api/sessions")
     def list_sessions() -> dict[str, Any]:
-        sessions = SessionMetadataStore(workspace_root).list_sessions()
+        sessions = ConversationSessionMetadataRepository(workspace_root).list_sessions()
         return {"ok": True, "sessions": [_metadata_payload(metadata) for metadata in sessions]}
 
     @app.patch("/api/sessions/{session_id}")
     def rename_session(session_id: str, request: RenameSessionRequest) -> dict[str, Any]:
         try:
-            metadata = SessionMetadataStore(workspace_root, session_id=session_id).rename_session(request.title)
+            metadata = ConversationSessionMetadataRepository(
+                workspace_root,
+                session_id=session_id,
+            ).rename_session(request.title)
             return {"ok": True, "session": _metadata_payload(metadata)}
         except Exception as exc:
             return _error("session_rename_error", str(exc))
@@ -142,7 +151,7 @@ def create_web_app(
     @app.get("/api/sessions/{session_id}/messages")
     def read_session_messages(session_id: str) -> dict[str, Any]:
         try:
-            transcript = SessionTranscript(workspace_root, session_id=session_id)
+            transcript = ConversationTranscriptRepository(workspace_root, session_id=session_id)
             return {"ok": True, "messages": transcript.load_display_messages()}
         except Exception as exc:
             return _error("session_read_error", str(exc))

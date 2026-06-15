@@ -2,8 +2,8 @@ import tomllib
 from pathlib import Path
 
 from personal_knowledge_agent.apps.cli import cli_main as cli
-from personal_knowledge_agent.events import AgentEvent
-from personal_knowledge_agent.permissions import ApprovalRequest
+from personal_knowledge_agent.agent_runtime import AgentEvent
+from personal_knowledge_agent.tool_runtime import ApprovalRequest
 
 
 def test_run_cli_processes_input_and_exit(monkeypatch, capsys):
@@ -16,7 +16,7 @@ def test_run_cli_processes_input_and_exit(monkeypatch, capsys):
     monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None, approval_callback=None: FakeAgent())
     monkeypatch.setattr(cli, "create_prompt_session", lambda: object())
     monkeypatch.setattr(cli, "prompt_user", lambda session: next(inputs))
-    monkeypatch.setattr(cli, "AsyncJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
+    monkeypatch.setattr(cli, "AgentEventJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
 
     exit_code = cli.run_cli()
 
@@ -51,7 +51,7 @@ def test_run_cli_does_not_log_answer_delta(monkeypatch):
     monkeypatch.setattr(cli, "prompt_user", lambda session: next(inputs))
     monkeypatch.setattr(
         cli,
-        "AsyncJsonlLogger",
+        "AgentEventJsonlLogger",
         lambda: type("FakeLogger", (), {"write": lambda self, event: written.append(event), "close": lambda self: None})(),
     )
 
@@ -80,7 +80,7 @@ def test_run_cli_continues_after_agent_run_error(monkeypatch, capsys):
     monkeypatch.setattr(cli, "create_agent", lambda config, event_sink=None, approval_callback=None: FakeAgent())
     monkeypatch.setattr(cli, "create_prompt_session", lambda: object())
     monkeypatch.setattr(cli, "prompt_user", lambda session: next(inputs))
-    monkeypatch.setattr(cli, "AsyncJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
+    monkeypatch.setattr(cli, "AgentEventJsonlLogger", lambda: type("FakeLogger", (), {"write": lambda self, event: None, "close": lambda self: None})())
 
     exit_code = cli.run_cli()
 

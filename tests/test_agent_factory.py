@@ -1,7 +1,7 @@
-from personal_knowledge_agent.agent_factory import create_agent, create_agent_components
-from personal_knowledge_agent.agent_runtime import AgentLoopRunner as AgentLoop
-from personal_knowledge_agent.config import AgentConfig
-from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
+from personal_knowledge_agent.agent_bootstrap import create_agent, create_agent_components
+from personal_knowledge_agent.agent_runtime import AgentLoopRunner
+from personal_knowledge_agent.agent_bootstrap import AgentConfig
+from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 
 
 def test_create_agent_components_returns_agent_and_tools(tmp_path, monkeypatch):
@@ -14,8 +14,8 @@ def test_create_agent_components_returns_agent_and_tools(tmp_path, monkeypatch):
 
     components = create_agent_components(config)
 
-    assert isinstance(components.agent, AgentLoop)
-    assert isinstance(components.tools, KnowledgeTools)
+    assert isinstance(components.agent, AgentLoopRunner)
+    assert isinstance(components.tools, QAKnowledgeToolHandlers)
 
 
 def test_create_agent_returns_agent_loop(tmp_path, monkeypatch):
@@ -28,7 +28,7 @@ def test_create_agent_returns_agent_loop(tmp_path, monkeypatch):
 
     agent = create_agent(config)
 
-    assert isinstance(agent, AgentLoop)
+    assert isinstance(agent, AgentLoopRunner)
 
 
 def test_create_agent_accepts_approval_callback(tmp_path, monkeypatch):

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...schemas import MemoryDocument, MemoryIndexEntry
-from .agent_memory_index_repository import AGENT_MEMORY_TYPES as MEMORY_TYPES
+from .agent_memory_index_repository import AGENT_MEMORY_TYPES
+from .agent_memory_models import MemoryDocument, MemoryIndexEntry
 
 REQUIRED_FRONTMATTER_FIELDS = ["name", "type", "description", "updated_at", "source_type"]
 
 
-class MemoryStore:
+class AgentMemoryDocumentRepository:
     def __init__(self, root: str | Path):
         self.root = Path(root)
 
@@ -24,8 +24,10 @@ class MemoryStore:
         for field in REQUIRED_FRONTMATTER_FIELDS:
             if not metadata.get(field):
                 raise ValueError(f"memory frontmatter missing required field: {field}")
-        if metadata["type"] not in MEMORY_TYPES:
-            raise ValueError(f"memory type must be one of {sorted(MEMORY_TYPES)}: {metadata['type']}")
+        if metadata["type"] not in AGENT_MEMORY_TYPES:
+            raise ValueError(
+                f"memory type must be one of {sorted(AGENT_MEMORY_TYPES)}: {metadata['type']}"
+            )
 
         return MemoryDocument(
             name=metadata["name"],
@@ -68,6 +70,3 @@ def _parse_frontmatter(raw: str) -> tuple[dict[str, str], str]:
 
     content = raw[end + len("\n---\n") :]
     return metadata, content
-
-
-AgentMemoryDocumentRepository = MemoryStore

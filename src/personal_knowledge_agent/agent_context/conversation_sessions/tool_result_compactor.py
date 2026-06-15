@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...schemas import CompactRecord
+from .conversation_session_models import CompactRecord
 
 
-class ContextCompactor:
+class ToolResultCompactor:
     def __init__(
         self,
         root: str | Path,
@@ -61,6 +61,3 @@ def _summary(tool_name: str, result_text: str) -> str:
 
 def _safe_filename(value: str) -> str:
     return "".join(char if char.isalnum() or char in ("-", "_", ".") else "-" for char in value)
-
-
-ToolResultCompactor = ContextCompactor

@@ -8,7 +8,7 @@ class SummarizerLLM(Protocol):
     def chat(self, *, messages, tools, system_prompt): ...
 
 
-class SessionSummarizer:
+class ConversationSessionSummarizer:
     def __init__(self, llm: SummarizerLLM, *, max_retries: int = 3):
         self.llm = llm
         self.max_retries = max_retries
@@ -50,6 +50,3 @@ def _summary_prompt(messages: list[dict]) -> str:
             json.dumps(messages, ensure_ascii=False),
         ]
     )
-
-
-ConversationSessionSummarizer = SessionSummarizer

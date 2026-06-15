@@ -1,5 +1,5 @@
-from personal_knowledge_agent.schemas import LLMResponse
-from personal_knowledge_agent.agent_context.conversation_sessions import ConversationSessionSummarizer as SessionSummarizer
+from personal_knowledge_agent.llm_clients import LLMResponse
+from personal_knowledge_agent.agent_context.conversation_sessions import ConversationSessionSummarizer
 
 
 class FakeLLM:
@@ -18,7 +18,7 @@ class FakeLLM:
 def test_session_summarizer_returns_summary_with_attempt_count():
     llm = FakeLLM([RuntimeError("temporary"), LLMResponse(text="当前目标：继续实现。")])
 
-    summary, attempts = SessionSummarizer(llm, max_retries=3).summarize(
+    summary, attempts = ConversationSessionSummarizer(llm, max_retries=3).summarize(
         [{"role": "user", "content": "继续"}]
     )
 
@@ -32,7 +32,7 @@ def test_session_summarizer_raises_after_max_retries():
     llm = FakeLLM([RuntimeError("first"), LLMResponse(text="")])
 
     try:
-        SessionSummarizer(llm, max_retries=2).summarize([{"role": "user", "content": "继续"}])
+        ConversationSessionSummarizer(llm, max_retries=2).summarize([{"role": "user", "content": "继续"}])
     except RuntimeError as exc:
         assert "session summary failed after 2 attempts" in str(exc)
     else:

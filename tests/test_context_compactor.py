@@ -1,8 +1,8 @@
-from personal_knowledge_agent.agent_context.conversation_sessions import ToolResultCompactor as ContextCompactor
+from personal_knowledge_agent.agent_context.conversation_sessions import ToolResultCompactor
 
 
 def test_compact_tool_result_returns_none_below_threshold(tmp_path):
-    compactor = ContextCompactor(tmp_path, threshold_chars=20)
+    compactor = ToolResultCompactor(tmp_path, threshold_chars=20)
 
     record = compactor.compact_tool_result(
         run_id="run-1",
@@ -15,7 +15,7 @@ def test_compact_tool_result_returns_none_below_threshold(tmp_path):
 
 
 def test_compact_tool_result_writes_artifact_and_returns_record(tmp_path):
-    compactor = ContextCompactor(tmp_path, threshold_chars=10)
+    compactor = ToolResultCompactor(tmp_path, threshold_chars=10)
 
     record = compactor.compact_tool_result(
         run_id="run-1",

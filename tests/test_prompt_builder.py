@@ -1,5 +1,5 @@
-from personal_knowledge_agent.prompt_builder import build_system_prompt
-from personal_knowledge_agent.schemas import (
+from personal_knowledge_agent.agent_context import build_system_prompt
+from personal_knowledge_agent.agent_context.agent_profile_memory import (
     MemoryDocument,
     MemoryIndex,
     MemoryIndexEntry,

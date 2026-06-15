@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, TextIO
 
-from ...events import AgentEvent
+from ...agent_runtime import AgentEvent
 
 try:
     from rich.console import Console
@@ -11,7 +11,7 @@ except ImportError:  # pragma: no cover - dependency is declared, this keeps loc
     Console = None
 
 
-class CliRenderer:
+class CliEventRenderer:
     def __init__(self, *, stream: TextIO, max_text_length: int = 240):
         self.stream = stream
         self.max_text_length = max_text_length
@@ -106,6 +106,3 @@ class CliRenderer:
         if len(value) <= self.max_text_length:
             return value
         return f"{value[: self.max_text_length - 3]}..."
-
-
-CliEventRenderer = CliRenderer

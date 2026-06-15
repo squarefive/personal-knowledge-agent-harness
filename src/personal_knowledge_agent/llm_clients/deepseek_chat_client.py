@@ -8,7 +8,8 @@ import time
 from typing import Any, Callable, Iterator
 from urllib import error, request
 
-from ..schemas import LLMResponse, ToolCall
+from ..tool_runtime.tool_models import ToolCall
+from .llm_models import LLMResponse
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ RETRYABLE_HTTP_STATUSES = {429, 500, 503}
 RETRYABLE_NETWORK_ERRORS = (error.URLError, TimeoutError, ssl.SSLError, ConnectionError)
 
 
-class DeepSeekClient:
+class DeepSeekChatClient:
     def __init__(
         self,
         api_key: str | None = None,
@@ -174,6 +175,3 @@ class _ToolCallAccumulator:
                 )
             )
         return tool_calls
-
-
-DeepSeekChatClient = DeepSeekClient
