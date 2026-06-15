@@ -3,7 +3,7 @@ module: "local-qa-knowledge-agent"
 title: "本地个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-06-14"
+last_updated: "2026-06-16"
 ---
 
 # 本地个人 Q&A 知识库 Agent 开发上下文
@@ -12,6 +12,9 @@ last_updated: "2026-06-14"
 > 本文档是面向人类开发者和 AI Coding 工具的 Agent 开发上下文文档。  
 > 它用于约束本地个人 Q&A 知识库 Agent 的角色定位、能力边界、Harness 架构、可调用工具、上下文来源、核心业务流、数据模型和测试要求。  
 > 本文档不是终端用户说明，也不是运行时 Prompt。
+> 本文档只记录本 Agent 可长期维护的设计边界。
+> 本文档不得记录单次任务计划、临时实施步骤、Git 分支安排、工作进度或当前对话待办。
+> 任务计划应按照协作规约在当前对话中单独输出。
 
 > **AI 阅读契约**  
 > AI Coding 工具在生成、修改或重构代码时，必须遵守本文档定义的角色边界、工具边界、数据边界和业务流程。  
@@ -1952,3 +1955,4 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | `2026-06-02` | 补充 Web Runtime、Chat + Cards UI 和 agent_factory 设计边界 | 支持本地浏览器聊天入口和基础 Q&A 卡片浏览 | `TBD` |
 | `2026-06-07` | 将工具列表、上下文压缩、memory candidate 和 Web 状态调整为当前代码实现边界 | 修正文档中把内部机制和未完成写入闭环描述为当前 LLM 可调用工具的问题 | `TBD` |
 | `2026-06-13` | 补充 DeepSeek streaming、`answer_delta`、Web 流式聊天接口和日志过滤边界 | 支持本地 Codex 风格实时流程展示和最终回答真流式输出 | `TBD` |
+| `2026-06-16` | 明确 Agent 开发上下文只记录稳定设计边界，不记录任务计划 | 区分 Agent 设计约束与 AI Coding 协作过程 | `TBD` |
