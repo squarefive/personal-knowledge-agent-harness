@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from personal_knowledge_agent.qa_data_access import QACardSemanticIndex as QASemanticIndex
-from personal_knowledge_agent.schemas import QACard
+from personal_knowledge_agent.qa_data_access import QACardSemanticIndex
+from personal_knowledge_agent.qa_data_access import QACard
 
 
 class FakeResponse:
@@ -57,7 +57,7 @@ class FakeQdrantClient:
 def test_semantic_index_uses_qwen_embedding_request_and_card_id_payload():
     http_client = FakeHttpClient()
     qdrant_client = FakeQdrantClient()
-    index = QASemanticIndex(
+    index = QACardSemanticIndex(
         dashscope_api_key="dashscope-key",
         embedding_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         embedding_model="text-embedding-v4",
@@ -92,7 +92,7 @@ def test_semantic_index_uses_qwen_embedding_request_and_card_id_payload():
 
 
 def test_semantic_index_search_returns_card_ids():
-    index = QASemanticIndex(
+    index = QACardSemanticIndex(
         dashscope_api_key="dashscope-key",
         embedding_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         embedding_model="text-embedding-v4",

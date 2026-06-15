@@ -2,24 +2,33 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..schemas import ToolCall
-from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
+from ..agent_tools.agent_memory_tools import AgentMemoryToolHandlers
+from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
+from .tool_models import ToolCall
 
 
 class ToolDispatcher:
-    def __init__(self, tools: KnowledgeTools):
+    def __init__(
+        self,
+        qa_tools: QAKnowledgeToolHandlers,
+        memory_tools: AgentMemoryToolHandlers,
+    ):
+        self._definitions = [*qa_tools.definitions(), *memory_tools.definitions()]
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
-            "save_qa_card": tools.save_qa_card,
-            "search_qa_cards": tools.search_qa_cards,
-            "hybrid_search_qa_cards": tools.hybrid_search_qa_cards,
-            "read_qa_card": tools.read_qa_card,
-            "update_qa_card": tools.update_qa_card,
-            "delete_qa_card": tools.delete_qa_card,
-            "list_recent_cards": tools.list_recent_cards,
-            "rebuild_qa_semantic_index": tools.rebuild_qa_semantic_index,
-            "list_memory_index": tools.list_memory_index,
-            "read_memory": tools.read_memory,
+            "save_qa_card": qa_tools.save_qa_card,
+            "search_qa_cards": qa_tools.search_qa_cards,
+            "hybrid_search_qa_cards": qa_tools.hybrid_search_qa_cards,
+            "read_qa_card": qa_tools.read_qa_card,
+            "update_qa_card": qa_tools.update_qa_card,
+            "delete_qa_card": qa_tools.delete_qa_card,
+            "list_recent_cards": qa_tools.list_recent_cards,
+            "rebuild_qa_semantic_index": qa_tools.rebuild_qa_semantic_index,
+            "list_memory_index": memory_tools.list_memory_index,
+            "read_memory": memory_tools.read_memory,
         }
+
+    def definitions(self) -> list[dict[str, Any]]:
+        return self._definitions
 
     def execute(self, tool_call: ToolCall) -> dict[str, Any]:
         handler = self._handlers.get(tool_call.name)

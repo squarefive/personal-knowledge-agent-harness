@@ -5,30 +5,29 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
-from ..permissions import (
+from ..agent_context.conversation_sessions import CompactRecord, ToolResultCompactor
+from ..tool_runtime import ToolCall, ToolDispatcher
+from ..tool_runtime.tool_permission_policy import (
     ApprovalRequest,
     PermissionDecision,
     check_permission,
     default_approval_callback,
     permission_denied_result,
 )
-from ..schemas import CompactRecord, ToolCall
-from ..agent_context.conversation_sessions import ToolResultCompactor as ContextCompactor
-from ..tool_runtime import ToolDispatcher
 
 
 @dataclass
-class ToolCallResult:
+class AgentToolCallResult:
     result: dict[str, Any]
     compact_record: CompactRecord | None
 
 
-class ToolCallStep:
+class AgentToolCallRunner:
     def __init__(
         self,
         *,
         dispatcher: ToolDispatcher,
-        context_compactor: ContextCompactor | None = None,
+        context_compactor: ToolResultCompactor | None = None,
         permission_checker: Callable[[str, dict[str, Any]], PermissionDecision] = check_permission,
         approval_callback: Callable[[ApprovalRequest], bool] = default_approval_callback,
         emit: Callable[..., None],
@@ -39,7 +38,7 @@ class ToolCallStep:
         self.approval_callback = approval_callback
         self.emit = emit
 
-    def run(self, *, run_id: str, turn: int, tool_call: ToolCall) -> ToolCallResult:
+    def run(self, *, run_id: str, turn: int, tool_call: ToolCall) -> AgentToolCallResult:
         display_input = self.dispatcher.display_input(tool_call.name, tool_call.arguments)
         self.emit(
             run_id,
@@ -101,7 +100,7 @@ class ToolCallStep:
                 tool_call_id=tool_call.id,
                 compact_record=asdict(compact_record),
             )
-        return ToolCallResult(result=result, compact_record=compact_record)
+        return AgentToolCallResult(result=result, compact_record=compact_record)
 
     def _compact_tool_result(
         self,
@@ -119,7 +118,3 @@ class ToolCallStep:
             tool_name=tool_name,
             result_text=json.dumps(result, ensure_ascii=False),
         )
-
-
-AgentToolCallResult = ToolCallResult
-AgentToolCallRunner = ToolCallStep

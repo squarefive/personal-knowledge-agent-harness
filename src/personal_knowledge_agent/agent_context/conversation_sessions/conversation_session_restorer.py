@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import json
 
-from ...schemas import SessionRestoreResult
-from .conversation_session_metadata_repository import ConversationSessionMetadataRepository as SessionMetadataStore
-from .conversation_session_summarizer import ConversationSessionSummarizer as SessionSummarizer
-from .conversation_transcript_repository import ConversationTranscriptRepository as SessionTranscript
+from .conversation_session_metadata_repository import ConversationSessionMetadataRepository
+from .conversation_session_models import SessionRestoreResult
+from .conversation_session_summarizer import ConversationSessionSummarizer
+from .conversation_transcript_repository import ConversationTranscriptRepository
 
 
-class SessionRestore:
+class ConversationSessionRestorer:
     def __init__(
         self,
         *,
-        transcript: SessionTranscript,
-        metadata_store: SessionMetadataStore,
-        summarizer: SessionSummarizer | None = None,
+        transcript: ConversationTranscriptRepository,
+        metadata_store: ConversationSessionMetadataRepository,
+        summarizer: ConversationSessionSummarizer | None = None,
         message_budget_chars: int = 120_000,
         first_messages_count: int = 6,
         recent_messages_count: int = 12,
@@ -101,6 +101,3 @@ def _recovery_notice(error: str, first_count: int, recent_count: int) -> str:
             f"summary_error: {error}",
         ]
     )
-
-
-ConversationSessionRestorer = SessionRestore

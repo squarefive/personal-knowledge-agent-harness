@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Callable
 
-from .agent_memory_candidate_extractor import AgentMemoryCandidateExtractor as MemoryExtractor
-from ...schemas import MemoryIndex
+from .agent_memory_candidate_extractor import AgentMemoryCandidateExtractor
+from .agent_memory_models import MemoryIndex
 
 
-class TurnMemoryFinalizer:
-    def __init__(self, memory_extractor: MemoryExtractor | None = None):
+class AgentMemoryTurnFinalizer:
+    def __init__(self, memory_extractor: AgentMemoryCandidateExtractor | None = None):
         self.memory_extractor = memory_extractor
 
     def finalize(

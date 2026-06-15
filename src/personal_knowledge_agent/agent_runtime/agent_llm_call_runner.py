@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from ..llm_clients import DeepSeekChatClient as DeepSeekClient
-from ..schemas import LLMResponse
+from ..llm_clients import DeepSeekChatClient, LLMResponse
 
 
-class LLMCallStep:
-    def __init__(self, llm: DeepSeekClient, emit: Callable[..., None]):
+class AgentLLMCallRunner:
+    def __init__(self, llm: DeepSeekChatClient, emit: Callable[..., None]):
         self.llm = llm
         self.emit = emit
 
@@ -48,6 +47,3 @@ class LLMCallStep:
             tool_calls_count=len(response.tool_calls),
         )
         return response
-
-
-AgentLLMCallRunner = LLMCallStep

@@ -3,11 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from ...agent_context.agent_profile_memory import AgentMemoryDocumentRepository as MemoryStore
-from ...agent_context.agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore
-from ...qa_data_access import QACardRepository as SQLiteStore
-from ...qa_data_access import QACardSemanticIndex as QASemanticIndex
-from ...schemas import QACard
+from ...qa_data_access import QACard, QACardRepository, QACardSemanticIndex
 
 KEYWORD_SCORE_WEIGHT = 0.4
 SEMANTIC_SCORE_WEIGHT = 0.6
@@ -17,7 +13,7 @@ WEAK_MATCH_THRESHOLD = 0.35
 
 
 @dataclass
-class HybridCandidate:
+class QAKnowledgeSearchCandidate:
     card_id: str
     keyword_score: float = 0.0
     keyword_score_norm: float = 0.0
@@ -33,18 +29,14 @@ class HybridCandidate:
             self.matched_by.append(source)
 
 
-class KnowledgeTools:
+class QAKnowledgeToolHandlers:
     def __init__(
         self,
-        store: SQLiteStore,
+        store: QACardRepository,
         *,
-        memory_index_store: MemoryIndexStore | None = None,
-        memory_store: MemoryStore | None = None,
-        semantic_index: QASemanticIndex | None = None,
+        semantic_index: QACardSemanticIndex | None = None,
     ):
         self.store = store
-        self.memory_index_store = memory_index_store
-        self.memory_store = memory_store
         self.semantic_index = semantic_index
 
     def save_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -227,32 +219,8 @@ class KnowledgeTools:
         except Exception as exc:
             return self._error("store_error", str(exc))
 
-    def list_memory_index(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self.memory_index_store is None:
-            return self._error("memory_not_configured", "memory index store is not configured")
-        try:
-            limit = self._optional_limit(arguments, default=50)
-            index = self.memory_index_store.load()
-            return {"ok": True, "entries": [asdict(entry) for entry in index.entries[:limit]]}
-        except Exception as exc:
-            return self._error("invalid_memory_index", str(exc))
-
-    def read_memory(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self.memory_index_store is None or self.memory_store is None:
-            return self._error("memory_not_configured", "memory store is not configured")
-        try:
-            name = self._required_text(arguments, "name")
-            index = self.memory_index_store.load()
-            entry = next((item for item in index.entries if item.name == name), None)
-            if entry is None:
-                return self._error("not_found", f"memory not found: {name}")
-            memory = self.memory_store.read_by_entry(entry)
-            return {"ok": True, "memory": asdict(memory)}
-        except Exception as exc:
-            return self._error("invalid_memory", str(exc))
-
     def definitions(self) -> list[dict[str, Any]]:
-        return TOOL_DEFINITIONS
+        return QA_KNOWLEDGE_TOOL_DEFINITIONS
 
     @staticmethod
     def _required_text(arguments: dict[str, Any], name: str) -> str:
@@ -324,13 +292,18 @@ class KnowledgeTools:
         }
 
     @staticmethod
-    def _search_payload(card: QACard, candidate: HybridCandidate, *, rank: int) -> dict[str, Any]:
+    def _search_payload(
+        card: QACard,
+        candidate: QAKnowledgeSearchCandidate,
+        *,
+        rank: int,
+    ) -> dict[str, Any]:
         return {
             "rank": rank,
             "card_id": card.id,
             "question": card.question,
             "summary": card.summary,
-            "answer_snippet": KnowledgeTools._snippet(card.answer),
+            "answer_snippet": QAKnowledgeToolHandlers._snippet(card.answer),
             "score": candidate.final_score,
             "final_score": candidate.final_score,
             "match_level": candidate.match_level,
@@ -368,14 +341,14 @@ class KnowledgeTools:
         keyword_scores: dict[str, float],
         semantic_scores: dict[str, float],
         use_keyword_only_score: bool,
-    ) -> list[HybridCandidate]:
-        candidates: dict[str, HybridCandidate] = {}
+    ) -> list[QAKnowledgeSearchCandidate]:
+        candidates: dict[str, QAKnowledgeSearchCandidate] = {}
         for card_id, score in keyword_scores.items():
-            candidate = candidates.setdefault(card_id, HybridCandidate(card_id=card_id))
+            candidate = candidates.setdefault(card_id, QAKnowledgeSearchCandidate(card_id=card_id))
             candidate.keyword_score = score
             candidate.add_match("keyword")
         for card_id, score in semantic_scores.items():
-            candidate = candidates.setdefault(card_id, HybridCandidate(card_id=card_id))
+            candidate = candidates.setdefault(card_id, QAKnowledgeSearchCandidate(card_id=card_id))
             candidate.semantic_score = score
             candidate.add_match("semantic")
 
@@ -396,7 +369,11 @@ class KnowledgeTools:
         return sorted(candidates.values(), key=lambda item: item.final_score, reverse=True)
 
     @staticmethod
-    def _select_hybrid_candidates(candidates: list[HybridCandidate], *, limit: int) -> list[HybridCandidate]:
+    def _select_hybrid_candidates(
+        candidates: list[QAKnowledgeSearchCandidate],
+        *,
+        limit: int,
+    ) -> list[QAKnowledgeSearchCandidate]:
         normal = [candidate for candidate in candidates if candidate.match_level in ("strong", "medium")]
         if normal:
             return normal[:limit]
@@ -425,7 +402,7 @@ class KnowledgeTools:
         return {"ok": False, "error_code": error_code, "message": message}
 
 
-TOOL_DEFINITIONS: list[dict[str, Any]] = [
+QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -541,31 +518,4 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_memory_index",
-            "description": "列出 Agent memory 索引。",
-            "parameters": {
-                "type": "object",
-                "properties": {"limit": {"type": "integer"}},
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_memory",
-            "description": "按 memory name 读取 Agent memory 全文。",
-            "parameters": {
-                "type": "object",
-                "properties": {"name": {"type": "string"}},
-                "required": ["name"],
-            },
-        },
-    },
 ]
-
-
-QAKnowledgeSearchCandidate = HybridCandidate
-QAKnowledgeToolHandlers = KnowledgeTools

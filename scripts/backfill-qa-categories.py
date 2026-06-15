@@ -6,10 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from personal_knowledge_agent.config import load_config
-from personal_knowledge_agent.llm_clients import DeepSeekChatClient as DeepSeekClient
-from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
-from personal_knowledge_agent.schemas import LLMResponse, QACard
+from personal_knowledge_agent.agent_bootstrap import load_config
+from personal_knowledge_agent.llm_clients import DeepSeekChatClient, LLMResponse
+from personal_knowledge_agent.qa_data_access import QACard, QACardRepository
 
 
 CATEGORY_SYSTEM_PROMPT = "\n".join(
@@ -55,7 +54,7 @@ def parse_category(text: str | None) -> str:
             clean = clean[len(prefix) :].strip()
             break
     clean = clean.splitlines()[0].strip().strip('"').strip("'")
-    return SQLiteStore.validate_category(clean)
+    return QACardRepository.validate_category(clean)
 
 
 def build_user_prompt(card: QACard) -> str:
@@ -80,7 +79,7 @@ def generate_category(client: CategoryLLM, card: QACard) -> str:
 
 def backfill_categories(
     *,
-    store: SQLiteStore,
+    store: QACardRepository,
     client: CategoryLLM,
     enforce_constraints: bool = True,
 ) -> BackfillResult:
@@ -121,8 +120,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = load_config(Path(args.env))
-    store = SQLiteStore(config.knowledge_db_path)
-    client = DeepSeekClient(api_key=config.deepseek_api_key, model=config.deepseek_model)
+    store = QACardRepository(config.knowledge_db_path)
+    client = DeepSeekChatClient(api_key=config.deepseek_api_key, model=config.deepseek_model)
     result = backfill_categories(
         store=store,
         client=client,

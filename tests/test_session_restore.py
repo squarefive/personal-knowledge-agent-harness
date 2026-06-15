@@ -1,4 +1,4 @@
-from personal_knowledge_agent.agent_context.conversation_sessions import ConversationSessionMetadataRepository as SessionMetadataStore, ConversationSessionRestorer as SessionRestore, ConversationTranscriptRepository as SessionTranscript
+from personal_knowledge_agent.agent_context.conversation_sessions import ConversationSessionMetadataRepository, ConversationSessionRestorer, ConversationTranscriptRepository
 
 
 class FakeSummarizer:
@@ -17,11 +17,11 @@ class FakeSummarizer:
 
 
 def test_session_restore_returns_full_messages_below_budget(tmp_path):
-    transcript = SessionTranscript(tmp_path)
+    transcript = ConversationTranscriptRepository(tmp_path)
     transcript.append_message({"role": "user", "content": "短消息"})
-    metadata_store = SessionMetadataStore(tmp_path)
+    metadata_store = ConversationSessionMetadataRepository(tmp_path)
 
-    result = SessionRestore(
+    result = ConversationSessionRestorer(
         transcript=transcript,
         metadata_store=metadata_store,
         message_budget_chars=10_000,
@@ -33,13 +33,13 @@ def test_session_restore_returns_full_messages_below_budget(tmp_path):
 
 
 def test_session_restore_uses_summary_and_recent_messages_above_budget(tmp_path):
-    transcript = SessionTranscript(tmp_path)
+    transcript = ConversationTranscriptRepository(tmp_path)
     for index in range(5):
         transcript.append_message({"role": "user", "content": f"消息 {index} " + "x" * 20})
-    metadata_store = SessionMetadataStore(tmp_path)
+    metadata_store = ConversationSessionMetadataRepository(tmp_path)
     summarizer = FakeSummarizer(summary="当前目标：继续实现 session restore。")
 
-    result = SessionRestore(
+    result = ConversationSessionRestorer(
         transcript=transcript,
         metadata_store=metadata_store,
         summarizer=summarizer,
@@ -57,12 +57,12 @@ def test_session_restore_uses_summary_and_recent_messages_above_budget(tmp_path)
 
 
 def test_session_restore_falls_back_to_first_and_recent_when_summary_fails(tmp_path):
-    transcript = SessionTranscript(tmp_path)
+    transcript = ConversationTranscriptRepository(tmp_path)
     for index in range(8):
         transcript.append_message({"role": "user", "content": f"消息 {index} " + "x" * 20})
-    metadata_store = SessionMetadataStore(tmp_path)
+    metadata_store = ConversationSessionMetadataRepository(tmp_path)
 
-    result = SessionRestore(
+    result = ConversationSessionRestorer(
         transcript=transcript,
         metadata_store=metadata_store,
         summarizer=FakeSummarizer(error=RuntimeError("boom")),

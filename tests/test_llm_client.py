@@ -5,7 +5,7 @@ from urllib import error
 import pytest
 
 from personal_knowledge_agent.llm_clients import deepseek_chat_client as llm_client
-from personal_knowledge_agent.llm_clients import DeepSeekChatClient as DeepSeekClient
+from personal_knowledge_agent.llm_clients import DeepSeekChatClient
 
 
 class FakeStreamResponse:
@@ -38,7 +38,7 @@ def test_deepseek_client_requires_api_key(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
-        DeepSeekClient()
+        DeepSeekChatClient()
 
 
 def test_deepseek_client_retries_network_errors(monkeypatch):
@@ -54,7 +54,7 @@ def test_deepseek_client_retries_network_errors(monkeypatch):
     monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: sleeps.append(seconds))
 
-    client = DeepSeekClient(api_key="key", retry_backoff_seconds=(0.5, 1.0))
+    client = DeepSeekChatClient(api_key="key", retry_backoff_seconds=(0.5, 1.0))
     response = client.chat(messages=[], tools=[], system_prompt="system")
 
     assert response.text == "ok"
@@ -75,7 +75,7 @@ def test_deepseek_client_retries_retryable_http_statuses(monkeypatch, status):
     monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: None)
 
-    client = DeepSeekClient(api_key="key")
+    client = DeepSeekChatClient(api_key="key")
     response = client.chat(messages=[], tools=[], system_prompt="system")
 
     assert response.text == "ok"
@@ -92,7 +92,7 @@ def test_deepseek_client_does_not_retry_non_retryable_http_statuses(monkeypatch,
 
     monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
 
-    client = DeepSeekClient(api_key="key")
+    client = DeepSeekChatClient(api_key="key")
     with pytest.raises(RuntimeError, match=f"status {status} after 1 attempts"):
         client.chat(messages=[], tools=[], system_prompt="system")
 
@@ -109,7 +109,7 @@ def test_deepseek_client_reports_retry_exhaustion(monkeypatch):
     monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: None)
 
-    client = DeepSeekClient(api_key="key", max_retries=2)
+    client = DeepSeekChatClient(api_key="key", max_retries=2)
     with pytest.raises(RuntimeError, match="after 3 attempts"):
         client.chat(messages=[], tools=[], system_prompt="system")
 
@@ -131,7 +131,7 @@ def test_deepseek_client_streams_text_deltas(monkeypatch):
 
     monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
 
-    client = DeepSeekClient(api_key="key")
+    client = DeepSeekChatClient(api_key="key")
     response = client.chat(
         messages=[],
         tools=[],
@@ -182,7 +182,7 @@ def test_deepseek_client_accumulates_streamed_tool_calls(monkeypatch):
 
     monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
 
-    client = DeepSeekClient(api_key="key")
+    client = DeepSeekChatClient(api_key="key")
     response = client.chat(messages=[], tools=[], system_prompt="system")
 
     assert response.text is None
@@ -221,7 +221,7 @@ def test_deepseek_client_does_not_emit_text_delta_for_tool_call_chunks(monkeypat
 
     monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
 
-    client = DeepSeekClient(api_key="key")
+    client = DeepSeekChatClient(api_key="key")
     response = client.chat(
         messages=[],
         tools=[],

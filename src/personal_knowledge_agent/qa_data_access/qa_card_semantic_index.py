@@ -9,10 +9,10 @@ import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointIdsList, PointStruct, VectorParams
 
-from ..schemas import QACard
+from .qa_card_models import QACard
 
 
-class QASemanticIndexError(RuntimeError):
+class QACardSemanticIndexError(RuntimeError):
     pass
 
 
@@ -22,7 +22,7 @@ class SemanticSearchHit:
     score: float
 
 
-class QASemanticIndex:
+class QACardSemanticIndex:
     def __init__(
         self,
         *,
@@ -83,7 +83,7 @@ class QASemanticIndex:
 
     def embed_text(self, text: str) -> list[float]:
         if not self.dashscope_api_key:
-            raise QASemanticIndexError("DASHSCOPE_API_KEY is not configured")
+            raise QACardSemanticIndexError("DASHSCOPE_API_KEY is not configured")
         response = self._http_client.post(
             f"{self.embedding_base_url}/embeddings",
             headers={"Authorization": f"Bearer {self.dashscope_api_key}"},
@@ -98,9 +98,9 @@ class QASemanticIndex:
             payload = response.json()
             vector = payload["data"][0]["embedding"]
         except Exception as exc:
-            raise QASemanticIndexError(f"embedding request failed: {exc}") from exc
+            raise QACardSemanticIndexError(f"embedding request failed: {exc}") from exc
         if not isinstance(vector, list) or not all(isinstance(value, int | float) for value in vector):
-            raise QASemanticIndexError("embedding response did not contain a numeric vector")
+            raise QACardSemanticIndexError("embedding response did not contain a numeric vector")
         return [float(value) for value in vector]
 
     def close(self) -> None:
@@ -150,7 +150,3 @@ class QASemanticIndex:
     @staticmethod
     def _point_id(card_id: str) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_URL, f"qa-card:{card_id}"))
-
-
-QACardSemanticIndex = QASemanticIndex
-QACardSemanticIndexError = QASemanticIndexError

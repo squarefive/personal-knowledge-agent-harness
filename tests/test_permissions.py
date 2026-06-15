@@ -1,4 +1,4 @@
-from personal_knowledge_agent.permissions import (
+from personal_knowledge_agent.tool_runtime import (
     ApprovalRequest,
     check_permission,
     default_approval_callback,

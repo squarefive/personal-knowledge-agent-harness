@@ -1,11 +1,16 @@
 import copy
 
-from personal_knowledge_agent.agent_runtime import AgentLoopRunner as AgentLoop
-from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryCandidateExtractor as MemoryExtractor, AgentMemoryIndexRepository as MemoryIndexStore, AgentMemoryDocumentRepository as MemoryStore
-from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
-from personal_knowledge_agent.schemas import LLMResponse, ToolCall
-from personal_knowledge_agent.agent_context.conversation_sessions import ToolResultCompactor as ContextCompactor, ConversationSessionMetadataRepository as SessionMetadataStore, ConversationTranscriptRepository as SessionTranscript
-from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
+from personal_knowledge_agent.agent_runtime import AgentLoopRunner
+from personal_knowledge_agent.agent_context.agent_profile_memory import (
+    AgentMemoryCandidateExtractor,
+    AgentMemoryDocumentRepository,
+    AgentMemoryIndexRepository,
+)
+from personal_knowledge_agent.qa_data_access import QACardRepository
+from personal_knowledge_agent.llm_clients import LLMResponse
+from personal_knowledge_agent.tool_runtime import ToolCall
+from personal_knowledge_agent.agent_context.conversation_sessions import ToolResultCompactor, ConversationSessionMetadataRepository, ConversationTranscriptRepository
+from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers
 from personal_knowledge_agent.tool_runtime import ToolDispatcher
 
 
@@ -28,9 +33,17 @@ class FakeLLM:
         return response
 
 
+def create_dispatcher(tmp_path, qa_tools):
+    memory_tools = AgentMemoryToolHandlers(
+        memory_index_repository=AgentMemoryIndexRepository(tmp_path),
+        memory_document_repository=AgentMemoryDocumentRepository(tmp_path),
+    )
+    return ToolDispatcher(qa_tools, memory_tools)
+
+
 def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM(
         [
@@ -52,9 +65,8 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
             LLMResponse(text="已保存。"),
         ]
     )
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
         event_sink=events.append,
     )
@@ -88,13 +100,12 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
 
 
 def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM([LLMResponse(text="本地知识库中没有找到足够依据。")])
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
         event_sink=events.append,
     )
@@ -111,8 +122,8 @@ def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
 
 
 def test_agent_loop_does_not_reuse_previous_turn_sources(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     fake_llm = FakeLLM(
         [
             LLMResponse(
@@ -134,9 +145,8 @@ def test_agent_loop_does_not_reuse_previous_turn_sources(tmp_path):
             LLMResponse(text="可以用 set 去重。"),
         ]
     )
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
     )
 
@@ -149,7 +159,7 @@ def test_agent_loop_does_not_reuse_previous_turn_sources(tmp_path):
 
 
 def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     saved = knowledge_tools.save_qa_card(
         {
             "question": "旧问题？",
@@ -159,7 +169,7 @@ def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
             "category": "Agent 开发",
         }
     )
-    dispatcher = ToolDispatcher(knowledge_tools)
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     approvals = []
     fake_llm = FakeLLM(
         [
@@ -175,9 +185,8 @@ def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
             LLMResponse(text="已删除。"),
         ]
     )
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
         approval_callback=lambda request: approvals.append(request) is None or True,
     )
@@ -190,7 +199,7 @@ def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
 
 
 def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     saved = knowledge_tools.save_qa_card(
         {
             "question": "问题？",
@@ -200,7 +209,7 @@ def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
             "category": "Agent 开发",
         }
     )
-    dispatcher = ToolDispatcher(knowledge_tools)
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     fake_llm = FakeLLM(
         [
             LLMResponse(
@@ -215,9 +224,8 @@ def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
             LLMResponse(text="操作未执行。"),
         ]
     )
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
         approval_callback=lambda request: False,
     )
@@ -231,8 +239,8 @@ def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
 
 
 def test_agent_loop_safe_tool_does_not_request_approval(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     approvals = []
     fake_llm = FakeLLM(
         [
@@ -240,9 +248,8 @@ def test_agent_loop_safe_tool_does_not_request_approval(tmp_path):
             LLMResponse(text="没有最近卡片。"),
         ]
     )
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
         approval_callback=lambda request: approvals.append(request) is None or True,
     )
@@ -283,15 +290,14 @@ def test_agent_loop_injects_memory_context_using_recent_messages(tmp_path):
         ),
         encoding="utf-8",
     )
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     fake_llm = FakeLLM([LLMResponse(text="继续。")])
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
-        memory_index_store=MemoryIndexStore(tmp_path),
-        memory_store=MemoryStore(tmp_path),
+        memory_index_store=AgentMemoryIndexRepository(tmp_path),
+        memory_store=AgentMemoryDocumentRepository(tmp_path),
         messages=[{"role": "user", "content": "继续 Agent memory 管理设计，实现 turn-start memory 选择"}],
     )
 
@@ -304,8 +310,8 @@ def test_agent_loop_injects_memory_context_using_recent_messages(tmp_path):
 
 
 def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM(
         [
@@ -321,11 +327,10 @@ def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path
             LLMResponse(text="没有最近卡片。"),
         ]
     )
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
-        context_compactor=ContextCompactor(tmp_path, threshold_chars=1),
+        context_compactor=ToolResultCompactor(tmp_path, threshold_chars=1),
         event_sink=events.append,
     )
 
@@ -341,15 +346,14 @@ def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path
 
 
 def test_agent_loop_persists_messages_to_transcript(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
-    transcript = SessionTranscript(tmp_path)
-    metadata_store = SessionMetadataStore(tmp_path, model="test-model")
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
+    transcript = ConversationTranscriptRepository(tmp_path)
+    metadata_store = ConversationSessionMetadataRepository(tmp_path, model="test-model")
     events = []
     fake_llm = FakeLLM([LLMResponse(text="第一轮回答。"), LLMResponse(text="第二轮回答。")])
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
         transcript=transcript,
         metadata_store=metadata_store,
@@ -374,15 +378,14 @@ def test_agent_loop_persists_messages_to_transcript(tmp_path):
 
 
 def test_agent_loop_emits_memory_candidates(tmp_path):
-    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(knowledge_tools)
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM([LLMResponse(text="好的。")])
-    loop = AgentLoop(
+    loop = AgentLoopRunner(
         llm=fake_llm,
-        tools=knowledge_tools,
         dispatcher=dispatcher,
-        memory_extractor=MemoryExtractor(),
+        memory_extractor=AgentMemoryCandidateExtractor(),
         event_sink=events.append,
     )
 

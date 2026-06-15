@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from personal_knowledge_agent.config import load_config
+from personal_knowledge_agent.agent_bootstrap import load_config
 
 
 def test_load_config_reads_dotenv(tmp_path, monkeypatch):

@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...schemas import MemoryIndex, MemoryIndexEntry
+from .agent_memory_models import MemoryIndex, MemoryIndexEntry
 
-MEMORY_TYPES = {"user", "feedback", "project", "reference"}
+AGENT_MEMORY_TYPES = {"user", "feedback", "project", "reference"}
 REQUIRED_COLUMNS = ["name", "type", "description", "path"]
 
 
-class MemoryIndexStore:
+class AgentMemoryIndexRepository:
     def __init__(self, root: str | Path):
         self.root = Path(root)
         self.path = self.root / ".memory" / "MEMORY.md"
@@ -26,8 +26,10 @@ class MemoryIndexStore:
                 description=_required_cell(row, "description"),
                 path=_required_cell(row, "path"),
             )
-            if entry.type not in MEMORY_TYPES:
-                raise ValueError(f"memory type must be one of {sorted(MEMORY_TYPES)}: {entry.type}")
+            if entry.type not in AGENT_MEMORY_TYPES:
+                raise ValueError(
+                    f"memory type must be one of {sorted(AGENT_MEMORY_TYPES)}: {entry.type}"
+                )
             entries.append(entry)
         return MemoryIndex(entries=entries)
 
@@ -60,7 +62,3 @@ def _required_cell(row: dict[str, str], name: str) -> str:
     if not value:
         raise ValueError(f"memory index field must not be empty: {name}")
     return value
-
-
-AGENT_MEMORY_TYPES = MEMORY_TYPES
-AgentMemoryIndexRepository = MemoryIndexStore

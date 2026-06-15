@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict
 from typing import Any
 
-from ..schemas import LLMResponse
+from ..llm_clients import LLMResponse
 
 
 def format_assistant_tool_call_message(response: LLMResponse) -> dict[str, Any]:

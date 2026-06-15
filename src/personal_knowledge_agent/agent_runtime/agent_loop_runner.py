@@ -2,49 +2,49 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..agent_context.agent_profile_memory import AgentMemoryDocumentRepository as MemoryStore
-from ..agent_context.agent_profile_memory import AgentMemoryCandidateExtractor as MemoryExtractor
-from ..agent_context.agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore
-from ..events import new_run_id
-from ..llm_clients import DeepSeekChatClient as DeepSeekClient
-from ..permissions import check_permission, default_approval_callback
+from ..agent_context.agent_profile_memory import (
+    AgentMemoryCandidateExtractor,
+    AgentMemoryDocumentRepository,
+    AgentMemoryIndexRepository,
+    AgentMemoryTurnFinalizer,
+)
 from ..agent_context import build_system_prompt
-from ..agent_context.conversation_sessions import ToolResultCompactor as ContextCompactor
-from ..agent_context.conversation_sessions import ConversationSessionMetadataRepository as SessionMetadataStore
-from ..agent_context.conversation_sessions import ConversationTranscriptRepository as SessionTranscript
-from ..tool_runtime import ToolDispatcher
-from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
-from .agent_llm_call_runner import LLMCallStep
+from ..agent_context.conversation_sessions import (
+    ConversationSessionMetadataRepository,
+    ConversationTranscriptRepository,
+    ToolResultCompactor,
+)
+from ..llm_clients import DeepSeekChatClient
+from ..tool_runtime import ToolDispatcher, check_permission, default_approval_callback
+from .agent_llm_call_runner import AgentLLMCallRunner
 from .agent_event_emitter import AgentEventEmitter, EventSink
-from ..agent_context.agent_profile_memory.agent_memory_turn_finalizer import TurnMemoryFinalizer
-from .agent_answer_finalizer import AnswerFinishStep
+from .agent_events import new_run_id
+from .agent_answer_finalizer import AgentAnswerFinalizer
 from .agent_llm_message_formatter import format_assistant_tool_call_message, format_tool_result_message
 from ..agent_context.agent_turn_context_loader import TurnContextLoader
 from .agent_runtime_message_recorder import RuntimeMessageRecorder
-from .agent_tool_call_runner import ToolCallStep
+from .agent_tool_call_runner import AgentToolCallRunner
 
 
-class AgentLoop:
+class AgentLoopRunner:
     def __init__(
         self,
         *,
-        llm: DeepSeekClient,
-        tools: KnowledgeTools,
+        llm: DeepSeekChatClient,
         dispatcher: ToolDispatcher,
-        memory_index_store: MemoryIndexStore | None = None,
-        memory_store: MemoryStore | None = None,
+        memory_index_store: AgentMemoryIndexRepository | None = None,
+        memory_store: AgentMemoryDocumentRepository | None = None,
         messages: list[dict[str, Any]] | None = None,
-        transcript: SessionTranscript | None = None,
-        metadata_store: SessionMetadataStore | None = None,
-        context_compactor: ContextCompactor | None = None,
-        memory_extractor: MemoryExtractor | None = None,
+        transcript: ConversationTranscriptRepository | None = None,
+        metadata_store: ConversationSessionMetadataRepository | None = None,
+        context_compactor: ToolResultCompactor | None = None,
+        memory_extractor: AgentMemoryCandidateExtractor | None = None,
         permission_checker=None,
         approval_callback=None,
         max_turns: int = 8,
         event_sink: EventSink | None = None,
     ):
         self.llm = llm
-        self.tools = tools
         self.dispatcher = dispatcher
         self.memory_index_store = memory_index_store
         self.memory_store = memory_store
@@ -61,17 +61,17 @@ class AgentLoop:
             memory_index_store=memory_index_store,
             memory_store=memory_store,
         )
-        self.llm_call_step = LLMCallStep(llm=self.llm, emit=self.event_emitter.emit)
-        self.tool_call_step = ToolCallStep(
+        self.llm_call_step = AgentLLMCallRunner(llm=self.llm, emit=self.event_emitter.emit)
+        self.tool_call_step = AgentToolCallRunner(
             dispatcher=self.dispatcher,
             context_compactor=self.context_compactor,
             permission_checker=permission_checker or check_permission,
             approval_callback=approval_callback or default_approval_callback,
             emit=self.event_emitter.emit,
         )
-        self.answer_finish_step = AnswerFinishStep(
+        self.answer_finish_step = AgentAnswerFinalizer(
             append_message=self.message_recorder.append,
-            turn_memory_finalizer=TurnMemoryFinalizer(self.memory_extractor),
+            turn_memory_finalizer=AgentMemoryTurnFinalizer(self.memory_extractor),
             emit=self.event_emitter.emit,
         )
 
@@ -92,7 +92,7 @@ class AgentLoop:
             memory_index=turn_context.memory_index,
             selected_memories=turn_context.selected_memories,
         )
-        tool_definitions = self.tools.definitions()
+        tool_definitions = self.dispatcher.definitions()
         self.event_emitter.emit(run_id, "user_input_received", user_input=user_input)
 
         for turn in range(self.max_turns):
@@ -131,6 +131,3 @@ class AgentLoop:
             memory_index=turn_context.memory_index,
             recent_messages=self.messages[-12:],
         )
-
-
-AgentLoopRunner = AgentLoop

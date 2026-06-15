@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..schemas import QACard, SearchResult
+from .qa_card_models import QACard, SearchResult
 
 FORBIDDEN_CATEGORIES = {"其他", "未分类", "杂项", "默认分类", "未知", "待分类"}
 CATEGORY_CHECK_SQL = (
@@ -15,7 +15,7 @@ CATEGORY_CHECK_SQL = (
 )
 
 
-class SQLiteStore:
+class QACardRepository:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -410,6 +410,3 @@ class SQLiteStore:
         if len(clean) <= length:
             return clean
         return f"{clean[: length - 3]}..."
-
-
-QACardRepository = SQLiteStore

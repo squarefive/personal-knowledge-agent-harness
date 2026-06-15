@@ -1,10 +1,10 @@
 import pytest
 
-from personal_knowledge_agent.agent_context.conversation_sessions import ConversationTranscriptRepository as SessionTranscript
+from personal_knowledge_agent.agent_context.conversation_sessions import ConversationTranscriptRepository
 
 
 def test_session_transcript_appends_and_loads_messages(tmp_path):
-    transcript = SessionTranscript(tmp_path)
+    transcript = ConversationTranscriptRepository(tmp_path)
 
     first_id = transcript.append_message({"role": "user", "content": "你好"})
     second_id = transcript.append_message({"role": "assistant", "content": "你好。"})
@@ -21,11 +21,11 @@ def test_session_transcript_appends_and_loads_messages(tmp_path):
 
 def test_session_transcript_rejects_invalid_session_id(tmp_path):
     with pytest.raises(ValueError):
-        SessionTranscript(tmp_path, session_id="../escape")
+        ConversationTranscriptRepository(tmp_path, session_id="../escape")
 
 
 def test_session_transcript_loads_display_messages(tmp_path):
-    transcript = SessionTranscript(tmp_path, session_id="chat_1")
+    transcript = ConversationTranscriptRepository(tmp_path, session_id="chat_1")
 
     transcript.append_message({"role": "user", "content": "你好"})
     transcript.append_message(

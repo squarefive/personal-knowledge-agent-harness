@@ -1,12 +1,12 @@
 from io import StringIO
 
-from personal_knowledge_agent.apps.cli import CliEventRenderer as CliRenderer
-from personal_knowledge_agent.events import AgentEvent
+from personal_knowledge_agent.apps.cli import CliEventRenderer
+from personal_knowledge_agent.agent_runtime import AgentEvent
 
 
 def test_cli_renderer_truncates_long_text():
     stream = StringIO()
-    renderer = CliRenderer(stream=stream, max_text_length=12)
+    renderer = CliEventRenderer(stream=stream, max_text_length=12)
 
     renderer.render(
         AgentEvent(
@@ -23,7 +23,7 @@ def test_cli_renderer_truncates_long_text():
 
 def test_cli_renderer_renders_tool_result():
     stream = StringIO()
-    renderer = CliRenderer(stream=stream)
+    renderer = CliEventRenderer(stream=stream)
 
     renderer.render(
         AgentEvent(
@@ -44,7 +44,7 @@ def test_cli_renderer_renders_tool_result():
 
 def test_cli_renderer_does_not_truncate_final_answer():
     stream = StringIO()
-    renderer = CliRenderer(stream=stream, max_text_length=12)
+    renderer = CliEventRenderer(stream=stream, max_text_length=12)
     answer = "最终回答" * 20
 
     renderer.render(
@@ -61,7 +61,7 @@ def test_cli_renderer_does_not_truncate_final_answer():
 
 def test_cli_renderer_renders_answer_delta_without_repeating_final_answer():
     stream = StringIO()
-    renderer = CliRenderer(stream=stream)
+    renderer = CliEventRenderer(stream=stream)
 
     renderer.render(AgentEvent(run_id="run_1", event_type="answer_delta", payload={"text": "你"}))
     renderer.render(AgentEvent(run_id="run_1", event_type="answer_delta", payload={"text": "好"}))
@@ -74,7 +74,7 @@ def test_cli_renderer_renders_answer_delta_without_repeating_final_answer():
 
 def test_cli_renderer_renders_memory_candidates():
     stream = StringIO()
-    renderer = CliRenderer(stream=stream)
+    renderer = CliEventRenderer(stream=stream)
 
     renderer.render(
         AgentEvent(

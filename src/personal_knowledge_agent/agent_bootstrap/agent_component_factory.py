@@ -4,26 +4,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .agent_context.agent_profile_memory import (
+from ..agent_context.agent_profile_memory import (
     AgentMemoryCandidateExtractor,
     AgentMemoryDocumentRepository,
     AgentMemoryIndexRepository,
 )
-from .agent_context.conversation_sessions import (
+from ..agent_context.conversation_sessions import (
     ConversationSessionMetadataRepository,
     ConversationSessionRestorer,
     ConversationSessionSummarizer,
     ConversationTranscriptRepository,
     ToolResultCompactor,
 )
-from .agent_runtime import AgentLoopRunner
-from .agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
-from .config import AgentConfig
-from .events import AgentEvent
-from .llm_clients import DeepSeekChatClient
-from .permissions import ApprovalRequest
-from .qa_data_access import QACardRepository, QACardSemanticIndex
-from .tool_runtime import ToolDispatcher
+from ..agent_runtime import AgentEvent, AgentLoopRunner
+from ..agent_tools.agent_memory_tools import AgentMemoryToolHandlers
+from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
+from ..llm_clients import DeepSeekChatClient
+from ..qa_data_access import QACardRepository, QACardSemanticIndex
+from ..tool_runtime import ApprovalRequest, ToolDispatcher
+from .agent_runtime_config import AgentConfig
 
 
 @dataclass(frozen=True)
@@ -66,16 +65,14 @@ def create_agent_components(
         qdrant_path=config.qdrant_path,
         collection_name=config.qdrant_collection,
     )
-    tools = QAKnowledgeToolHandlers(
-        store,
-        memory_index_store=memory_index_store,
-        memory_store=memory_store,
-        semantic_index=semantic_index,
+    tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
+    memory_tools = AgentMemoryToolHandlers(
+        memory_index_repository=memory_index_store,
+        memory_document_repository=memory_store,
     )
-    dispatcher = ToolDispatcher(tools)
+    dispatcher = ToolDispatcher(tools, memory_tools)
     agent = AgentLoopRunner(
         llm=llm,
-        tools=tools,
         dispatcher=dispatcher,
         memory_index_store=memory_index_store,
         memory_store=memory_store,

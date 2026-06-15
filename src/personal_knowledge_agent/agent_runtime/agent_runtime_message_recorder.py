@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..agent_context.conversation_sessions import ConversationSessionMetadataRepository as SessionMetadataStore
-from ..agent_context.conversation_sessions import ConversationTranscriptRepository as SessionTranscript
+from ..agent_context.conversation_sessions import (
+    ConversationSessionMetadataRepository,
+    ConversationTranscriptRepository,
+)
 
 
 class RuntimeMessageRecorder:
@@ -11,8 +13,8 @@ class RuntimeMessageRecorder:
         self,
         *,
         messages: list[dict[str, Any]] | None = None,
-        transcript: SessionTranscript | None = None,
-        metadata_store: SessionMetadataStore | None = None,
+        transcript: ConversationTranscriptRepository | None = None,
+        metadata_store: ConversationSessionMetadataRepository | None = None,
     ):
         self.messages = messages if messages is not None else []
         self.transcript = transcript

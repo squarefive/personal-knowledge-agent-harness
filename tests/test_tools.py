@@ -1,9 +1,12 @@
 import pytest
 
-from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore, AgentMemoryDocumentRepository as MemoryStore
-from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
-from personal_knowledge_agent.schemas import ToolCall
-from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
+from personal_knowledge_agent.agent_context.agent_profile_memory import (
+    AgentMemoryDocumentRepository,
+    AgentMemoryIndexRepository,
+)
+from personal_knowledge_agent.qa_data_access import QACardRepository
+from personal_knowledge_agent.tool_runtime import ToolCall
+from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers
 from personal_knowledge_agent.tool_runtime import ToolDispatcher
 
 
@@ -41,8 +44,52 @@ class FakeHit:
         self.score = score
 
 
+def create_memory_tools(tmp_path):
+    return AgentMemoryToolHandlers(
+        memory_index_repository=AgentMemoryIndexRepository(tmp_path),
+        memory_document_repository=AgentMemoryDocumentRepository(tmp_path),
+    )
+
+
+def create_dispatcher(tmp_path, qa_tools):
+    return ToolDispatcher(qa_tools, create_memory_tools(tmp_path))
+
+
+def test_tool_handlers_keep_qa_and_memory_dependencies_separate(tmp_path):
+    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    memory_tools = create_memory_tools(tmp_path)
+
+    assert not hasattr(qa_tools, "memory_index_repository")
+    assert not hasattr(qa_tools, "memory_document_repository")
+    assert not hasattr(memory_tools, "store")
+    assert not hasattr(memory_tools, "semantic_index")
+
+
+def test_tool_dispatcher_aggregates_qa_and_memory_definitions(tmp_path):
+    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(qa_tools, create_memory_tools(tmp_path))
+
+    tool_names = {
+        definition["function"]["name"]
+        for definition in dispatcher.definitions()
+    }
+
+    assert tool_names == {
+        "save_qa_card",
+        "search_qa_cards",
+        "hybrid_search_qa_cards",
+        "read_qa_card",
+        "update_qa_card",
+        "delete_qa_card",
+        "list_recent_cards",
+        "rebuild_qa_semantic_index",
+        "list_memory_index",
+        "read_memory",
+    }
+
+
 def test_save_qa_card_validates_required_fields(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
 
     result = tools.save_qa_card({"question": "缺少答案"})
 
@@ -51,7 +98,7 @@ def test_save_qa_card_validates_required_fields(tmp_path):
 
 
 def test_save_qa_card_requires_category(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
 
     result = tools.save_qa_card(
         {
@@ -68,7 +115,7 @@ def test_save_qa_card_requires_category(tmp_path):
 
 
 def test_tools_save_read_search_and_recent(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
 
     saved = tools.save_qa_card(
         {
@@ -100,7 +147,7 @@ def test_tools_save_read_search_and_recent(tmp_path):
 
 
 def test_read_qa_card_not_found_returns_structured_error(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
 
     result = tools.read_qa_card({"card_id": "missing"})
 
@@ -109,7 +156,7 @@ def test_read_qa_card_not_found_returns_structured_error(tmp_path):
 
 
 def test_update_and_delete_qa_card_tools(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     saved = tools.save_qa_card(
         {
             "question": "旧问题？",
@@ -144,7 +191,7 @@ def test_update_and_delete_qa_card_tools(tmp_path):
 
 
 def test_update_and_delete_qa_card_tools_return_not_found(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
 
     updated = tools.update_qa_card({"card_id": "qa_missing", "summary": "新摘要。"})
     deleted = tools.delete_qa_card({"card_id": "qa_missing"})
@@ -156,8 +203,8 @@ def test_update_and_delete_qa_card_tools_return_not_found(tmp_path):
 
 
 def test_hybrid_search_degrades_to_sqlite_like_when_semantic_index_disabled(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
-    tools = KnowledgeTools(store, semantic_index=FakeSemanticIndex(enabled=False))
+    store = QACardRepository(tmp_path / "knowledge.db")
+    tools = QAKnowledgeToolHandlers(store, semantic_index=FakeSemanticIndex(enabled=False))
     saved = tools.save_qa_card(
         {
             "question": "程序级来源校验是什么？",
@@ -178,7 +225,7 @@ def test_hybrid_search_degrades_to_sqlite_like_when_semantic_index_disabled(tmp_
 
 
 def test_hybrid_search_normalizes_scores_and_ranks_by_final_score(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     keyword_card = store.save_card(
         question="关键词问题？",
         answer="关键词答案。",
@@ -193,7 +240,7 @@ def test_hybrid_search_normalizes_scores_and_ranks_by_final_score(tmp_path):
         keywords=["语义"],
         category="Agent 开发",
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         semantic_index=FakeSemanticIndex(hits=[FakeHit(semantic_card.id, 0.87)]),
     )
@@ -214,7 +261,7 @@ def test_hybrid_search_normalizes_scores_and_ranks_by_final_score(tmp_path):
 
 
 def test_hybrid_search_combines_keyword_and_semantic_scores(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     card = store.save_card(
         question="氛围编程 vibe coding 是什么？",
         answer="vibe coding 是 AI 辅助编程范式。",
@@ -222,7 +269,7 @@ def test_hybrid_search_combines_keyword_and_semantic_scores(tmp_path):
         keywords=["vibe coding"],
         category="Agent 开发",
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         semantic_index=FakeSemanticIndex(hits=[FakeHit(card.id, 0.69)]),
     )
@@ -241,7 +288,7 @@ def test_hybrid_search_combines_keyword_and_semantic_scores(tmp_path):
 
 
 def test_hybrid_search_returns_top_weak_candidate_with_warning(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     weak_card = store.save_card(
         question="弱相关问题？",
         answer="弱相关答案。",
@@ -256,7 +303,7 @@ def test_hybrid_search_returns_top_weak_candidate_with_warning(tmp_path):
         keywords=["更弱相关"],
         category="Agent 开发",
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         semantic_index=FakeSemanticIndex(
             hits=[FakeHit(weak_card.id, 0.70), FakeHit(weaker_card.id, 0.60)]
@@ -272,7 +319,7 @@ def test_hybrid_search_returns_top_weak_candidate_with_warning(tmp_path):
 
 
 def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     card = store.save_card(
         question="低相关问题？",
         answer="低相关答案。",
@@ -280,7 +327,7 @@ def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tm
         keywords=["低相关"],
         category="Agent 开发",
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         semantic_index=FakeSemanticIndex(hits=[FakeHit(card.id, 0.20)]),
     )
@@ -293,7 +340,7 @@ def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tm
 
 
 def test_search_and_recent_cards_filter_by_category(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     tools.save_qa_card(
         {
             "question": "Agent 问题？",
@@ -321,7 +368,7 @@ def test_search_and_recent_cards_filter_by_category(tmp_path):
 
 
 def test_hybrid_search_filters_semantic_candidates_by_category(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     agent_card = store.save_card(
         question="Agent 语义问题？",
         answer="Agent 语义答案。",
@@ -336,7 +383,7 @@ def test_hybrid_search_filters_semantic_candidates_by_category(tmp_path):
         keywords=["语义"],
         category="检索与知识库",
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         semantic_index=FakeSemanticIndex(hits=[FakeHit(agent_card.id, 0.91), FakeHit(search_card.id, 0.86)]),
     )
@@ -351,7 +398,7 @@ def test_hybrid_search_filters_semantic_candidates_by_category(tmp_path):
 
 
 def test_hybrid_search_over_fetches_semantic_hits_when_category_filters(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     first_agent_card = store.save_card(
         question="第一个 Agent 语义问题？",
         answer="第一个 Agent 语义答案。",
@@ -380,7 +427,7 @@ def test_hybrid_search_over_fetches_semantic_hits_when_category_filters(tmp_path
             FakeHit(search_card.id, 0.90),
         ]
     )
-    tools = KnowledgeTools(store, semantic_index=semantic_index)
+    tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
 
     result = tools.hybrid_search_qa_cards(
         {"query": "没有关键词命中", "category": "检索与知识库", "limit": 2}
@@ -392,7 +439,7 @@ def test_hybrid_search_over_fetches_semantic_hits_when_category_filters(tmp_path
 
 
 def test_hybrid_search_does_not_fallback_across_category(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     agent_card = store.save_card(
         question="Agent 语义问题？",
         answer="Agent 语义答案。",
@@ -400,7 +447,7 @@ def test_hybrid_search_does_not_fallback_across_category(tmp_path):
         keywords=["语义"],
         category="Agent 开发",
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         semantic_index=FakeSemanticIndex(hits=[FakeHit(agent_card.id, 0.91)]),
     )
@@ -415,7 +462,7 @@ def test_hybrid_search_does_not_fallback_across_category(tmp_path):
 
 
 def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     first = store.save_card(
         question="已向量化问题？",
         answer="已向量化答案。",
@@ -432,7 +479,7 @@ def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
     )
     store.mark_card_vectorized(first.id)
     semantic_index = FakeSemanticIndex()
-    tools = KnowledgeTools(store, semantic_index=semantic_index)
+    tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
 
     result = tools.rebuild_qa_semantic_index({})
 
@@ -445,7 +492,7 @@ def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
 
 
 def test_rebuild_qa_semantic_index_keeps_failed_cards_unvectorized(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     card = store.save_card(
         question="失败问题？",
         answer="失败答案。",
@@ -453,7 +500,7 @@ def test_rebuild_qa_semantic_index_keeps_failed_cards_unvectorized(tmp_path):
         keywords=["失败"],
         category="Agent 开发",
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         semantic_index=FakeSemanticIndex(fail_upsert_ids={card.id}),
     )
@@ -466,9 +513,9 @@ def test_rebuild_qa_semantic_index_keeps_failed_cards_unvectorized(tmp_path):
 
 
 def test_save_update_delete_sync_semantic_index_best_effort(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     semantic_index = FakeSemanticIndex()
-    tools = KnowledgeTools(store, semantic_index=semantic_index)
+    tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
 
     saved = tools.save_qa_card(
         {
@@ -490,8 +537,8 @@ def test_save_update_delete_sync_semantic_index_best_effort(tmp_path):
 
 
 def test_tool_dispatcher_display_output_uses_declared_fields(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(tools)
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, tools)
     result = {
         "ok": True,
         "cards": [
@@ -528,8 +575,8 @@ def test_tool_dispatcher_display_output_uses_declared_fields(tmp_path):
 
 
 def test_tool_dispatcher_display_output_includes_hybrid_ranking_fields(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(tools)
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, tools)
     result = {
         "ok": True,
         "cards": [
@@ -584,8 +631,8 @@ def test_tool_dispatcher_display_output_includes_hybrid_ranking_fields(tmp_path)
 
 
 def test_tool_dispatcher_handles_update_and_delete_tools(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(tools)
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, tools)
     saved = tools.save_qa_card(
         {
             "question": "旧问题？",
@@ -617,8 +664,8 @@ def test_tool_dispatcher_handles_update_and_delete_tools(tmp_path):
 
 
 def test_tool_dispatcher_display_output_keeps_unknown_tool_error(tmp_path):
-    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
-    dispatcher = ToolDispatcher(tools)
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, tools)
 
     display = dispatcher.display_output(
         "unknown_tool",
@@ -659,11 +706,7 @@ def test_memory_tools_list_and_read_memory(tmp_path):
         ),
         encoding="utf-8",
     )
-    tools = KnowledgeTools(
-        SQLiteStore(tmp_path / "knowledge.db"),
-        memory_index_store=MemoryIndexStore(tmp_path),
-        memory_store=MemoryStore(tmp_path),
-    )
+    tools = create_memory_tools(tmp_path)
 
     index = tools.list_memory_index({"limit": 10})
     memory = tools.read_memory({"name": "project-boundary"})
@@ -674,11 +717,9 @@ def test_memory_tools_list_and_read_memory(tmp_path):
     assert memory["memory"]["content"] == "Q&A 和 Agent memory 分开。"
 
 def test_tool_dispatcher_handles_memory_tools(tmp_path):
-    tools = KnowledgeTools(
-        SQLiteStore(tmp_path / "knowledge.db"),
-        memory_index_store=MemoryIndexStore(tmp_path),
-    )
-    dispatcher = ToolDispatcher(tools)
+    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    memory_tools = create_memory_tools(tmp_path)
+    dispatcher = ToolDispatcher(qa_tools, memory_tools)
 
     result = dispatcher.execute(ToolCall(id="call_1", name="list_memory_index", arguments={"limit": 5}))
 

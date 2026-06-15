@@ -1,8 +1,8 @@
-from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
+from personal_knowledge_agent.qa_data_access import QACardRepository
 
 
 def test_save_read_search_and_recent_cards(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
 
     card = store.save_card(
         question="Agent 的第一版边界是什么？",
@@ -31,7 +31,7 @@ def test_save_read_search_and_recent_cards(tmp_path):
 
 
 def test_search_returns_empty_for_no_match(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     store.save_card(
         question="SQLite 负责什么？",
         answer="SQLite 是第一版唯一长期记忆来源。",
@@ -44,7 +44,7 @@ def test_search_returns_empty_for_no_match(tmp_path):
 
 
 def test_update_card_changes_current_card(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     card = store.save_card(
         question="旧问题？",
         answer="旧答案。",
@@ -75,7 +75,7 @@ def test_update_card_changes_current_card(tmp_path):
 
 
 def test_update_card_requires_existing_card_and_non_empty_patch(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
 
     assert store.update_card("qa_missing", question="新问题？") is None
 
@@ -95,7 +95,7 @@ def test_update_card_requires_existing_card_and_non_empty_patch(tmp_path):
 
 
 def test_delete_card_physically_removes_card(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     card = store.save_card(
         question="要删除的问题？",
         answer="要删除的答案。",
@@ -112,7 +112,7 @@ def test_delete_card_physically_removes_card(tmp_path):
 
 
 def test_vectorized_marker_tracks_cards_needing_semantic_index(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     first = store.save_card(
         question="第一个问题？",
         answer="第一个答案。",
@@ -141,7 +141,7 @@ def test_vectorized_marker_tracks_cards_needing_semantic_index(tmp_path):
 
 def test_existing_database_gets_vectorized_marker(tmp_path):
     db_path = tmp_path / "knowledge.db"
-    store = SQLiteStore(db_path)
+    store = QACardRepository(db_path)
     card = store.save_card(
         question="历史问题？",
         answer="历史答案。",
@@ -176,7 +176,7 @@ def test_existing_database_gets_vectorized_marker(tmp_path):
         )
         conn.execute("DROP TABLE qa_cards_old")
 
-    migrated = SQLiteStore(db_path)
+    migrated = QACardRepository(db_path)
     read_back = migrated.read_card(card.id)
 
     assert read_back is not None
@@ -184,7 +184,7 @@ def test_existing_database_gets_vectorized_marker(tmp_path):
 
 
 def test_category_is_required_and_rejects_fallback_values(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
 
     invalid_categories = [
         "",
@@ -213,7 +213,7 @@ def test_category_is_required_and_rejects_fallback_values(tmp_path):
 
 
 def test_category_can_be_updated_and_filtered(tmp_path):
-    store = SQLiteStore(tmp_path / "knowledge.db")
+    store = QACardRepository(tmp_path / "knowledge.db")
     agent_card = store.save_card(
         question="Agent 问题？",
         answer="Agent 答案。",

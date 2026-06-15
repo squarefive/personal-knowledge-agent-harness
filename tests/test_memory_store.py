@@ -1,7 +1,7 @@
 import pytest
 
-from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryDocumentRepository as MemoryStore
-from personal_knowledge_agent.schemas import MemoryIndexEntry
+from personal_knowledge_agent.agent_context.agent_profile_memory import AgentMemoryDocumentRepository
+from personal_knowledge_agent.agent_context.agent_profile_memory import MemoryIndexEntry
 
 
 def test_read_memory_document_with_frontmatter(tmp_path):
@@ -25,7 +25,7 @@ def test_read_memory_document_with_frontmatter(tmp_path):
         encoding="utf-8",
     )
 
-    memory = MemoryStore(tmp_path).read_path(".memory/project-boundary.md")
+    memory = AgentMemoryDocumentRepository(tmp_path).read_path(".memory/project-boundary.md")
 
     assert memory.name == "project-boundary"
     assert memory.type == "project"
@@ -63,7 +63,7 @@ def test_read_memory_document_by_index_entry(tmp_path):
         path=".memory/reference-doc.md",
     )
 
-    memory = MemoryStore(tmp_path).read_by_entry(entry)
+    memory = AgentMemoryDocumentRepository(tmp_path).read_by_entry(entry)
 
     assert memory.name == "reference-doc"
     assert memory.source_ref is None
@@ -75,7 +75,7 @@ def test_read_memory_document_rejects_missing_frontmatter(tmp_path):
     (memory_dir / "broken.md").write_text("missing frontmatter", encoding="utf-8")
 
     with pytest.raises(ValueError, match="frontmatter"):
-        MemoryStore(tmp_path).read_path(".memory/broken.md")
+        AgentMemoryDocumentRepository(tmp_path).read_path(".memory/broken.md")
 
 
 def test_read_memory_document_rejects_invalid_type(tmp_path):
@@ -99,7 +99,7 @@ def test_read_memory_document_rejects_invalid_type(tmp_path):
     )
 
     with pytest.raises(ValueError, match="memory type"):
-        MemoryStore(tmp_path).read_path(".memory/broken.md")
+        AgentMemoryDocumentRepository(tmp_path).read_path(".memory/broken.md")
 
 
 def test_read_memory_document_rejects_missing_required_field(tmp_path):
@@ -122,7 +122,7 @@ def test_read_memory_document_rejects_missing_required_field(tmp_path):
     )
 
     with pytest.raises(ValueError, match="description"):
-        MemoryStore(tmp_path).read_path(".memory/broken.md")
+        AgentMemoryDocumentRepository(tmp_path).read_path(".memory/broken.md")
 
 
 def test_read_memory_document_rejects_absolute_path(tmp_path):
@@ -130,7 +130,7 @@ def test_read_memory_document_rejects_absolute_path(tmp_path):
     outside.write_text("outside", encoding="utf-8")
 
     with pytest.raises(ValueError, match="relative"):
-        MemoryStore(tmp_path).read_path(outside)
+        AgentMemoryDocumentRepository(tmp_path).read_path(outside)
 
 
 def test_read_memory_document_rejects_path_traversal(tmp_path):
@@ -138,4 +138,4 @@ def test_read_memory_document_rejects_path_traversal(tmp_path):
     outside.write_text("outside", encoding="utf-8")
 
     with pytest.raises(ValueError, match="under .memory"):
-        MemoryStore(tmp_path).read_path(".memory/../outside.md")
+        AgentMemoryDocumentRepository(tmp_path).read_path(".memory/../outside.md")

@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ...schemas import SessionMetadata
+from .conversation_session_models import SessionMetadata
 
 DEFAULT_SESSION_TITLE = "新会话"
 TITLE_PREVIEW_CHARS = 30
@@ -26,7 +26,7 @@ def validate_session_id(session_id: str) -> str:
     return session_id
 
 
-class SessionMetadataStore:
+class ConversationSessionMetadataRepository:
     def __init__(
         self,
         root: str | Path,
@@ -178,6 +178,3 @@ def _title_from_message(message: str) -> str:
     if not message:
         return DEFAULT_SESSION_TITLE
     return message[:TITLE_PREVIEW_CHARS]
-
-
-ConversationSessionMetadataRepository = SessionMetadataStore

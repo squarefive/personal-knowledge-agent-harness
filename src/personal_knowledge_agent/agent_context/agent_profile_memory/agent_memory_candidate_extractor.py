@@ -3,13 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ...schemas import MemoryCandidate, MemoryIndex
+from .agent_memory_models import MemoryCandidate, MemoryIndex
 
 USER_PREFERENCE_MARKERS = ("记住", "以后", "每次", "总是")
 PROJECT_DECISION_MARKERS = ("决定", "确认", "必须", "不要", "不允许")
 
 
-class MemoryExtractor:
+class AgentMemoryCandidateExtractor:
     def extract(
         self,
         *,
@@ -96,6 +96,3 @@ def _dedupe_against_index(
         return candidates
     existing_names = {entry.name for entry in memory_index.entries}
     return [candidate for candidate in candidates if candidate.name not in existing_names]
-
-
-AgentMemoryCandidateExtractor = MemoryExtractor
