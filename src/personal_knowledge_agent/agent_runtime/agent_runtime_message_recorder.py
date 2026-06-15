@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..session_memory.metadata import SessionMetadataStore
-from ..session_memory.transcript import SessionTranscript
+from ..agent_context.conversation_sessions import ConversationSessionMetadataRepository as SessionMetadataStore
+from ..agent_context.conversation_sessions import ConversationTranscriptRepository as SessionTranscript
 
 
 class RuntimeMessageRecorder:

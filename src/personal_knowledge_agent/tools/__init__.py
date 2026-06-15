@@ -1,4 +1,4 @@
-from .dispatch_tool_call import ToolDispatcher
-from .knowledge_tools import KnowledgeTools
+from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers as KnowledgeTools
+from ..tool_runtime import ToolDispatcher
 
 __all__ = ["KnowledgeTools", "ToolDispatcher"]

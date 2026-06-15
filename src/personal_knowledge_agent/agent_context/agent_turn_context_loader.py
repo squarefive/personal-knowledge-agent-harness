@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..agent_memory.document_store import MemoryStore
-from ..agent_memory.index_store import MemoryIndexStore
+from .agent_profile_memory import AgentMemoryDocumentRepository as MemoryStore
+from .agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore
 from ..schemas import MemoryDocument, MemoryIndex, MemoryIndexEntry
 
 

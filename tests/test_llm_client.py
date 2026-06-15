@@ -4,7 +4,7 @@ from urllib import error
 
 import pytest
 
-from personal_knowledge_agent import llm_client
+from personal_knowledge_agent.llm_clients import deepseek_chat_client as llm_client
 from personal_knowledge_agent.llm_clients import DeepSeekChatClient as DeepSeekClient
 
 

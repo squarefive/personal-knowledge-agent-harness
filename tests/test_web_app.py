@@ -132,7 +132,7 @@ def test_web_runtime_uses_default_denial_approval_callback(tmp_path, monkeypatch
         captured["approval_callback"] = approval_callback
         return type("Components", (), {"agent": FakeAgent(), "tools": FakeTools()})()
 
-    import personal_knowledge_agent.web.app as app_module
+    import personal_knowledge_agent.apps.web.web_app as app_module
 
     monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
     config = AgentConfig(
@@ -185,7 +185,7 @@ def test_chat_stream_does_not_cache_answer_delta(tmp_path, monkeypatch):
     def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
         return type("Components", (), {"agent": EventAgent(event_sink), "tools": FakeTools()})()
 
-    import personal_knowledge_agent.web.app as app_module
+    import personal_knowledge_agent.apps.web.web_app as app_module
 
     monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
     config = AgentConfig(

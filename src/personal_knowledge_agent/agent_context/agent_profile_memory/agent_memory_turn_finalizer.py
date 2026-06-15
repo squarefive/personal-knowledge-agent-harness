@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Callable
 
-from ..agent_memory.extract_memory_candidates import MemoryExtractor
-from ..schemas import MemoryIndex
+from .agent_memory_candidate_extractor import AgentMemoryCandidateExtractor as MemoryExtractor
+from ...schemas import MemoryIndex
 
 
 class TurnMemoryFinalizer:

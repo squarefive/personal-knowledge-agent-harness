@@ -1,3 +1,3 @@
-from ...tools.knowledge_tools import KnowledgeTools as AgentMemoryToolHandlers
+from ..qa_knowledge_tools import QAKnowledgeToolHandlers as AgentMemoryToolHandlers
 
 __all__ = ["AgentMemoryToolHandlers"]
