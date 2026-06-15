@@ -1,6 +1,6 @@
 ---
 title: "Personal Knowledge Agent Harness 代码地图"
-last_updated: "2026-06-15"
+last_updated: "2026-06-16"
 ---
 
 # Personal Knowledge Agent Harness 代码地图
@@ -12,7 +12,8 @@ last_updated: "2026-06-15"
 
 | 目录 | 作用 |
 |---|---|
-| `src/personal_knowledge_agent/` | 项目主 Python 包，包含 Agent 装配、配置、公共结构、事件和日志。 |
+| `src/personal_knowledge_agent/` | 项目主 Python 包，只保留公共包入口和按职责划分的子目录。 |
+| `src/personal_knowledge_agent/agent_bootstrap/` | Agent 运行配置和跨模块组件装配。 |
 | `src/personal_knowledge_agent/agent_runtime/` | Agent loop 运行时，包括 LLM 调用、tool call、最终回答、来源证据和事件发射。 |
 | `src/personal_knowledge_agent/agent_context/` | Agent 每轮上下文，包括 prompt、conversation session、Agent profile memory 和 tool result compact。 |
 | `src/personal_knowledge_agent/agent_context/conversation_sessions/` | `.sessions/` transcript、metadata、summary 和 artifact 管理。 |
@@ -23,6 +24,7 @@ last_updated: "2026-06-15"
 | `src/personal_knowledge_agent/qa_data_access/` | Q&A card 的 SQLite 和 Qdrant 数据访问。 |
 | `src/personal_knowledge_agent/tool_runtime/` | 通用 tool dispatcher。 |
 | `src/personal_knowledge_agent/llm_clients/` | LLM provider client。 |
+| `src/personal_knowledge_agent/agent_observability/` | Agent 运行事件日志等可观测性适配。 |
 | `src/personal_knowledge_agent/apps/cli/` | CLI app 入口和事件渲染。 |
 | `src/personal_knowledge_agent/apps/web/` | 本地 Web app、Web 入口和静态资源。 |
 | `docs/` | 项目文档目录。 |
@@ -35,19 +37,24 @@ last_updated: "2026-06-15"
 
 模块目录：`src/personal_knowledge_agent/`
 
-模块作用：提供装配、配置、公共事件、日志和兼容入口。
+模块作用：提供 Python 包和 CLI 公共入口。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 标记 Python 包。 |
 | `__main__.py` | CLI 根入口薄转发，供 `python -m personal_knowledge_agent` 和 `pka` 使用。 |
-| `agent_factory.py` | 创建 Agent loop runner 及其依赖，供 CLI 和 Web 复用。 |
-| `config.py` | 从 `.env` 和环境变量读取运行配置。 |
-| `events.py` | 定义 Agent 运行事件和 run_id 生成。 |
-| `jsonl_logger.py` | 异步写入 Agent 运行 JSONL 开发日志。 |
-| `permissions.py` | 定义工具权限判断、审批请求和拒绝结果。 |
-| `prompt_builder.py` | 旧 prompt builder 兼容入口。 |
-| `schemas.py` | 定义轻量数据结构，包括 Q&A、LLM、session 和 memory 数据。 |
+
+### Agent Bootstrap
+
+模块目录：`src/personal_knowledge_agent/agent_bootstrap/`
+
+模块作用：加载运行配置并装配 Agent 的跨模块依赖。
+
+| 文件 | 作用 |
+|---|---|
+| `__init__.py` | 导出 Agent bootstrap 公共入口。 |
+| `agent_component_factory.py` | 创建 Agent loop runner、两个 tool handler 及其依赖。 |
+| `agent_runtime_config.py` | 从 `.env` 和环境变量读取运行配置。 |
 
 ### Agent Runtime
 
@@ -66,6 +73,7 @@ last_updated: "2026-06-15"
 | `agent_runtime_message_recorder.py` | runtime messages、transcript 和 metadata count 记录。 |
 | `answer_source_evidence.py` | 从本轮真实 tool result 提取和渲染回答来源。 |
 | `agent_event_emitter.py` | Agent run 事件发射适配。 |
+| `agent_events.py` | 定义 Agent 运行事件和 run_id 生成。 |
 
 ### Agent Context
 
@@ -93,6 +101,7 @@ last_updated: "2026-06-15"
 | `conversation_session_restorer.py` | 从 transcript 或 summary 恢复 runtime messages。 |
 | `conversation_session_summarizer.py` | 长 transcript 自动总结和失败降级。 |
 | `tool_result_compactor.py` | 大工具结果落盘和 compact record 生成。 |
+| `conversation_session_models.py` | 定义 session metadata、restore result 和 compact record。 |
 
 ### Agent Profile Memory
 
@@ -107,6 +116,7 @@ last_updated: "2026-06-15"
 | `agent_memory_document_repository.py` | 读取和校验 `.memory/*.md`。 |
 | `agent_memory_candidate_extractor.py` | 从 turn 结果中提取 memory candidates。 |
 | `agent_memory_turn_finalizer.py` | turn-end memory candidate 事件收尾。 |
+| `agent_memory_models.py` | 定义 memory index、document 和 candidate 数据结构。 |
 
 ### Agent Tools
 
@@ -129,6 +139,7 @@ last_updated: "2026-06-15"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Q&A 数据访问组件。 |
+| `qa_card_models.py` | 定义 Q&A card 和关键词检索结果数据结构。 |
 | `qa_card_repository.py` | 初始化和读写 SQLite `qa_cards` 表。 |
 | `qa_card_semantic_index.py` | 封装 DashScope embedding 和 Qdrant local mode 语义索引。 |
 
@@ -136,12 +147,14 @@ last_updated: "2026-06-15"
 
 模块目录：`src/personal_knowledge_agent/tool_runtime/`
 
-模块作用：执行 LLM tool call 分发和展示字段筛选。
+模块作用：汇总 Q&A 与 Agent memory handler，执行 LLM tool call 分发、权限判断和展示字段筛选。
 
 | 文件 | 作用 |
 |---|---|
-| `__init__.py` | 导出 ToolDispatcher。 |
-| `tool_dispatcher.py` | 将 ToolCall 分发到具体 handler，并筛选展示字段。 |
+| `__init__.py` | 导出 tool runtime 公共类型和函数。 |
+| `tool_dispatcher.py` | 注册两个独立 handler，将 ToolCall 分发到具体方法并筛选展示字段。 |
+| `tool_models.py` | 定义 ToolCall 数据结构。 |
+| `tool_permission_policy.py` | 定义工具权限判断、审批请求和拒绝结果。 |
 
 ### LLM Clients
 
@@ -153,6 +166,18 @@ last_updated: "2026-06-15"
 |---|---|
 | `__init__.py` | 导出 LLM client。 |
 | `deepseek_chat_client.py` | DeepSeek streaming chat 薄客户端和响应转换。 |
+| `llm_models.py` | 定义 LLMResponse 数据结构。 |
+
+### Agent Observability
+
+模块目录：`src/personal_knowledge_agent/agent_observability/`
+
+模块作用：记录 Agent 运行事件。
+
+| 文件 | 作用 |
+|---|---|
+| `__init__.py` | 导出 Agent observability 组件。 |
+| `agent_event_jsonl_logger.py` | 异步写入 Agent 运行 JSONL 开发日志。 |
 
 ### Apps
 
@@ -170,20 +195,16 @@ last_updated: "2026-06-15"
 | `web/static/styles.css` | Web UI 样式。 |
 | `web/static/app.js` | 浏览器端聊天、session 和卡片浏览逻辑。 |
 
-### Compatibility Packages
+### Public Web Launcher
 
-模块目录：`src/personal_knowledge_agent/agent_loop/`、`agent_memory/`、`session_memory/`、`qa_store/`、`tools/`、`web/`
+模块目录：`src/personal_knowledge_agent/web/`
 
-模块作用：保留旧包级入口的兼容导出，不承载新的业务实现。
+模块作用：保留公开的 `python -m personal_knowledge_agent.web` 启动方式，不承载业务实现。
 
 | 文件 | 作用 |
 |---|---|
-| `agent_loop/__init__.py` | 兼容导出 AgentLoop。 |
-| `agent_memory/__init__.py` | 兼容导出旧 Agent memory 名称。 |
-| `session_memory/__init__.py` | 兼容导出旧 session memory 名称。 |
-| `qa_store/__init__.py` | 兼容导出 SQLiteStore。 |
-| `tools/__init__.py` | 兼容导出 KnowledgeTools 和 ToolDispatcher。 |
-| `web/__main__.py` | 兼容 `python -m personal_knowledge_agent.web`。 |
+| `__init__.py` | 标记 Web 启动包。 |
+| `__main__.py` | 转发到 `apps/web/web_main.py`。 |
 
 ### Scripts
 
