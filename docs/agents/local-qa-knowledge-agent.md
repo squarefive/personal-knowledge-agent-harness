@@ -143,15 +143,15 @@ last_updated: "2026-06-14"
 
 > 本节说明 Agent Harness 的组成，以及各层职责边界。
 
-- **Agent Loop 职责**:
+- **Agent Runtime 职责**:
   - 接收用户输入并维护本轮 messages。
-  - 调用 Prompt Builder 获取 system prompt。
+  - 调用 Agent Prompt Builder 获取 system prompt。
   - 调用 LLM Client。
   - 判断 LLM 是否返回 tool calls。
   - 调用 Tool Dispatcher 执行工具。
   - 将 tool result 回填 messages。
   - 在没有 tool calls 时返回最终回答。
-  - AgentLoop 的主运行骨架保持 `run(user_input) -> str`，不得为了展示层流式效果新增第二套 Agent 主入口。
+  - Agent loop runner 的主运行骨架保持 `run(user_input) -> str`，不得为了展示层流式效果新增第二套 Agent 主入口。
   - 在关键阶段产生结构化运行事件，包括 `user_input_received`、`llm_call_started`、`answer_delta`、`llm_call_finished`、`tool_call_started`、`tool_call_finished`、`evidence_checked`、`final_answer_generated` 和 `error`。
   - `answer_delta` 只表示最终回答文本的实时增量，用于 CLI / Web 展示；`final_answer_generated` 仍是 evidence check 后的权威最终答案。
   - 运行事件用于 CLI 实时展示和本地开发日志，不作为长期知识来源。
@@ -159,18 +159,23 @@ last_updated: "2026-06-14"
   - 运行事件只描述可审计过程，不暴露模型完整思考链。
 
 - **Agent Factory 职责**:
-  - `agent_factory.py` 负责创建 AgentLoop 及其依赖，包括 SQLiteStore、KnowledgeTools、ToolDispatcher、DeepSeekClient、session memory、Agent memory 和 context compactor。
+  - `agent_factory.py` 负责创建 Agent loop runner 及其依赖，包括 Q&A 数据访问、Agent tools、ToolDispatcher、DeepSeekChatClient、conversation session、Agent profile memory 和 tool result compactor。
   - 供 CLI Runtime 和 Web Runtime 复用同一套 Agent 装配逻辑。
   - 不负责 CLI 输入、Web HTTP 请求、HTML 渲染、浏览器打开或进程启动。
 
-- **Prompt Builder 职责**:
+- **Agent Context 职责**:
+  - 管理每轮 Agent 可用上下文，包括 prompt、conversation session、Agent profile memory 和 tool result compact。
+  - 不把 conversation session transcript、summary 或 compact artifact 当作 Q&A 长期事实来源。
+  - 不把 Agent profile memory 当作 Q&A 回答来源。
+
+- **Agent Prompt Builder 职责**:
   - 运行时拼接短 system prompt。
   - 包含身份、行为规则、工具使用规则、回答格式和拒答规则。
   - 在 turn-start 阶段接收 memory index、selected memories 和 session summary，并将其压缩注入本轮上下文。
   - 不保存业务数据。
   - 不承担数据库读写职责。
 
-- **Memory Manager 职责**:
+- **Agent Profile Memory 职责**:
   - 读取 `.memory/MEMORY.md` memory index。
   - 按需读取少量相关 `.memory/*.md`。
   - 校验 memory frontmatter 和索引字段。
@@ -178,23 +183,23 @@ last_updated: "2026-06-14"
   - 不直接回答用户知识问题。
   - 不把 Agent memory 写入 SQLite `qa_cards` 表。
 
-- **Session Transcript 职责**:
+- **Conversation Transcript 职责**:
   - 将 user message、assistant message、assistant tool call message 和 tool result message 追加写入 `.sessions/<session_id>/transcript.jsonl`。
   - CLI 重启时从 transcript 恢复 runtime `messages[]`。
   - transcript 只服务当前聊天上下文恢复，不作为 Q&A 知识来源。
 
-- **Session Metadata 职责**:
+- **Conversation Session Metadata 职责**:
   - 读写 `.sessions/<session_id>/metadata.json`。
   - 记录 session_id、cwd、model、created_at、updated_at、message_count、event_count、summary_status、summary_attempts 和 last_restore_mode。
   - 不保存 API key、secret、完整 headers 或非恢复必需 payload。
 
-- **Session Restore / Summarizer 职责**:
+- **Conversation Session Restore / Summarizer 职责**:
   - 当 transcript 未超过预算时原样恢复 `messages[]`。
   - 当 transcript 超过预算时，调用 summarizer 生成 `.sessions/<session_id>/summary.md`。
   - summarizer 最多重试 3 次。
   - summarizer 失败时使用 first N messages + recovery notice + recent N messages 降级恢复。
 
-- **Context Compactor 职责**:
+- **Tool Result Compactor 职责**:
   - 识别过大的 tool result 或旧上下文。
   - 将原始大输出写入 `.sessions/<session_id>/artifacts/`。
   - 在上下文中保留 compact record，包括 `artifact_path`、`summary`、`relevance` 和 `must_keep`。
@@ -223,7 +228,7 @@ last_updated: "2026-06-14"
 - **CLI Runtime 职责**:
   - 作为 `python -m personal_knowledge_agent` 和安装后 `pka` 命令的启动入口。
   - 启动时加载 `.env` 和环境变量配置。
-  - 初始化 SQLite Store、KnowledgeTools、ToolDispatcher、DeepSeekClient 和 AgentLoop。
+  - 初始化 Q&A 数据访问、Agent tools、ToolDispatcher、DeepSeekChatClient 和 Agent loop runner。
   - 进入持续交互循环，读取用户输入并打印 Agent 回复。
   - 使用 `prompt-toolkit` 提供交互式输入，不使用裸 `input()` 作为主要输入方式。
   - 输入层只负责采集用户输入，不做知识保存、检索或业务判断。
@@ -241,7 +246,7 @@ last_updated: "2026-06-14"
 - **Web Runtime 职责**:
   - 作为 `pka web` 和 `python -m personal_knowledge_agent.web` 的本地浏览器入口。
   - 启动时加载 `.env` 和环境变量配置。
-  - 通过 `agent_factory.py` 按 `session_id` 创建 AgentLoop 及其依赖。
+  - 通过 `agent_factory.py` 按 `session_id` 创建 Agent loop runner 及其依赖。
   - 启动绑定在 `127.0.0.1` 的本地 HTTP 服务。
   - 提供静态 HTML/CSS/JS 页面。
   - 通过流式聊天接口接收用户输入并调用对应 session 的 AgentLoop。
@@ -269,28 +274,34 @@ last_updated: "2026-06-14"
   - Final answer 事件用于回答收尾和权威答案修正，不应重复打印已经通过 `answer_delta` 展示的完整回答。
   - 不展示原始 LLM messages、system prompt、API key、secret、完整内部 payload 或模型完整思考链。
 
-- **Tools 职责**:
-  - 作为 Agent 可执行动作的唯一入口。
+- **Agent Tools 职责**:
+  - 作为 LLM 可调用工具的 adapter，是 Agent 可执行动作的唯一入口。
   - 校验工具输入。
-  - 调用 SQLite Store 完成保存、检索、读取和列出最近卡片。
-  - 调用 Agent memory store 完成 memory index 和 memory 全文读取。
-  - 不负责上下文压缩；当前上下文压缩由 AgentLoop 内部的 Context Compactor 自动完成。
+  - Q&A knowledge tools 调用 Q&A data access 完成保存、检索、读取、更新、删除、最近卡片和语义索引维护。
+  - Agent memory tools 调用 Agent profile memory repository 完成 memory index 和 memory 全文读取。
+  - 不直接拼接最终自然语言回答。
+  - 不负责上下文压缩；当前上下文压缩由 Agent runtime 内部的 Tool Result Compactor 自动完成。
   - 将成功、失败和未找到结果统一转换为结构化 tool result。
 
-- **Services / Repositories 职责**:
-  - 第一版 Q&A 知识库不单独拆分 Service / Repository。
-  - `SQLiteStore` 负责数据库初始化、保存、读取、LIKE 检索和最近列表。
-  - `SQLiteStore` 不调用 LLM，不组织最终自然语言回答。
-  - `MemoryStore` 负责 `.memory/*.md` 的读写、frontmatter 解析和内容校验。
-  - `MemoryIndex` 负责 `.memory/MEMORY.md` 的读取、校验和更新。
-  - `SessionTranscript` 负责 `.sessions/<session_id>/transcript.jsonl` 的追加和读取。
-  - `SessionTranscript` 负责校验 `session_id`，避免路径穿越或非法 session 目录。
-  - `SessionTranscript` 负责从 transcript 派生用户可见历史消息，只返回 user message 和 assistant 最终回答，不返回 tool result、assistant tool call、system prompt 或完整内部 payload。
-  - `SessionMetadata` 负责 `.sessions/<session_id>/metadata.json` 的读写。
-  - `SessionMetadata` 负责保存 session 标题、标题来源和最后用户消息。
-  - `SessionMetadata` 负责列出本地 `.sessions/*/metadata.json`，供 Web 会话列表使用。
-  - `SessionRestore` 负责从 transcript / summary 恢复 runtime `messages[]`。
-  - `SessionSummarizer` 负责长 transcript 的 summary 生成和失败降级。
+- **Q&A Data Access 职责**:
+  - `QACardRepository` 负责 SQLite `qa_cards` 表初始化、保存、读取、更新、删除、LIKE 检索、最近列表、category 校验和 vectorized 标记。
+  - `QACardSemanticIndex` 负责 Q&A card embedding、Qdrant local mode upsert/search/delete。
+  - Q&A data access 不调用 LLM，不校验 LLM tool arguments，不组织最终自然语言回答。
+
+- **Agent Profile Memory Repository 职责**:
+  - `AgentMemoryDocumentRepository` 负责 `.memory/*.md` 的读取、frontmatter 解析和内容校验。
+  - `AgentMemoryIndexRepository` 负责 `.memory/MEMORY.md` 的读取和校验。
+  - `AgentMemoryCandidateExtractor` 只生成候选，不直接写入长期 memory。
+
+- **Conversation Session Repository 职责**:
+  - `ConversationTranscriptRepository` 负责 `.sessions/<session_id>/transcript.jsonl` 的追加和读取。
+  - `ConversationTranscriptRepository` 负责校验 `session_id`，避免路径穿越或非法 session 目录。
+  - `ConversationTranscriptRepository` 负责从 transcript 派生用户可见历史消息，只返回 user message 和 assistant 最终回答，不返回 tool result、assistant tool call、system prompt 或完整内部 payload。
+  - `ConversationSessionMetadataRepository` 负责 `.sessions/<session_id>/metadata.json` 的读写。
+  - `ConversationSessionMetadataRepository` 负责保存 session 标题、标题来源和最后用户消息。
+  - `ConversationSessionMetadataRepository` 负责列出本地 `.sessions/*/metadata.json`，供 Web 会话列表使用。
+  - `ConversationSessionRestorer` 负责从 transcript / summary 恢复 runtime `messages[]`。
+  - `ConversationSessionSummarizer` 负责长 transcript 的 summary 生成和失败降级。
 
 - **Storage / External API 职责**:
   - SQLite `qa_cards` 是第一版 Q&A 知识库的唯一长期记忆来源。
@@ -348,44 +359,45 @@ last_updated: "2026-06-14"
 | 路径 | 职责 |
 |---|---|
 | `pyproject.toml` | 声明项目依赖和 `pka` CLI script |
-| `src/personal_knowledge_agent/agent_loop/` | Agent 主循环和 turn 编排 |
-| `src/personal_knowledge_agent/agent_loop/loop.py` | Agent Loop 核心调用链 |
-| `src/personal_knowledge_agent/agent_loop/call_llm.py` | 单次 LLM 调用和对应事件 |
-| `src/personal_knowledge_agent/agent_loop/run_tool_call.py` | 单次 tool call、耗时、compact 和对应事件 |
-| `src/personal_knowledge_agent/agent_loop/finish_answer.py` | 最终回答收尾和最大轮次停止 |
-| `src/personal_knowledge_agent/agent_loop/format_llm_messages.py` | assistant/tool result 的 LLM API message 格式化 |
-| `src/personal_knowledge_agent/agent_loop/load_turn_context.py` | turn-start memory index 和相关 memory 加载 |
-| `src/personal_knowledge_agent/agent_loop/finalize_turn_memory.py` | turn-end memory candidate 提取 |
-| `src/personal_knowledge_agent/agent_loop/emit_agent_events.py` | Agent run 事件发射适配 |
-| `src/personal_knowledge_agent/agent_loop/record_runtime_messages.py` | runtime messages、transcript 和 metadata count 记录 |
+| `src/personal_knowledge_agent/agent_runtime/` | Agent loop 运行、LLM call、tool call、最终回答、来源证据和事件发射 |
+| `src/personal_knowledge_agent/agent_runtime/agent_loop_runner.py` | Agent loop 核心调用链 |
+| `src/personal_knowledge_agent/agent_runtime/agent_llm_call_runner.py` | 单次 Agent LLM 调用和对应事件 |
+| `src/personal_knowledge_agent/agent_runtime/agent_tool_call_runner.py` | 单次 Agent tool call、耗时、compact 和对应事件 |
+| `src/personal_knowledge_agent/agent_runtime/agent_answer_finalizer.py` | Agent 最终回答收尾和最大轮次停止 |
+| `src/personal_knowledge_agent/agent_runtime/answer_source_evidence.py` | 从本轮真实 tool result 提取和渲染回答来源证据 |
+| `src/personal_knowledge_agent/agent_runtime/agent_event_emitter.py` | Agent run 事件发射适配 |
+| `src/personal_knowledge_agent/agent_context/` | Agent 每轮上下文来源、conversation session 和 Agent profile memory |
+| `src/personal_knowledge_agent/agent_context/agent_prompt_builder.py` | 构建运行时 system prompt |
+| `src/personal_knowledge_agent/agent_context/conversation_sessions/` | `.sessions/` 会话恢复、摘要、transcript 和 artifact |
+| `src/personal_knowledge_agent/agent_context/conversation_sessions/conversation_transcript_repository.py` | 追加和读取 `.sessions/<session_id>/transcript.jsonl` |
+| `src/personal_knowledge_agent/agent_context/conversation_sessions/conversation_session_metadata_repository.py` | 读写 `.sessions/<session_id>/metadata.json` |
+| `src/personal_knowledge_agent/agent_context/conversation_sessions/conversation_session_restorer.py` | 从 transcript 或 summary 恢复 runtime `messages[]` |
+| `src/personal_knowledge_agent/agent_context/conversation_sessions/conversation_session_summarizer.py` | 长 transcript 自动总结和失败降级 |
+| `src/personal_knowledge_agent/agent_context/conversation_sessions/tool_result_compactor.py` | 大工具结果落盘和 compact record 生成 |
+| `src/personal_knowledge_agent/agent_context/agent_profile_memory/` | `.memory/` 长期 Agent 工作记忆读取和候选提取 |
+| `src/personal_knowledge_agent/agent_context/agent_profile_memory/agent_memory_document_repository.py` | 读取 `.memory/*.md` 长期 Agent memory |
+| `src/personal_knowledge_agent/agent_context/agent_profile_memory/agent_memory_index_repository.py` | 读取 `.memory/MEMORY.md` 记忆索引 |
+| `src/personal_knowledge_agent/agent_context/agent_profile_memory/agent_memory_candidate_extractor.py` | 生成 memory candidates |
+| `src/personal_knowledge_agent/agent_tools/` | LLM 可调用工具 adapter |
+| `src/personal_knowledge_agent/agent_tools/qa_knowledge_tools/qa_knowledge_tool_handlers.py` | Q&A 知识工具输入校验和 tool result 组装 |
+| `src/personal_knowledge_agent/agent_tools/agent_memory_tools/agent_memory_tool_handlers.py` | Agent memory 读取工具输入校验和 tool result 组装 |
+| `src/personal_knowledge_agent/qa_data_access/` | Q&A card 的 SQLite 和 Qdrant 数据访问 |
+| `src/personal_knowledge_agent/qa_data_access/qa_card_repository.py` | Q&A card SQLite 初始化、写入、读取、检索 |
+| `src/personal_knowledge_agent/qa_data_access/qa_card_semantic_index.py` | Q&A card semantic index |
+| `src/personal_knowledge_agent/tool_runtime/tool_dispatcher.py` | 工具分发和错误包装 |
 | `src/personal_knowledge_agent/events.py` | Agent run 结构化事件契约 |
-| `src/personal_knowledge_agent/agent_factory.py` | 创建 AgentLoop 及其依赖，供 CLI Runtime 和 Web Runtime 复用 |
-| `src/personal_knowledge_agent/cli_renderer.py` | CLI 实时事件渲染 |
+| `src/personal_knowledge_agent/agent_factory.py` | 创建 Agent loop runner 及其依赖，供 CLI Runtime 和 Web Runtime 复用 |
+| `src/personal_knowledge_agent/apps/cli/cli_event_renderer.py` | CLI 实时事件渲染 |
 | `src/personal_knowledge_agent/jsonl_logger.py` | 异步 JSONL 开发日志 |
-| `src/personal_knowledge_agent/prompt_builder.py` | 构建运行时 system prompt |
-| `src/personal_knowledge_agent/llm_client.py` | DeepSeek 薄客户端 |
+| `src/personal_knowledge_agent/llm_clients/deepseek_chat_client.py` | DeepSeek chat 薄客户端 |
 | `src/personal_knowledge_agent/config.py` | 读取 `.env` 和环境变量，返回运行配置 |
-| `src/personal_knowledge_agent/__main__.py` | CLI 持续交互入口和 `pka web` 子命令分发，供 `python -m personal_knowledge_agent` 和 `pka` 复用 |
-| `src/personal_knowledge_agent/web/` | 本地 Web Runtime、Web API 和静态 HTML 页面 |
-| `src/personal_knowledge_agent/web/app.py` | 创建本地 Web app，定义聊天和卡片浏览 API |
-| `src/personal_knowledge_agent/web/__main__.py` | Web Runtime 启动入口，供 `python -m personal_knowledge_agent.web` 复用 |
-| `src/personal_knowledge_agent/web/static/` | Chat + Cards 的原生 HTML/CSS/JS 页面 |
-| `src/personal_knowledge_agent/tools/` | LLM 可调用工具和工具分发 |
-| `src/personal_knowledge_agent/tools/knowledge_tools.py` | 知识库工具实现 |
-| `src/personal_knowledge_agent/tools/dispatch_tool_call.py` | 工具分发和错误包装 |
-| `src/personal_knowledge_agent/agent_memory/` | `.memory/` 长期 Agent 工作记忆 |
-| `src/personal_knowledge_agent/agent_memory/document_store.py` | 读写 `.memory/*.md` 长期 Agent memory |
-| `src/personal_knowledge_agent/agent_memory/index_store.py` | 读写 `.memory/MEMORY.md` 记忆索引 |
-| `src/personal_knowledge_agent/agent_memory/extract_memory_candidates.py` | 生成 memory candidates |
-| `src/personal_knowledge_agent/session_memory/` | `.sessions/` 会话恢复、摘要、transcript 和 artifact |
-| `src/personal_knowledge_agent/session_memory/transcript.py` | 追加和读取 `.sessions/<session_id>/transcript.jsonl` |
-| `src/personal_knowledge_agent/session_memory/metadata.py` | 读写 `.sessions/<session_id>/metadata.json` |
-| `src/personal_knowledge_agent/session_memory/restore_session.py` | 从 transcript 或 summary 恢复 runtime `messages[]` |
-| `src/personal_knowledge_agent/session_memory/summarize_session.py` | 长 transcript 自动总结和失败降级 |
-| `src/personal_knowledge_agent/session_memory/compact_tool_result.py` | 大工具结果落盘和 compact record 生成 |
+| `src/personal_knowledge_agent/__main__.py` | CLI 薄转发入口，供 `python -m personal_knowledge_agent` 和 `pka` 复用 |
+| `src/personal_knowledge_agent/apps/cli/cli_main.py` | CLI 持续交互入口和 `pka web` 子命令分发 |
+| `src/personal_knowledge_agent/apps/web/` | 本地 Web Runtime、Web API 和静态 HTML 页面 |
+| `src/personal_knowledge_agent/apps/web/web_app.py` | 创建本地 Web app，定义聊天和卡片浏览 API |
+| `src/personal_knowledge_agent/apps/web/web_main.py` | Web Runtime 启动入口 |
+| `src/personal_knowledge_agent/apps/web/static/` | Chat + Cards 的原生 HTML/CSS/JS 页面 |
 | `src/personal_knowledge_agent/schemas.py` | 轻量数据契约 |
-| `src/personal_knowledge_agent/qa_store/` | Q&A 知识库持久化 |
-| `src/personal_knowledge_agent/qa_store/sqlite_store.py` | SQLite 初始化、写入、读取、检索 |
 | `.knowledge/knowledge.db` | 本地知识库数据库文件 |
 | `.memory/MEMORY.md` | 用户可见 Agent memory 索引 |
 | `.memory/*.md` | 用户可见 Agent 长期记忆文档 |

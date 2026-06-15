@@ -4,28 +4,32 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .agent_loop import AgentLoop
-from .agent_memory import MemoryExtractor, MemoryIndexStore, MemoryStore
+from .agent_context.agent_profile_memory import (
+    AgentMemoryCandidateExtractor,
+    AgentMemoryDocumentRepository,
+    AgentMemoryIndexRepository,
+)
+from .agent_context.conversation_sessions import (
+    ConversationSessionMetadataRepository,
+    ConversationSessionRestorer,
+    ConversationSessionSummarizer,
+    ConversationTranscriptRepository,
+    ToolResultCompactor,
+)
+from .agent_runtime import AgentLoopRunner
+from .agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 from .config import AgentConfig
 from .events import AgentEvent
-from .llm_client import DeepSeekClient
+from .llm_clients import DeepSeekChatClient
 from .permissions import ApprovalRequest
-from .qa_semantic_index import QASemanticIndex
-from .qa_store import SQLiteStore
-from .session_memory import (
-    ContextCompactor,
-    SessionMetadataStore,
-    SessionRestore,
-    SessionSummarizer,
-    SessionTranscript,
-)
-from .tools import KnowledgeTools, ToolDispatcher
+from .qa_data_access import QACardRepository, QACardSemanticIndex
+from .tool_runtime import ToolDispatcher
 
 
 @dataclass(frozen=True)
 class AgentComponents:
-    agent: AgentLoop
-    tools: KnowledgeTools
+    agent: AgentLoopRunner
+    tools: QAKnowledgeToolHandlers
 
 
 def create_agent_components(
@@ -34,23 +38,27 @@ def create_agent_components(
     approval_callback: Callable[[ApprovalRequest], bool] | None = None,
     session_id: str = "default",
 ) -> AgentComponents:
-    store = SQLiteStore(config.knowledge_db_path)
+    store = QACardRepository(config.knowledge_db_path)
     workspace_root = Path.cwd()
-    llm = DeepSeekClient(
+    llm = DeepSeekChatClient(
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
     )
-    transcript = SessionTranscript(workspace_root, session_id=session_id)
-    metadata_store = SessionMetadataStore(workspace_root, session_id=session_id, model=config.deepseek_model)
-    restore_result = SessionRestore(
+    transcript = ConversationTranscriptRepository(workspace_root, session_id=session_id)
+    metadata_store = ConversationSessionMetadataRepository(
+        workspace_root,
+        session_id=session_id,
+        model=config.deepseek_model,
+    )
+    restore_result = ConversationSessionRestorer(
         transcript=transcript,
         metadata_store=metadata_store,
-        summarizer=SessionSummarizer(llm),
+        summarizer=ConversationSessionSummarizer(llm),
     ).restore()
     metadata = metadata_store.load_or_create()
-    memory_index_store = MemoryIndexStore(workspace_root)
-    memory_store = MemoryStore(workspace_root)
-    semantic_index = QASemanticIndex(
+    memory_index_store = AgentMemoryIndexRepository(workspace_root)
+    memory_store = AgentMemoryDocumentRepository(workspace_root)
+    semantic_index = QACardSemanticIndex(
         dashscope_api_key=config.dashscope_api_key,
         embedding_base_url=config.qwen_embedding_base_url,
         embedding_model=config.qwen_embedding_model,
@@ -58,14 +66,14 @@ def create_agent_components(
         qdrant_path=config.qdrant_path,
         collection_name=config.qdrant_collection,
     )
-    tools = KnowledgeTools(
+    tools = QAKnowledgeToolHandlers(
         store,
         memory_index_store=memory_index_store,
         memory_store=memory_store,
         semantic_index=semantic_index,
     )
     dispatcher = ToolDispatcher(tools)
-    agent = AgentLoop(
+    agent = AgentLoopRunner(
         llm=llm,
         tools=tools,
         dispatcher=dispatcher,
@@ -74,8 +82,8 @@ def create_agent_components(
         messages=restore_result.messages,
         transcript=transcript,
         metadata_store=metadata_store,
-        context_compactor=ContextCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir),
-        memory_extractor=MemoryExtractor(),
+        context_compactor=ToolResultCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir),
+        memory_extractor=AgentMemoryCandidateExtractor(),
         approval_callback=approval_callback if approval_callback is not None else None,
         event_sink=event_sink,
     )
@@ -87,7 +95,7 @@ def create_agent(
     event_sink: Callable[[AgentEvent], None] | None = None,
     approval_callback: Callable[[ApprovalRequest], bool] | None = None,
     session_id: str = "default",
-) -> AgentLoop:
+) -> AgentLoopRunner:
     return create_agent_components(
         config,
         event_sink=event_sink,

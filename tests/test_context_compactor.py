@@ -1,4 +1,4 @@
-from personal_knowledge_agent.session_memory import ContextCompactor
+from personal_knowledge_agent.agent_context.conversation_sessions import ToolResultCompactor as ContextCompactor
 
 
 def test_compact_tool_result_returns_none_below_threshold(tmp_path):

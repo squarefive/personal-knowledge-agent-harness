@@ -1,7 +1,7 @@
 import tomllib
 from pathlib import Path
 
-from personal_knowledge_agent import __main__ as cli
+from personal_knowledge_agent.apps.cli import cli_main as cli
 from personal_knowledge_agent.events import AgentEvent
 from personal_knowledge_agent.permissions import ApprovalRequest
 
@@ -125,7 +125,7 @@ def test_main_dispatches_web_subcommand(monkeypatch):
         called["argv"] = argv
         return 0
 
-    import personal_knowledge_agent.web.__main__ as web_main_module
+    import personal_knowledge_agent.apps.web.web_main as web_main_module
 
     monkeypatch.setattr(web_main_module, "main", fake_web_main)
 

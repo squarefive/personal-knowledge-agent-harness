@@ -1,6 +1,6 @@
 from io import StringIO
 
-from personal_knowledge_agent.cli_renderer import CliRenderer
+from personal_knowledge_agent.apps.cli import CliEventRenderer as CliRenderer
 from personal_knowledge_agent.events import AgentEvent
 
 

@@ -1,4 +1,4 @@
-from personal_knowledge_agent.session_memory import SessionMetadataStore
+from personal_knowledge_agent.agent_context.conversation_sessions import ConversationSessionMetadataRepository as SessionMetadataStore
 
 
 def test_session_metadata_load_or_create_writes_default_metadata(tmp_path):

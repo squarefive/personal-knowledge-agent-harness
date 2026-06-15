@@ -4,7 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from personal_knowledge_agent.qa_store import SQLiteStore
+from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
 from personal_knowledge_agent.schemas import LLMResponse
 
 

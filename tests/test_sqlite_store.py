@@ -1,4 +1,4 @@
-from personal_knowledge_agent.qa_store import SQLiteStore
+from personal_knowledge_agent.qa_data_access import QACardRepository as SQLiteStore
 
 
 def test_save_read_search_and_recent_cards(tmp_path):

@@ -1,5 +1,6 @@
-from .document_store import MemoryStore
-from .extract_memory_candidates import MemoryExtractor
-from .index_store import MEMORY_TYPES, MemoryIndexStore
+from ..agent_context.agent_profile_memory import AGENT_MEMORY_TYPES as MEMORY_TYPES
+from ..agent_context.agent_profile_memory import AgentMemoryCandidateExtractor as MemoryExtractor
+from ..agent_context.agent_profile_memory import AgentMemoryDocumentRepository as MemoryStore
+from ..agent_context.agent_profile_memory import AgentMemoryIndexRepository as MemoryIndexStore
 
 __all__ = ["MEMORY_TYPES", "MemoryExtractor", "MemoryIndexStore", "MemoryStore"]
