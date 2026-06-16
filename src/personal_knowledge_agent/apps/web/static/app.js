@@ -4,9 +4,14 @@ const state = {
   sessions: [],
   activeSessionId: null,
   selectedCardId: null,
+  leftCollapsed: getStoredBoolean("left_pane_collapsed", window.matchMedia("(max-width: 1080px)").matches),
+  rightCollapsed: getStoredBoolean("right_pane_collapsed", window.matchMedia("(max-width: 760px)").matches),
 };
 
 const elements = {
+  appShell: document.querySelector("#appShell"),
+  toggleSessionsButton: document.querySelector("#toggleSessionsButton"),
+  toggleCardsButton: document.querySelector("#toggleCardsButton"),
   sessionsList: document.querySelector("#sessionsList"),
   sessionStatus: document.querySelector("#sessionStatus"),
   newSessionButton: document.querySelector("#newSessionButton"),
@@ -45,6 +50,16 @@ const detailTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   minute: "2-digit",
   second: "2-digit",
   hour12: false,
+});
+
+applyPaneState();
+
+elements.toggleSessionsButton.addEventListener("click", () => {
+  setPaneCollapsed("left", !state.leftCollapsed);
+});
+
+elements.toggleCardsButton.addEventListener("click", () => {
+  setPaneCollapsed("right", !state.rightCollapsed);
 });
 
 elements.chatForm.addEventListener("submit", async (event) => {
@@ -208,7 +223,7 @@ function renderSessions(sessions) {
     title.textContent = session.title || "新会话";
 
     const meta = document.createElement("span");
-    meta.textContent = session.last_user_message || session.updated_at || session.session_id;
+    meta.textContent = formatSessionMeta(session);
 
     button.append(title, meta);
     elements.sessionsList.append(button);
@@ -711,6 +726,46 @@ function formatTimestamp(value, options = {}) {
   const formatter = options.detail ? detailTimeFormatter : cardTimeFormatter;
   const suffix = options.detail ? " (UTC+8)" : "";
   return `${formatter.format(date)}${suffix}`;
+}
+
+function formatSessionMeta(session) {
+  if (session.last_user_message) {
+    return session.last_user_message;
+  }
+  return formatTimestamp(session.updated_at || session.created_at) || session.session_id;
+}
+
+function getStoredBoolean(key, fallback) {
+  const value = window.localStorage.getItem(key);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return fallback;
+}
+
+function setPaneCollapsed(side, collapsed) {
+  if (side === "left") {
+    state.leftCollapsed = collapsed;
+    window.localStorage.setItem("left_pane_collapsed", String(collapsed));
+  } else {
+    state.rightCollapsed = collapsed;
+    window.localStorage.setItem("right_pane_collapsed", String(collapsed));
+  }
+  applyPaneState();
+}
+
+function applyPaneState() {
+  elements.appShell.classList.toggle("is-left-collapsed", state.leftCollapsed);
+  elements.appShell.classList.toggle("is-right-collapsed", state.rightCollapsed);
+
+  const sessionsVisible = !state.leftCollapsed;
+  elements.toggleSessionsButton.setAttribute("aria-expanded", String(sessionsVisible));
+  elements.toggleSessionsButton.setAttribute("aria-label", sessionsVisible ? "隐藏会话" : "显示会话");
+  elements.toggleSessionsButton.title = sessionsVisible ? "隐藏会话" : "显示会话";
+
+  const cardsVisible = !state.rightCollapsed;
+  elements.toggleCardsButton.setAttribute("aria-expanded", String(cardsVisible));
+  elements.toggleCardsButton.setAttribute("aria-label", cardsVisible ? "隐藏知识卡片" : "显示知识卡片");
+  elements.toggleCardsButton.title = cardsVisible ? "隐藏知识卡片" : "显示知识卡片";
 }
 
 function setCardsLoading(loading) {

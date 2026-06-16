@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Personal Knowledge Agent</title>
-    <link rel="stylesheet" href="/static/styles.css?v=multi-session-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=ui-layout-1" />
   </head>
   <body>
-    <main class="app-shell">
+    <main id="appShell" class="app-shell">
       <aside class="sessions-pane" aria-label="会话">
         <header class="sessions-header">
           <div>
@@ -23,16 +23,26 @@
 
       <section class="chat-pane" aria-label="聊天">
         <header class="pane-header">
-          <div>
+          <div class="pane-actions">
+            <button id="toggleSessionsButton" class="icon-button" type="button" title="隐藏会话" aria-label="隐藏会话">
+              ☰
+            </button>
+            <button id="toggleCardsButton" class="icon-button" type="button" title="隐藏知识卡片" aria-label="隐藏知识卡片">
+              ▣
+            </button>
+          </div>
+          <div class="pane-title">
             <h1 id="activeSessionTitle">Personal Knowledge Agent</h1>
             <p id="statusText">本地 Web UI 已就绪</p>
           </div>
-          <button id="renameSessionButton" class="icon-button" type="button" title="重命名会话" aria-label="重命名会话">
-            ✎
-          </button>
-          <button id="refreshCardsButton" class="icon-button" type="button" title="刷新卡片" aria-label="刷新卡片">
-            ↻
-          </button>
+          <div class="pane-actions">
+            <button id="renameSessionButton" class="icon-button" type="button" title="重命名会话" aria-label="重命名会话">
+              ✎
+            </button>
+            <button id="refreshCardsButton" class="icon-button" type="button" title="刷新卡片" aria-label="刷新卡片">
+              ↻
+            </button>
+          </div>
         </header>
 
         <div id="messages" class="messages" aria-live="polite">
@@ -84,6 +94,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=multi-session-1" defer></script>
+    <script src="/static/app.js?v=ui-layout-1" defer></script>
   </body>
 </html>
