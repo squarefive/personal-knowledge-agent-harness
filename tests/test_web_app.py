@@ -1,3 +1,5 @@
+import json
+import queue
 import threading
 import time
 
@@ -7,6 +9,7 @@ from personal_knowledge_agent.agent_bootstrap import AgentConfig
 from personal_knowledge_agent.agent_runtime import AgentEvent
 from personal_knowledge_agent.tool_runtime import ApprovalRequest
 from personal_knowledge_agent.apps.web import create_web_app
+from personal_knowledge_agent.apps.web.web_app import WebApprovalManager
 
 
 class FakeAgent:
@@ -104,6 +107,49 @@ def read_sse_events(response):
     return events
 
 
+def start_pending_approval(manager, request):
+    events = queue.Queue()
+    result = {}
+
+    def emit_event(event):
+        events.put(event)
+        return True
+
+    def wait_for_approval():
+        result["approved"] = manager.request_approval(
+            session_id="session_1",
+            request=request,
+            emit_event=emit_event,
+        )
+
+    thread = threading.Thread(target=wait_for_approval)
+    thread.start()
+    return thread, events, result
+
+
+def next_approval_event(events, event_type=None, timeout=3):
+    try:
+        event = events.get(timeout=timeout)
+    except queue.Empty as exc:
+        raise AssertionError("Timed out waiting for SSE event") from exc
+    if event_type is not None:
+        assert event["event_type"] == event_type
+    return event
+
+
+def assert_approval_finished(thread):
+    thread.join(timeout=3)
+    assert not thread.is_alive()
+
+
+def approval_request(tool_name="delete_qa_card", arguments=None):
+    return ApprovalRequest(
+        tool_name=tool_name,
+        arguments=arguments or {"card_id": "qa_1"},
+        reason="danger",
+    )
+
+
 def test_chat_stream_returns_agent_answer():
     agent = FakeAgent()
     client = make_client(agent=agent)
@@ -125,27 +171,92 @@ def test_chat_route_is_removed():
     assert response.status_code == 404
 
 
-def test_web_runtime_uses_default_denial_approval_callback(tmp_path, monkeypatch):
-    captured = {}
+def test_web_runtime_approves_pending_tool_permission(tmp_path, monkeypatch):
+    app = create_web_app(agent=FakeAgent(), tools=FakeTools())
+    client = TestClient(app)
+    manager = app.state.approval_manager
+    thread, events, result_holder = start_pending_approval(manager, approval_request())
+    requested = next_approval_event(events, "permission_requested")
 
-    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
-        captured["approval_callback"] = approval_callback
-        return type("Components", (), {"agent": FakeAgent(), "tools": FakeTools()})()
+    assert requested["timeout_seconds"] == 300
+    assert requested["summary"]["tool_name"] == "delete_qa_card"
+    assert requested["summary"]["target"] == "qa_1"
+    assert "arguments" not in requested
 
-    import personal_knowledge_agent.apps.web.web_app as app_module
+    result = client.post(
+        f"/api/approvals/{requested['approval_id']}",
+        json={"decision": "approve"},
+    ).json()
+    assert result["ok"] is True
+    assert result["status"] == "approved"
 
-    monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
-    config = AgentConfig(
-        deepseek_api_key="test-key",
-        deepseek_model="test-model",
-        knowledge_db_path=tmp_path / "knowledge.db",
+    resolved = next_approval_event(events, "permission_resolved")
+    assert_approval_finished(thread)
+
+    assert resolved["status"] == "approved"
+    assert result_holder["approved"] is True
+
+
+def test_web_runtime_denies_pending_tool_permission(tmp_path, monkeypatch):
+    app = create_web_app(agent=FakeAgent(), tools=FakeTools())
+    client = TestClient(app)
+    manager = app.state.approval_manager
+    thread, events, result_holder = start_pending_approval(manager, approval_request())
+    requested = next_approval_event(events, "permission_requested")
+
+    result = client.post(
+        f"/api/approvals/{requested['approval_id']}",
+        json={"decision": "deny"},
+    ).json()
+    assert result["ok"] is True
+    assert result["status"] == "denied"
+
+    resolved = next_approval_event(events, "permission_resolved")
+    assert_approval_finished(thread)
+
+    assert resolved["status"] == "denied"
+    assert result_holder["approved"] is False
+
+
+def test_web_runtime_expires_pending_tool_permission():
+    manager = WebApprovalManager(timeout_seconds=0.01)
+    thread, events, result_holder = start_pending_approval(manager, approval_request())
+
+    requested = next_approval_event(events, "permission_requested")
+    resolved = next_approval_event(events, "permission_resolved")
+    assert_approval_finished(thread)
+
+    assert requested["timeout_seconds"] == 0.01
+    assert resolved["status"] == "expired"
+    assert result_holder["approved"] is False
+
+
+def test_web_permission_summary_for_update_omits_full_arguments(tmp_path, monkeypatch):
+    manager = WebApprovalManager(timeout_seconds=3)
+    request = approval_request(
+        tool_name="update_qa_card",
+        arguments={
+            "card_id": "qa_1",
+            "question": "很长的问题" * 80,
+            "summary": "新的摘要",
+            "category": "权限机制",
+        },
     )
+    thread, events, _result_holder = start_pending_approval(manager, request)
 
-    create_web_app(config=config)
+    requested = next_approval_event(events, "permission_requested")
+    manager.resolve(requested["approval_id"], "deny")
+    next_approval_event(events, "permission_resolved")
+    assert_approval_finished(thread)
 
-    assert captured["approval_callback"](
-        ApprovalRequest(tool_name="delete_qa_card", arguments={"card_id": "qa_1"}, reason="danger")
-    ) is False
+    summary = requested["summary"]
+    assert requested["event_type"] == "permission_requested"
+    assert "arguments" not in requested
+    assert summary["tool_name"] == "update_qa_card"
+    assert summary["target"] == "qa_1"
+    assert summary["changes"] == ["原始问题", "摘要", "分类"]
+    assert len(summary["preview"]) <= 180
+    assert summary["risk"] == "将覆盖当前卡片内容。"
 
 
 def test_chat_rejects_empty_message():

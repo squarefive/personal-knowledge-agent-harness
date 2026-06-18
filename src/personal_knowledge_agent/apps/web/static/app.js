@@ -290,14 +290,19 @@ function appendAgentRunMessage() {
   const steps = document.createElement("div");
   steps.className = "run-steps";
 
+  const approvals = document.createElement("div");
+  approvals.className = "approval-list";
+
   const drafts = document.createElement("div");
   drafts.className = "drafts";
 
   const answer = document.createElement("div");
   answer.className = "message-body answer-body";
 
-  message.append(roleNode, steps, drafts, answer);
+  message.append(roleNode, steps, approvals, drafts, answer);
   message._steps = steps;
+  message._approvals = approvals;
+  message._approvalCards = new Map();
   message._drafts = drafts;
   message._answer = answer;
   message._answerText = "";
@@ -361,6 +366,12 @@ function renderAgentEvent(message, event) {
       break;
     case "tool_call_finished":
       addStep(message, summarizeToolResult(event));
+      break;
+    case "permission_requested":
+      addApprovalCard(message, event);
+      break;
+    case "permission_resolved":
+      updateApprovalCard(message, event);
       break;
     case "evidence_checked":
       addStep(message, event.source_count ? `已核对 ${event.source_count} 条来源` : "未使用本地来源");
@@ -476,6 +487,144 @@ function addToolStep(message, event) {
   message._steps.append(details);
 }
 
+function addApprovalCard(message, event) {
+  const summary = event.summary || {};
+  const card = document.createElement("section");
+  card.className = "approval-card is-pending";
+  card.dataset.approvalId = event.approval_id || "";
+
+  const heading = document.createElement("div");
+  heading.className = "approval-heading";
+
+  const titleWrap = document.createElement("div");
+  titleWrap.className = "approval-title-wrap";
+
+  const eyebrow = document.createElement("span");
+  eyebrow.className = "approval-eyebrow";
+  eyebrow.textContent = "请求权限";
+
+  const title = document.createElement("strong");
+  title.className = "approval-title";
+  title.textContent = summary.title || "确认高风险工具";
+
+  titleWrap.append(eyebrow, title);
+
+  const status = document.createElement("span");
+  status.className = "approval-status";
+  status.textContent = `${Math.round(Number(event.timeout_seconds || 0) / 60) || 5} 分钟内确认`;
+
+  heading.append(titleWrap, status);
+
+  const body = document.createElement("div");
+  body.className = "approval-body";
+  appendApprovalRow(body, "工具", summary.tool_label || summary.tool_name || "高风险工具");
+  appendApprovalRow(body, summary.target_label || "目标", summary.target || "未提供");
+  if (Array.isArray(summary.changes) && summary.changes.length) {
+    appendApprovalRow(body, "变更", summary.changes.join("、"));
+  }
+  if (summary.preview) {
+    appendApprovalRow(body, "摘要", summary.preview, "approval-preview");
+  }
+
+  const risk = document.createElement("div");
+  risk.className = "approval-risk";
+  risk.textContent = summary.risk || "该操作会修改本地数据。";
+
+  const actions = document.createElement("div");
+  actions.className = "approval-actions";
+
+  const approveButton = document.createElement("button");
+  approveButton.type = "button";
+  approveButton.className = "approval-button approval-approve";
+  approveButton.textContent = "允许执行";
+  approveButton.addEventListener("click", () => submitApproval(card, "approve"));
+
+  const denyButton = document.createElement("button");
+  denyButton.type = "button";
+  denyButton.className = "approval-button approval-deny";
+  denyButton.textContent = "拒绝";
+  denyButton.addEventListener("click", () => submitApproval(card, "deny"));
+
+  actions.append(approveButton, denyButton);
+  card.append(heading, body, risk, actions);
+  message._approvalCards.set(event.approval_id, card);
+  message._approvals.append(card);
+}
+
+function appendApprovalRow(container, label, value, extraClass = "") {
+  const row = document.createElement("div");
+  row.className = `approval-row ${extraClass}`.trim();
+
+  const labelNode = document.createElement("span");
+  labelNode.className = "approval-row-label";
+  labelNode.textContent = label;
+
+  const valueNode = document.createElement("span");
+  valueNode.className = "approval-row-value";
+  valueNode.textContent = value;
+  valueNode.title = value;
+
+  row.append(labelNode, valueNode);
+  container.append(row);
+}
+
+async function submitApproval(card, decision) {
+  const approvalId = card.dataset.approvalId;
+  if (!approvalId) return;
+  setApprovalCardState(card, decision === "approve" ? "submitting-approve" : "submitting-deny");
+  try {
+    const response = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+      setApprovalCardState(card, "submit-error", result.message || "确认提交失败");
+    }
+  } catch (error) {
+    setApprovalCardState(card, "submit-error", String(error));
+  }
+}
+
+function updateApprovalCard(message, event) {
+  const card = message._approvalCards.get(event.approval_id);
+  if (!card) return;
+  setApprovalCardState(card, event.status || "denied");
+}
+
+function setApprovalCardState(card, status, message = "") {
+  const statusNode = card.querySelector(".approval-status");
+  const buttons = card.querySelectorAll(".approval-button");
+  const disableButtons = !["pending", "submit-error"].includes(status);
+  for (const button of buttons) {
+    button.disabled = disableButtons;
+  }
+  card.classList.remove("is-pending", "is-approved", "is-denied", "is-expired", "is-cancelled", "is-error");
+  if (status === "approved" || status === "submitting-approve") {
+    card.classList.add("is-approved");
+    statusNode.textContent = status === "approved" ? "已允许，继续执行" : "正在提交允许";
+  } else if (status === "denied" || status === "submitting-deny") {
+    card.classList.add("is-denied");
+    statusNode.textContent = status === "denied" ? "已拒绝，操作未执行" : "正在提交拒绝";
+  } else if (status === "expired") {
+    card.classList.add("is-expired");
+    statusNode.textContent = "已超时，操作未执行";
+  } else if (status === "cancelled") {
+    card.classList.add("is-cancelled");
+    statusNode.textContent = "连接已断开，操作未执行";
+  } else if (status === "submit-error") {
+    card.classList.add("is-error");
+    statusNode.textContent = message || "确认提交失败";
+    for (const button of buttons) {
+      button.disabled = false;
+    }
+  } else {
+    card.classList.add("is-pending");
+    statusNode.textContent = "等待确认";
+  }
+}
+
 function toolDisplayName(toolName) {
   const labels = {
     hybrid_search_qa_cards: "搜索本地知识库",
@@ -491,6 +640,12 @@ function toolDisplayName(toolName) {
 
 function summarizeToolResult(event) {
   const output = event.output || {};
+  if (output.error_code === "permission_denied") {
+    return "操作未执行";
+  }
+  if (output.ok === false) {
+    return `${toolDisplayName(event.tool_name)}失败`;
+  }
   if (Array.isArray(output.cards)) {
     return output.cards.length ? `找到 ${output.cards.length} 条记录` : "未找到相关记录";
   }
