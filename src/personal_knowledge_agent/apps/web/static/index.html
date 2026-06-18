@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Personal Knowledge Agent</title>
-    <link rel="stylesheet" href="/static/styles.css?v=ui-layout-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=card-detail-drawer-1" />
   </head>
   <body>
     <main id="appShell" class="app-shell">
@@ -88,12 +88,21 @@
         <section class="card-detail-section">
           <div class="section-title">
             <h3>卡片详情</h3>
+            <button
+              id="closeCardDetailButton"
+              class="detail-close-button"
+              type="button"
+              title="关闭卡片详情"
+              aria-label="关闭卡片详情"
+            >
+              ×
+            </button>
           </div>
           <div id="cardDetail" class="card-detail empty-state">选择一张卡片查看详情。</div>
         </section>
       </aside>
     </main>
 
-    <script src="/static/app.js?v=ui-layout-1" defer></script>
+    <script src="/static/app.js?v=card-detail-drawer-1" defer></script>
   </body>
 </html>

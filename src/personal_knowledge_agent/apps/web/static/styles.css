@@ -86,8 +86,9 @@ button {
 }
 
 .cards-pane {
+  position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) minmax(220px, 38%);
+  grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid var(--line);
 }
 
@@ -629,8 +630,25 @@ h3 {
 }
 
 .card-detail-section {
-  border-top: 1px solid var(--line);
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: 58%;
+  min-height: 270px;
+  padding: 0;
+  border-top: 1px solid var(--line-strong);
   background: var(--panel);
+  box-shadow: 0 -18px 42px rgba(28, 35, 31, 0.12);
+  transform: translateY(calc(100% - 48px));
+  transition: transform 0.18s ease;
+}
+
+.cards-pane.has-card-detail .card-detail-section {
+  transform: translateY(0);
 }
 
 .section-title {
@@ -639,6 +657,18 @@ h3 {
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.card-detail-section .section-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  align-items: center;
+  min-height: 48px;
+  margin-bottom: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .section-title span {
@@ -655,11 +685,33 @@ h3 {
   font-weight: 700;
 }
 
+.detail-close-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--accent-strong);
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.detail-close-button:hover,
+.detail-close-button:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+
 .cards-list,
 .card-detail {
   min-height: 0;
   max-height: 100%;
   overflow: auto;
+}
+
+.cards-list {
+  padding-bottom: 58px;
 }
 
 .card-row strong,
@@ -682,7 +734,7 @@ h3 {
 }
 
 .card-detail {
-  padding: 0;
+  padding: 14px;
   background: var(--panel);
 }
 

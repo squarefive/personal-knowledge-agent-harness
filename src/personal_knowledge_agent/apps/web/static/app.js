@@ -25,10 +25,12 @@ const elements = {
   refreshCardsButton: document.querySelector("#refreshCardsButton"),
   searchForm: document.querySelector("#searchForm"),
   searchInput: document.querySelector("#searchInput"),
+  cardsPane: document.querySelector(".cards-pane"),
   cardsTitle: document.querySelector("#cardsTitle"),
   cardsCount: document.querySelector("#cardsCount"),
   cardsList: document.querySelector("#cardsList"),
   cardDetail: document.querySelector("#cardDetail"),
+  closeCardDetailButton: document.querySelector("#closeCardDetailButton"),
 };
 
 const cardTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -131,6 +133,8 @@ elements.refreshCardsButton.addEventListener("click", async () => {
   elements.searchInput.value = "";
   await loadRecentCards();
 });
+
+elements.closeCardDetailButton.addEventListener("click", closeCardDetail);
 
 async function getJson(url) {
   const response = await fetch(url);
@@ -649,7 +653,7 @@ async function searchCards(query) {
 function renderCards(cards, emptyText = "暂无卡片。") {
   state.cards = cards;
   if (!cards.some((card) => card.card_id === state.selectedCardId)) {
-    state.selectedCardId = null;
+    closeCardDetail();
   }
   elements.cardsCount.textContent = String(cards.length);
   elements.cardsList.replaceChildren();
@@ -692,6 +696,7 @@ function renderCards(cards, emptyText = "暂无卡片。") {
 async function loadCardDetail(cardId) {
   if (!cardId) return;
   state.selectedCardId = cardId;
+  openCardDetail();
   markSelectedCard(cardId);
   const result = await getJson(`/api/cards/${encodeURIComponent(cardId)}`);
   if (!result.ok) {
@@ -700,6 +705,18 @@ async function loadCardDetail(cardId) {
     return;
   }
   renderCardDetail(result.card);
+}
+
+function openCardDetail() {
+  elements.cardsPane.classList.add("has-card-detail");
+}
+
+function closeCardDetail() {
+  state.selectedCardId = null;
+  elements.cardsPane.classList.remove("has-card-detail");
+  markSelectedCard(null);
+  elements.cardDetail.className = "card-detail empty-state";
+  elements.cardDetail.textContent = "选择一张卡片查看详情。";
 }
 
 function renderCardDetail(card) {
@@ -780,7 +797,7 @@ function setCardsLoading(loading) {
 
 function markSelectedCard(cardId) {
   for (const button of elements.cardsList.querySelectorAll(".card-row")) {
-    const selected = button.dataset.cardId === cardId;
+    const selected = Boolean(cardId) && button.dataset.cardId === cardId;
     button.classList.toggle("is-selected", selected);
     button.setAttribute("aria-pressed", String(selected));
   }
