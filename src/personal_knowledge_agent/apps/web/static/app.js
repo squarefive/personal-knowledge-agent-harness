@@ -4,6 +4,7 @@ const state = {
   sessions: [],
   activeSessionId: null,
   selectedCardId: null,
+  approvalDialogs: new Map(),
   leftCollapsed: getStoredBoolean("left_pane_collapsed", window.matchMedia("(max-width: 1080px)").matches),
   rightCollapsed: getStoredBoolean("right_pane_collapsed", window.matchMedia("(max-width: 760px)").matches),
 };
@@ -80,6 +81,7 @@ elements.chatForm.addEventListener("submit", async (event) => {
     renderActiveSessionTitle();
     await loadRecentCards();
   } catch (error) {
+    clearOpenApprovalDialogs("cancelled");
     renderRunError(agentMessage, String(error));
   } finally {
     setBusy(false, "本地 Web UI 已就绪");
@@ -290,19 +292,14 @@ function appendAgentRunMessage() {
   const steps = document.createElement("div");
   steps.className = "run-steps";
 
-  const approvals = document.createElement("div");
-  approvals.className = "approval-list";
-
   const drafts = document.createElement("div");
   drafts.className = "drafts";
 
   const answer = document.createElement("div");
   answer.className = "message-body answer-body";
 
-  message.append(roleNode, steps, approvals, drafts, answer);
+  message.append(roleNode, steps, drafts, answer);
   message._steps = steps;
-  message._approvals = approvals;
-  message._approvalCards = new Map();
   message._drafts = drafts;
   message._answer = answer;
   message._answerText = "";
@@ -368,10 +365,10 @@ function renderAgentEvent(message, event) {
       addStep(message, summarizeToolResult(event));
       break;
     case "permission_requested":
-      addApprovalCard(message, event);
+      showApprovalDialog(message, event);
       break;
     case "permission_resolved":
-      updateApprovalCard(message, event);
+      resolveApprovalDialog(event);
       break;
     case "evidence_checked":
       addStep(message, event.source_count ? `已核对 ${event.source_count} 条来源` : "未使用本地来源");
@@ -487,14 +484,21 @@ function addToolStep(message, event) {
   message._steps.append(details);
 }
 
-function addApprovalCard(message, event) {
+function showApprovalDialog(message, event) {
   const summary = event.summary || {};
-  const card = document.createElement("section");
-  card.className = "approval-card is-pending";
-  card.dataset.approvalId = event.approval_id || "";
+  const approvalId = event.approval_id || "";
+  const statusStep = addApprovalStatusStep(message, "Agent 请求高风险操作确认");
+  const overlay = document.createElement("section");
+  overlay.className = "approval-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+
+  const dialog = document.createElement("article");
+  dialog.className = "approval-dialog is-pending";
+  dialog.dataset.approvalId = approvalId;
 
   const heading = document.createElement("div");
-  heading.className = "approval-heading";
+  heading.className = "approval-dialog-heading";
 
   const titleWrap = document.createElement("div");
   titleWrap.className = "approval-title-wrap";
@@ -514,6 +518,10 @@ function addApprovalCard(message, event) {
   status.textContent = `${Math.round(Number(event.timeout_seconds || 0) / 60) || 5} 分钟内确认`;
 
   heading.append(titleWrap, status);
+
+  const description = document.createElement("p");
+  description.className = "approval-description";
+  description.textContent = "这是高风险工具调用。确认前，Agent 会暂停等待你的决定。";
 
   const body = document.createElement("div");
   body.className = "approval-body";
@@ -537,18 +545,36 @@ function addApprovalCard(message, event) {
   approveButton.type = "button";
   approveButton.className = "approval-button approval-approve";
   approveButton.textContent = "允许执行";
-  approveButton.addEventListener("click", () => submitApproval(card, "approve"));
+  approveButton.addEventListener("click", () => submitApproval(dialog, "approve"));
 
   const denyButton = document.createElement("button");
   denyButton.type = "button";
   denyButton.className = "approval-button approval-deny";
   denyButton.textContent = "拒绝";
-  denyButton.addEventListener("click", () => submitApproval(card, "deny"));
+  denyButton.addEventListener("click", () => submitApproval(dialog, "deny"));
 
   actions.append(approveButton, denyButton);
-  card.append(heading, body, risk, actions);
-  message._approvalCards.set(event.approval_id, card);
-  message._approvals.append(card);
+  dialog.append(heading, description, body, risk, actions);
+  overlay.append(dialog);
+  document.body.append(overlay);
+  state.approvalDialogs.set(approvalId, { overlay, dialog, statusStep });
+  elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+function addApprovalStatusStep(message, text) {
+  const step = document.createElement("div");
+  step.className = "approval-status-note";
+
+  const dot = document.createElement("span");
+  dot.className = "approval-status-dot";
+
+  const label = document.createElement("span");
+  label.className = "approval-status-text";
+  label.textContent = text;
+
+  step.append(dot, label);
+  message._steps.append(step);
+  return step;
 }
 
 function appendApprovalRow(container, label, value, extraClass = "") {
@@ -568,10 +594,10 @@ function appendApprovalRow(container, label, value, extraClass = "") {
   container.append(row);
 }
 
-async function submitApproval(card, decision) {
-  const approvalId = card.dataset.approvalId;
+async function submitApproval(dialog, decision) {
+  const approvalId = dialog.dataset.approvalId;
   if (!approvalId) return;
-  setApprovalCardState(card, decision === "approve" ? "submitting-approve" : "submitting-deny");
+  setApprovalDialogState(dialog, decision === "approve" ? "submitting-approve" : "submitting-deny");
   try {
     const response = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}`, {
       method: "POST",
@@ -580,47 +606,76 @@ async function submitApproval(card, decision) {
     });
     const result = await response.json();
     if (!response.ok || !result.ok) {
-      setApprovalCardState(card, "submit-error", result.message || "确认提交失败");
+      setApprovalDialogState(dialog, "submit-error", result.message || "确认提交失败");
     }
   } catch (error) {
-    setApprovalCardState(card, "submit-error", String(error));
+    setApprovalDialogState(dialog, "submit-error", String(error));
   }
 }
 
-function updateApprovalCard(message, event) {
-  const card = message._approvalCards.get(event.approval_id);
-  if (!card) return;
-  setApprovalCardState(card, event.status || "denied");
+function resolveApprovalDialog(event) {
+  const record = state.approvalDialogs.get(event.approval_id);
+  if (!record) return;
+  const status = event.status || "denied";
+  setApprovalDialogState(record.dialog, status);
+  updateApprovalStatusStep(record.statusStep, approvalResultText(status), status);
+  state.approvalDialogs.delete(event.approval_id);
+  record.overlay.remove();
 }
 
-function setApprovalCardState(card, status, message = "") {
-  const statusNode = card.querySelector(".approval-status");
-  const buttons = card.querySelectorAll(".approval-button");
+function clearOpenApprovalDialogs(status) {
+  for (const [approvalId, record] of state.approvalDialogs.entries()) {
+    setApprovalDialogState(record.dialog, status);
+    updateApprovalStatusStep(record.statusStep, approvalResultText(status), status);
+    record.overlay.remove();
+    state.approvalDialogs.delete(approvalId);
+  }
+}
+
+function updateApprovalStatusStep(step, text, status) {
+  const label = step.querySelector(".approval-status-text");
+  if (label) {
+    label.textContent = text;
+  }
+  step.classList.remove("is-approved", "is-denied", "is-expired", "is-cancelled", "is-error");
+  step.classList.add(`is-${status}`);
+}
+
+function approvalResultText(status) {
+  if (status === "approved") return "已允许高风险操作，继续执行";
+  if (status === "expired") return "确认已超时，操作未执行";
+  if (status === "cancelled") return "连接已断开，操作未执行";
+  return "已拒绝高风险操作，操作未执行";
+}
+
+function setApprovalDialogState(dialog, status, message = "") {
+  const statusNode = dialog.querySelector(".approval-status");
+  const buttons = dialog.querySelectorAll(".approval-button");
   const disableButtons = !["pending", "submit-error"].includes(status);
   for (const button of buttons) {
     button.disabled = disableButtons;
   }
-  card.classList.remove("is-pending", "is-approved", "is-denied", "is-expired", "is-cancelled", "is-error");
+  dialog.classList.remove("is-pending", "is-approved", "is-denied", "is-expired", "is-cancelled", "is-error");
   if (status === "approved" || status === "submitting-approve") {
-    card.classList.add("is-approved");
+    dialog.classList.add("is-approved");
     statusNode.textContent = status === "approved" ? "已允许，继续执行" : "正在提交允许";
   } else if (status === "denied" || status === "submitting-deny") {
-    card.classList.add("is-denied");
+    dialog.classList.add("is-denied");
     statusNode.textContent = status === "denied" ? "已拒绝，操作未执行" : "正在提交拒绝";
   } else if (status === "expired") {
-    card.classList.add("is-expired");
+    dialog.classList.add("is-expired");
     statusNode.textContent = "已超时，操作未执行";
   } else if (status === "cancelled") {
-    card.classList.add("is-cancelled");
+    dialog.classList.add("is-cancelled");
     statusNode.textContent = "连接已断开，操作未执行";
   } else if (status === "submit-error") {
-    card.classList.add("is-error");
+    dialog.classList.add("is-error");
     statusNode.textContent = message || "确认提交失败";
     for (const button of buttons) {
       button.disabled = false;
     }
   } else {
-    card.classList.add("is-pending");
+    dialog.classList.add("is-pending");
     statusNode.textContent = "等待确认";
   }
 }
