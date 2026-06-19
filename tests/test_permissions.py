@@ -15,9 +15,11 @@ def test_safe_tools_are_allowed():
 def test_update_and_delete_tools_require_approval():
     update_decision = check_permission("update_qa_card", {"card_id": "qa_1"})
     delete_decision = check_permission("delete_qa_card", {"card_id": "qa_1"})
+    merge_decision = check_permission("merge_qa_cards", {"card_ids": ["qa_1", "qa_2"]})
 
     assert update_decision.behavior == "ask"
     assert delete_decision.behavior == "ask"
+    assert merge_decision.behavior == "ask"
     assert update_decision.reason
 
 

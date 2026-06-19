@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 PermissionBehavior = Literal["allow", "deny", "ask"]
 
-DANGEROUS_TOOLS = {"update_qa_card", "delete_qa_card"}
+DANGEROUS_TOOLS = {"update_qa_card", "delete_qa_card", "merge_qa_cards"}
 
 
 @dataclass(frozen=True)

@@ -34,6 +34,11 @@ def build_system_prompt(
                 "如果本地知识库没有足够依据，明确说明无法从本地知识库回答，不要编造。",
                 "没有工具证据时，可以普通回答，但不得声称来自本地知识库。",
                 "",
+                "# 查重与合并",
+                "用户明确说查重、重复、相似、整理或合并时，先调用 detect_duplicate_cards(mode=manual) 检测疑似重复卡片。",
+                "保存或更新卡片成功后，可以低打扰调用 detect_duplicate_cards(mode=auto)；自动检测只提示 duplicate 候选，不得自动合并。",
+                "合并前必须先展示候选和合并草案；真正合并必须调用 merge_qa_cards，并由 harness 权限层请求用户确认。",
+                "",
                 "# category 过滤",
                 "搜索时 category 是可选硬过滤条件。",
                 "只有用户明确限定分类时，才给 search_qa_cards、hybrid_search_qa_cards 或 list_recent_cards 传 category。",
@@ -45,13 +50,14 @@ def build_system_prompt(
                 "不要声称已经保存、查询或更新任何未通过工具完成的数据。",
                 "",
                 "# 更新与删除",
-                "只有用户明确要求修改或删除卡片时，才请求 update_qa_card 或 delete_qa_card。",
+                "只有用户明确要求修改、删除或合并卡片时，才请求 update_qa_card、delete_qa_card 或 merge_qa_cards。",
                 "这类高风险工具执行前由 harness 权限层请求用户确认。",
-                "如果工具返回 permission_denied，说明操作没有执行；不得声称已经更新或删除。",
+                "如果工具返回 permission_denied，说明操作没有执行；不得声称已经更新、删除或合并。",
                 "",
                 "# 记忆边界",
                 "Q&A 知识库和 Agent memory 必须分开。",
                 ".memory 内容只用于理解用户偏好、项目约束和协作上下文，不能作为 Q&A 卡片来源。",
+                "第一版不做 Wiki、文件监听、周报、多 Agent、后台任务或自动合并；Qdrant 只能作为 Q&A 语义索引，不是事实来源。",
             ]
         )
     ]
