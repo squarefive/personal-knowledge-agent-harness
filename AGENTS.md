@@ -71,6 +71,31 @@
 
 如果实现前发现具体 Agent 文档与目标需求不一致，或需要调整 Agent 的角色边界、工具契约、数据模型、核心流程、外部依赖、权限规则等设计内容，必须先修改对应 Agent 文档，并将文档变更提交到本地 Git；在文档版本被锁定后，才能开始对应代码实现。
 
+## 代码地图
+
+在处理以下任务前，如需要快速判断代码目录、模块职责、入口文件或测试文件位置，应读取：
+
+- `docs/architecture/codebase-map.md`
+
+适用任务包括：
+
+- 代码新增、修改、重构或审查
+- 测试、验证和问题排查
+- 涉及模块归属、文件职责或调用入口定位的调研和计划制定
+- 新增、移动、删除代码文件或目录
+
+该文档用于快速了解当前代码结构和文件职责，只描述现有代码布局，不定义 Agent 能力边界，不替代 `docs/agents/local-qa-knowledge-agent.md`。
+
+如果本次修改新增、移动、删除代码文件或目录，或显著改变既有文件职责，必须同步更新 `docs/architecture/codebase-map.md`。
+
+新增或修改代码地图后，必须运行：
+
+```bash
+python scripts/check-codebase-map-format.py
+```
+
+检查通过后，才能提交相关文档变更。
+
 ## Agent 文档模板
 
 只有在以下场景中才需要读取 `docs/templates/agent-development-context.template.md`：
