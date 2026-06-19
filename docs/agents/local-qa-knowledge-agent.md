@@ -3,7 +3,7 @@ module: "local-qa-knowledge-agent"
 title: "本地个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-06-14"
+last_updated: "2026-06-19"
 ---
 
 # 本地个人 Q&A 知识库 Agent 开发上下文
@@ -68,7 +68,7 @@ last_updated: "2026-06-14"
   3. 不做周报、日报或自动总结。
   4. 不做多 Agent。
   5. v0.4 之前不做向量数据库；v0.4 起只把 Qdrant 作为 Q&A 语义索引，不作为事实源。
-  6. 不做去重合并。
+  6. v0.6 之前不做去重合并；v0.6 仅做疑似重复检测和用户确认合并，不做自动合并或后台全库扫描。
   7. 不做后台任务。
   8. 不做复杂权限系统。
   9. 不把 Agent memory 混入 Q&A 知识库来源。
@@ -81,18 +81,18 @@ last_updated: "2026-06-14"
 
 | 模块 | 状态 | 当前实现边界 |
 |---|---|---|
-| Q&A 知识管理 | 部分完成 | 已实现保存 Q&A 卡片、读取卡片、LIKE 检索和最近卡片列表；尚未实现标题、分类、标签、编辑、删除、导入和导出。 |
+| Q&A 知识管理 | 部分完成 | 已实现保存 Q&A 卡片、读取卡片、LIKE 检索、最近卡片列表、分类、更新和删除；尚未实现标题、标签、导入和导出。 |
 | Markdown Wiki 管理 | 未完成 | 当前 Agent 明确不包含 Wiki、文件监听和自动索引；不得声称支持 Wiki 绑定、Markdown chunk、hash 或增量同步。 |
 | 统一知识检索 | 部分完成 | 已实现 `search_qa_cards` SQLite LIKE 检索和 `hybrid_search_qa_cards` 混合检索；尚未实现过滤器、检索调试或统一 `search_knowledge`。 |
 | 来源追踪 | 部分完成 | Q&A 来源可追溯到 card_id、question、source_type 和 created_at；尚未支持 Markdown chunk、代码经验、手动笔记等来源类型，也没有程序级最终回答来源校验。 |
-| 分类与标签体系 | 未完成 | 当前只保存 keywords，不存在分类/标签模型、列表、重命名、合并或相似标签建议。 |
-| 知识去重与合并 | 未完成 | 当前明确不做去重合并；没有重复检测、相似知识检测、合并建议、差异展示、用户确认合并或原始来源保留流程。 |
+| 分类与标签体系 | 部分完成 | 已支持单个必填 category；tags 暂不引入，尚未支持分类列表、标签列表、重命名、合并或相似标签建议。 |
+| 知识去重与合并 | 未完成 | 当前尚未实现 v0.6；目标是疑似重复检测和用户确认合并，不做自动合并、后台全库扫描、历史版本或复杂审计表。 |
 | 代码经验管理 | 未完成 | 当前没有报错记录、解决方案、代码片段、项目复盘、错误信息检索或面试复盘素材生成能力。 |
 | 复习系统 | 未完成 | 当前没有复习卡、今日待复习、复习结果、间隔重复、按标签/分类复习或自动小测题。 |
 | 内容输出 | 未完成 | 当前明确不做周报、日报或自动总结；没有学习总结、周报、博客大纲、面试提纲、简历项目描述或项目复盘总结能力。 |
 | Agent Harness | 部分完成 | 已实现 Agent Loop、Tool Dispatcher、Prompt Builder、运行时上下文拼接和工具调用结果回填；工具注册仍是静态映射，尚未形成完整可扩展注册机制。 |
 | 后台任务 | 未完成 | 当前明确不做后台任务；没有后台 Wiki 同步、索引构建、批量摘要、任务状态、完成通知或失败重试。 |
-| 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；更新和删除确认已实现；合并、覆盖和图谱确认等后续高风险操作尚未实现。v0.4 语义索引重建是系统维护工具，不作为高风险确认操作。 |
+| 权限与审计 | 部分完成 | 已实现运行事件和 JSONL 开发日志；更新和删除确认已实现；合并和图谱确认等后续高风险操作尚未实现。v0.4 语义索引重建是系统维护工具，不作为高风险确认操作。 |
 | 长期偏好记忆 | 部分完成 | 已支持读取 Agent memory index 和相关 memory，并能生成 memory candidates 事件；尚未实现偏好写入确认闭环，以及偏好查看、修改、删除。 |
 | Web Chat + Cards | 部分完成 | 已实现本地 HTML 聊天入口、流式聊天接口、最近卡片、卡片搜索和卡片详情；不包含编辑、删除、合并或复杂知识图谱。 |
 
@@ -105,8 +105,8 @@ last_updated: "2026-06-14"
 | `v0.2` | 可信来源闭环 | AgentLoop 只记录本轮 `turn_messages` 边界；程序从当前 turn 的真实工具结果生成来源区块；未调用检索工具时允许普通回答，但不得声称来自本地知识库或伪造 card_id | 已完成 |
 | `v0.3` | Q&A 维护 | 支持更新和删除 Q&A 卡片；删除是物理删除，不使用软删除；更新不保存历史版本；高风险操作必须经过 PreToolUse permission gate，CLI 由用户确认后才执行 | 已完成 |
 | `v0.4` | Hybrid 检索 | 使用 SQLite LIKE 做关键词兜底，使用 DashScope / Qwen `text-embedding-v4` + Qdrant local mode 做语义召回；通过 `is_vectorized` 标记历史卡片是否已写入语义索引，并通过 `hybrid_search_qa_cards` 合并排序 | 已完成 |
-| `v0.5` | 分类 | `qa_cards` 增加必填 category 字段；category 由模型按语义主归属生成，用户可通过 update 工具手动修改；本阶段不新增 tags，keywords 继续承担检索词职责 | 规划中，未实现 |
-| `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；合并后的新卡片内容由模型生成；`merge_qa_cards` 必须经过 PreToolUse permission gate，确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
+| `v0.5` | 分类 | `qa_cards` 增加必填 category 字段；category 由模型按语义主归属生成，用户可通过 update 工具手动修改；本阶段不新增 tags，keywords 继续承担检索词职责 | 已完成 |
+| `v0.6` | 去重和合并 | 基于 SQLite LIKE + Qdrant 召回重复候选；候选低于阈值直接过滤，不返回 discard；合并后的新卡片内容由模型生成；`merge_qa_cards` 必须经过 PreToolUse permission gate，确认后创建新卡片并物理删除原卡片 | 规划中，未实现 |
 | `v0.7` | 轻量知识图谱 | 使用 Kuzu 作为本地轻量图数据库；候选实体和关系不是事实；图谱写入必须经过 PreToolUse permission gate；图谱回答仍必须追溯到 card_id | 规划中，未实现 |
 
 - **v0.2-v0.7 已确认设计决策**:
@@ -403,8 +403,13 @@ last_updated: "2026-06-14"
 |---|---|---|---|---|
 | `save_qa_card` | 保存 Q&A 卡片 | 用户明确提供 Q&A 并要求记录时 | 是 | 否 |
 | `search_qa_cards` | 检索相关 Q&A 卡片 | 用户提出问题时 | 否 | 否 |
+| `hybrid_search_qa_cards` | 执行 SQLite LIKE + Qdrant 语义召回的混合检索 | 用户提出本地 Q&A 问答意图时优先调用 | 否 | 否 |
 | `read_qa_card` | 读取完整 Q&A 卡片 | 需要核对完整来源时 | 否 | 否 |
+| `update_qa_card` | 更新当前 Q&A 卡片 | 用户明确要求修改已有卡片时 | 是 | 是 |
+| `delete_qa_card` | 物理删除 Q&A 卡片 | 用户明确要求删除已有卡片时 | 是 | 是 |
 | `list_recent_cards` | 列出最近保存卡片 | 用户要求查看最近记录或保存后确认时 | 否 | 否 |
+| `detect_duplicate_cards` | 检测疑似重复 Q&A 卡片 | 用户主动查重/整理/合并，或保存/更新成功后的低打扰自动检测 | 否 | 否 |
+| `merge_qa_cards` | 合并多张 Q&A 卡片为新卡片并删除原卡片 | 用户看过候选和合并草案，并明确要求合并时 | 是 | 是 |
 | `list_memory_index` | 列出 Agent memory 索引 | turn-start 或模型需要了解可用记忆时 | 否 | 否 |
 | `read_memory` | 读取指定 Agent memory 全文 | 当前请求需要某条长期记忆时 | 否 | 否 |
 
@@ -582,7 +587,8 @@ last_updated: "2026-06-14"
 
 ```json
 {
-  "limit": 10
+  "limit": 10,
+  "category": "可选；用户明确限定分类时传入"
 }
 ```
 
@@ -597,6 +603,7 @@ last_updated: "2026-06-14"
       "question": "原始问题",
       "summary": "摘要",
       "keywords": ["关键词"],
+      "category": "语义主归属分类",
       "source_type": "manual_qa",
       "created_at": "ISO 8601 时间"
     }
@@ -606,6 +613,7 @@ last_updated: "2026-06-14"
 
 - **可展示输入字段**:
   - `limit`
+  - `category`
 
 - **可展示输出字段**:
   - `ok`
@@ -613,6 +621,7 @@ last_updated: "2026-06-14"
   - `cards.question`
   - `cards.summary`
   - `cards.keywords`
+  - `cards.category`
   - `cards.source_type`
   - `cards.created_at`
   - `error_code`
@@ -623,6 +632,141 @@ last_updated: "2026-06-14"
 
 - **失败处理**:  
   limit 非法时使用安全默认值。数据库读取失败时返回 `ok: false`、`error_code` 和 `message`。
+
+#### `detect_duplicate_cards`
+
+- **职责**:  
+  检测疑似重复 Q&A 卡片。该工具只返回值得用户或模型继续比较的候选；低于阈值的候选直接过滤，不返回 `discard`。
+
+- **输入**:
+
+```json
+{
+  "card_id": "可选；要检查的已有卡片 ID",
+  "query": "可选；用于查重的一段文本",
+  "category": "可选；用户明确限定分类时传入",
+  "limit": 5,
+  "mode": "manual 或 auto"
+}
+```
+
+约束：
+
+1. `card_id` 和 `query` 至少提供一个。
+2. `mode` 默认为 `manual`。
+3. `mode = "auto"` 只返回 `duplicate` 级别候选。
+4. `mode = "manual"` 返回 `duplicate` 和 `possible_duplicate` 级别候选。
+5. 如果提供 `card_id`，候选中必须排除该卡片自身。
+
+- **输出**:
+
+```json
+{
+  "ok": true,
+  "checked_card_id": "被检查的卡片 ID；query 模式下可为空",
+  "candidates": [
+    {
+      "card_id": "候选卡片 ID",
+      "question": "原始问题",
+      "summary": "摘要",
+      "category": "语义主归属分类",
+      "duplicate_score": 0.91,
+      "duplicate_level": "duplicate",
+      "semantic_score": 0.89,
+      "keyword_score_norm": 0.82,
+      "keyword_overlap": 0.75,
+      "question_overlap": 0.66,
+      "same_category": true,
+      "reason": "同分类，语义高度相似，关键词重合较高"
+    }
+  ]
+}
+```
+
+- **可展示输入字段**:
+  - `card_id`
+  - `query`
+  - `category`
+  - `limit`
+  - `mode`
+
+- **可展示输出字段**:
+  - `ok`
+  - `checked_card_id`
+  - `candidates.card_id`
+  - `candidates.question`
+  - `candidates.summary`
+  - `candidates.category`
+  - `candidates.duplicate_score`
+  - `candidates.duplicate_level`
+  - `candidates.reason`
+  - `error_code`
+  - `message`
+
+- **副作用**:  
+  无。
+
+- **失败处理**:  
+  输入缺少 `card_id` 和 `query`、`card_id` 不存在、category 非法或数据库读取失败时返回结构化错误。Qdrant 不可用时降级为 SQLite LIKE 候选检测，并返回 warning；不得因为自动检测失败影响保存或更新成功。
+
+#### `merge_qa_cards`
+
+- **职责**:  
+  将多张 Q&A 卡片合并为一张新卡片，并物理删除原卡片。该工具只执行已经由模型生成、并由用户确认的合并草案；不得自行判断哪些卡片应该合并。
+
+- **输入**:
+
+```json
+{
+  "card_ids": ["要合并的原卡片 ID，至少 2 个"],
+  "question": "合并后的原始问题，非空字符串",
+  "answer": "合并后的原始答案，非空字符串",
+  "summary": "合并后的摘要，非空字符串",
+  "keywords": ["合并后的关键词，至少 1 个"],
+  "category": "合并后的语义主归属分类，非空字符串"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": true,
+  "new_card_id": "新卡片 ID",
+  "deleted_card_ids": ["已物理删除的原卡片 ID"],
+  "source_type": "manual_qa",
+  "created_at": "ISO 8601 时间",
+  "category": "语义主归属分类"
+}
+```
+
+- **可展示输入字段**:
+  - `card_ids`
+  - `question`
+  - `answer`
+  - `summary`
+  - `keywords`
+  - `category`
+
+- **可展示输出字段**:
+  - `ok`
+  - `new_card_id`
+  - `deleted_card_ids`
+  - `source_type`
+  - `created_at`
+  - `category`
+  - `warning`
+  - `error_code`
+  - `message`
+
+- **副作用**:  
+  写入一张新的 SQLite `qa_cards` 卡片，物理删除原卡片，并尽力同步 Qdrant：删除旧向量，写入新向量。
+
+- **权限**:  
+  必须经过 PreToolUse permission gate。用户拒绝时不得执行任何写入或删除，并返回 `permission_denied` tool result。
+
+- **失败处理**:  
+  `card_ids` 少于 2 个、任一原卡片不存在、合并后字段非法或数据库写入失败时返回结构化错误，且不得创建新卡片或删除原卡片。Qdrant 同步失败不回滚 SQLite 合并，但必须返回 warning，提示可通过 `rebuild_qa_semantic_index` 修复。
 
 #### `list_memory_index`
 
@@ -1184,22 +1328,60 @@ category 搜索规则：
 
 ### 5.14 v0.6 去重和合并
 
-1. Agent 调用 `detect_duplicate_cards`，基于 SQLite LIKE 和 Qdrant 召回相似卡片。
-2. 工具返回可能重复的 card_id、相似分数和相似原因，不写数据库。
-3. 模型生成合并后的新 question、answer、summary、keywords 和 category。
-4. 模型请求调用 `merge_qa_cards`。
-5. `merge_qa_cards` 进入 PreToolUse permission gate。
-6. 用户允许后，工具创建新卡片，物理删除原卡片，并尽力同步 Qdrant。
-7. 用户拒绝时，不执行合并，并返回 `permission_denied` tool result。
+v0.6 只实现轻量 Record Linkage 流程：疑似重复检测和用户确认合并。不得实现自动合并、后台全库扫描、定时任务、复杂审计表、历史版本表、LLM-as-judge、聚类或 Web UI 合并入口。
+
+显式触发流程：
+
+1. 用户明确表达查重、重复、相似、整理或合并意图。
+2. Agent 调用 `detect_duplicate_cards(mode="manual")`。
+3. 工具基于 SQLite LIKE 和 Qdrant 召回候选，排除目标卡片自身，并按 card_id 合并去重。
+4. 工具对目标和候选做轻量 pairwise scoring，并只返回 `duplicate` 和 `possible_duplicate` 候选；低于阈值的候选直接过滤，不返回 `discard`。
+5. Agent 向用户展示候选、差异和原因。
+6. 用户明确要求合并后，模型生成合并后的新 question、answer、summary、keywords 和 category。
+7. 模型请求调用 `merge_qa_cards`。
+8. `merge_qa_cards` 进入 PreToolUse permission gate。
+9. 用户允许后，工具创建新卡片，物理删除原卡片，并尽力同步 Qdrant。
+10. 用户拒绝时，不执行合并，并返回 `permission_denied` tool result。
+
+自动触发流程：
+
+1. `save_qa_card` 或 `update_qa_card` 成功后，Agent 可以调用 `detect_duplicate_cards(card_id=..., mode="auto")`。
+2. 自动检测只调用只读检测工具，不得调用 `merge_qa_cards`。
+3. 自动检测只返回 `duplicate` 候选；没有 `duplicate` 候选时不提示用户。
+4. 自动检测失败不得影响保存或更新成功。
+5. 发现 `duplicate` 候选时，只提示用户是否展开对比并生成合并草案。
+
+候选召回规则：
+
+1. `card_id` 模式先读取目标卡片，并用 question、summary、keywords 和 category 组成查重 query。
+2. `query` 模式直接使用输入文本召回候选。
+3. SQLite LIKE 作为关键词召回，Qdrant 作为语义召回；Qdrant 不可用时降级 SQLite LIKE，并返回 warning。
+4. 如果显式传入 category，category 是硬过滤条件。
+5. 如果没有传入 category，默认全库检测；工具可使用 same_category 作为评分特征，但不得隐式丢弃跨分类候选。
+
+评分规则：
+
+1. `semantic_score` 来自 Qdrant 相似度。
+2. `keyword_score_norm` 来自 SQLite LIKE 分数归一化。
+3. `keyword_overlap` 表示目标和候选 keywords 的交集比例。
+4. `question_overlap` 表示目标和候选 question 的轻量文本重合比例。
+5. `same_category` 表示目标和候选是否属于同一 category。
+6. `duplicate_score` 是上述特征的保守加权结果，常量集中定义，后续可按真实数据校准。
+
+初始分层规则：
+
+1. `duplicate`: 同 category 且 `semantic_score >= 0.88`，或同 category 且 `duplicate_score >= 0.82`。
+2. `possible_duplicate`: 同 category 且 `duplicate_score >= 0.70`，或同 category 且 `keyword_score_norm >= 0.85` 且 `keyword_overlap >= 0.5`，或跨 category 且 `semantic_score >= 0.93`。
+3. 低于 `possible_duplicate` 的候选直接过滤，不进入工具输出。
 
 - **成功条件**:
-  新卡片创建成功，原卡片物理删除，检索结果不再返回原卡片。
+  `detect_duplicate_cards` 返回的候选均可回读到 SQLite 卡片，且不包含低于阈值的 `discard` 候选；`merge_qa_cards` 成功时新卡片创建成功，原卡片物理删除，检索结果不再返回原卡片。
 
 - **失败条件**:
-  用户拒绝、原卡片不存在、新卡片字段非法或 Qdrant 同步失败。
+  用户拒绝、目标卡片不存在、候选卡片不存在、新卡片字段非法、数据库写入失败或 Qdrant 同步失败。
 
 - **用户可见反馈**:
-  合并成功时展示新 card_id；Qdrant 同步失败时提示可通过 rebuild 修复。
+  检测到疑似重复时展示候选、`duplicate_level` 和原因；无候选时说明没有发现明显重复。合并成功时展示新 card_id 和已删除的原 card_id；Qdrant 同步失败时提示可通过 rebuild 修复。
 
 ---
 
@@ -1214,9 +1396,11 @@ category 搜索规则：
 | `answer` | `TEXT` | 是 | 用户提供的原始答案 |
 | `summary` | `TEXT` | 是 | 模型整理出的简明摘要 |
 | `keywords` | `TEXT` | 是 | JSON 字符串，保存关键词数组 |
+| `category` | `TEXT` | 是 | 单个语义主归属分类 |
 | `source_type` | `TEXT` | 是 | 第一版固定为 `manual_qa` |
 | `created_at` | `TEXT` | 是 | 系统生成的 ISO 8601 创建时间 |
 | `updated_at` | `TEXT` | 是 | 系统生成的 ISO 8601 更新时间 |
+| `is_vectorized` | `INTEGER` | 是 | `0` 表示需要写入 Qdrant，`1` 表示已写入 Qdrant |
 
 建表 SQL：
 
@@ -1227,9 +1411,14 @@ CREATE TABLE IF NOT EXISTS qa_cards (
   answer TEXT NOT NULL,
   summary TEXT NOT NULL,
   keywords TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (
+    length(trim(category)) BETWEEN 1 AND 24
+    AND category NOT IN ('其他', '未分类', '杂项', '默认分类', '未知', '待分类')
+  ),
   source_type TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  is_vectorized INTEGER NOT NULL DEFAULT 0
 );
 ```
 
@@ -1478,6 +1667,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 
 - **v0.6 Duplicate / Merge**:
   - `duplicate_candidates`: 运行时结构，不入库。
+  - 候选字段包括 `card_id`、`question`、`summary`、`category`、`duplicate_score`、`duplicate_level`、`semantic_score`、`keyword_score_norm`、`keyword_overlap`、`question_overlap`、`same_category` 和 `reason`。
+  - `duplicate_level` 只允许 `duplicate` 或 `possible_duplicate`；低于阈值的候选不输出。
   - `merge_qa_cards` 输入必须包含模型生成的新 question、answer、summary、keywords 和 category。
   - 合并成功后创建新卡片，物理删除原卡片，并尽力同步 Qdrant。
 
