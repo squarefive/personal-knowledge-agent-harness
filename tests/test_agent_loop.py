@@ -188,6 +188,64 @@ def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
     assert knowledge_tools.read_qa_card({"card_id": saved["card_id"]})["error_code"] == "not_found"
 
 
+def test_agent_loop_executes_merge_tool_after_approval(tmp_path):
+    knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    first = knowledge_tools.save_qa_card(
+        {
+            "question": "问题一？",
+            "answer": "答案一。",
+            "summary": "摘要一。",
+            "keywords": ["合并"],
+            "category": "Agent 开发",
+        }
+    )
+    second = knowledge_tools.save_qa_card(
+        {
+            "question": "问题二？",
+            "answer": "答案二。",
+            "summary": "摘要二。",
+            "keywords": ["合并"],
+            "category": "Agent 开发",
+        }
+    )
+    dispatcher = ToolDispatcher(knowledge_tools)
+    approvals = []
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        name="merge_qa_cards",
+                        arguments={
+                            "card_ids": [first["card_id"], second["card_id"]],
+                            "question": "合并问题？",
+                            "answer": "合并答案。",
+                            "summary": "合并摘要。",
+                            "keywords": ["合并"],
+                            "category": "Agent 开发",
+                        },
+                    )
+                ]
+            ),
+            LLMResponse(text="已合并。"),
+        ]
+    )
+    loop = AgentLoop(
+        llm=fake_llm,
+        tools=knowledge_tools,
+        dispatcher=dispatcher,
+        approval_callback=lambda request: approvals.append(request) is None or True,
+    )
+
+    answer = loop.run("合并这两张卡片")
+
+    assert answer == "已合并。"
+    assert approvals[0].tool_name == "merge_qa_cards"
+    assert knowledge_tools.read_qa_card({"card_id": first["card_id"]})["error_code"] == "not_found"
+    assert knowledge_tools.read_qa_card({"card_id": second["card_id"]})["error_code"] == "not_found"
+
+
 def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
     knowledge_tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
     saved = knowledge_tools.save_qa_card(

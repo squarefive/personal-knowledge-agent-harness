@@ -7,10 +7,19 @@ from personal_knowledge_agent.tools import KnowledgeTools, ToolDispatcher
 
 
 class FakeSemanticIndex:
-    def __init__(self, *, enabled=True, hits=None, fail_upsert_ids=None, fail_search=False):
+    def __init__(
+        self,
+        *,
+        enabled=True,
+        hits=None,
+        fail_upsert_ids=None,
+        fail_delete_ids=None,
+        fail_search=False,
+    ):
         self.enabled = enabled
         self.hits = hits or []
         self.fail_upsert_ids = set(fail_upsert_ids or [])
+        self.fail_delete_ids = set(fail_delete_ids or [])
         self.fail_search = fail_search
         self.upserted = []
         self.deleted = []
@@ -31,6 +40,8 @@ class FakeSemanticIndex:
         self.upserted.append(card.id)
 
     def delete_card(self, card_id):
+        if card_id in self.fail_delete_ids:
+            raise RuntimeError("delete failed")
         self.deleted.append(card_id)
 
 
@@ -413,6 +424,198 @@ def test_hybrid_search_does_not_fallback_across_category(tmp_path):
     assert result["message"] == "指定 category 下没有找到相关本地知识卡片。"
 
 
+def test_detect_duplicate_cards_filters_self_and_auto_returns_only_duplicates(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    target = store.save_card(
+        question="alpha source check",
+        answer="answer",
+        summary="source summary",
+        keywords=["source"],
+        category="Agent 开发",
+    )
+    duplicate = store.save_card(
+        question="alpha source check copy",
+        answer="duplicate answer",
+        summary="duplicate summary",
+        keywords=["source"],
+        category="Agent 开发",
+    )
+    possible = store.save_card(
+        question="totally different",
+        answer="possible answer",
+        summary="possible summary",
+        keywords=["source"],
+        category="Agent 开发",
+    )
+    store.save_card(
+        question="discard card",
+        answer="discard answer",
+        summary="discard summary",
+        keywords=["discard"],
+        category="Agent 开发",
+    )
+    tools = KnowledgeTools(
+        store,
+        semantic_index=FakeSemanticIndex(
+            hits=[
+                FakeHit(target.id, 0.99),
+                FakeHit(duplicate.id, 0.89),
+                FakeHit(possible.id, 0.80),
+            ]
+        ),
+    )
+
+    manual = tools.detect_duplicate_cards({"card_id": target.id, "mode": "manual", "limit": 5})
+    auto = tools.detect_duplicate_cards({"card_id": target.id, "mode": "auto", "limit": 5})
+
+    assert manual["ok"] is True
+    assert [card["card_id"] for card in manual["candidates"]] == [duplicate.id, possible.id]
+    assert [card["duplicate_level"] for card in manual["candidates"]] == ["duplicate", "possible_duplicate"]
+    assert target.id not in [card["card_id"] for card in manual["candidates"]]
+    assert [card["card_id"] for card in auto["candidates"]] == [duplicate.id]
+
+
+def test_detect_duplicate_cards_applies_category_filter_and_degrades_to_keyword(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    target = store.save_card(
+        question="来源校验",
+        answer="答案",
+        summary="摘要",
+        keywords=["来源"],
+        category="检索与知识库",
+    )
+    same_category = store.save_card(
+        question="来源校验副本",
+        answer="答案",
+        summary="摘要",
+        keywords=["来源"],
+        category="检索与知识库",
+    )
+    other_category = store.save_card(
+        question="来源校验其他分类",
+        answer="答案",
+        summary="摘要",
+        keywords=["来源"],
+        category="Agent 开发",
+    )
+    tools = KnowledgeTools(
+        store,
+        semantic_index=FakeSemanticIndex(
+            fail_search=True,
+            hits=[FakeHit(other_category.id, 0.99), FakeHit(same_category.id, 0.90)],
+        ),
+    )
+
+    result = tools.detect_duplicate_cards(
+        {"card_id": target.id, "category": "检索与知识库", "mode": "manual", "limit": 5}
+    )
+
+    assert result["ok"] is True
+    assert [card["card_id"] for card in result["candidates"]] == [same_category.id]
+    assert "warning" in result
+
+
+def test_merge_qa_cards_creates_new_card_deletes_originals_and_syncs_semantic_index(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    first = store.save_card(
+        question="问题一？",
+        answer="答案一。",
+        summary="摘要一。",
+        keywords=["合并"],
+        category="Agent 开发",
+    )
+    second = store.save_card(
+        question="问题二？",
+        answer="答案二。",
+        summary="摘要二。",
+        keywords=["合并"],
+        category="Agent 开发",
+    )
+    semantic_index = FakeSemanticIndex()
+    tools = KnowledgeTools(store, semantic_index=semantic_index)
+
+    result = tools.merge_qa_cards(
+        {
+            "card_ids": [first.id, second.id],
+            "question": "合并问题？",
+            "answer": "合并答案。",
+            "summary": "合并摘要。",
+            "keywords": ["合并"],
+            "category": "Agent 开发",
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["deleted_card_ids"] == [first.id, second.id]
+    assert store.read_card(first.id) is None
+    assert store.read_card(second.id) is None
+    assert store.read_card(result["new_card_id"]).question == "合并问题？"
+    assert semantic_index.deleted == [first.id, second.id]
+    assert semantic_index.upserted == [result["new_card_id"]]
+
+
+def test_merge_qa_cards_missing_original_does_not_write(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    first = store.save_card(
+        question="问题一？",
+        answer="答案一。",
+        summary="摘要一。",
+        keywords=["合并"],
+        category="Agent 开发",
+    )
+    tools = KnowledgeTools(store)
+
+    result = tools.merge_qa_cards(
+        {
+            "card_ids": [first.id, "qa_missing"],
+            "question": "合并问题？",
+            "answer": "合并答案。",
+            "summary": "合并摘要。",
+            "keywords": ["合并"],
+            "category": "Agent 开发",
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "not_found"
+    assert store.read_card(first.id) is not None
+    assert len(store.list_recent_cards(limit=10)) == 1
+
+
+def test_merge_qa_cards_returns_warning_when_semantic_sync_fails(tmp_path):
+    store = SQLiteStore(tmp_path / "knowledge.db")
+    first = store.save_card(
+        question="问题一？",
+        answer="答案一。",
+        summary="摘要一。",
+        keywords=["合并"],
+        category="Agent 开发",
+    )
+    second = store.save_card(
+        question="问题二？",
+        answer="答案二。",
+        summary="摘要二。",
+        keywords=["合并"],
+        category="Agent 开发",
+    )
+    tools = KnowledgeTools(store, semantic_index=FakeSemanticIndex(fail_delete_ids={first.id}))
+
+    result = tools.merge_qa_cards(
+        {
+            "card_ids": [first.id, second.id],
+            "question": "合并问题？",
+            "answer": "合并答案。",
+            "summary": "合并摘要。",
+            "keywords": ["合并"],
+            "category": "Agent 开发",
+        }
+    )
+
+    assert result["ok"] is True
+    assert "warning" in result
+    assert "语义索引删除失败" in result["warning"]
+
+
 def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
     store = SQLiteStore(tmp_path / "knowledge.db")
     first = store.save_card(
@@ -579,6 +782,68 @@ def test_tool_dispatcher_display_output_includes_hybrid_ranking_fields(tmp_path)
             }
         ],
         "warning": "warn",
+    }
+
+
+def test_tool_dispatcher_display_output_includes_duplicate_and_merge_fields(tmp_path):
+    tools = KnowledgeTools(SQLiteStore(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(tools)
+
+    duplicate_display = dispatcher.display_output(
+        "detect_duplicate_cards",
+        {
+            "ok": True,
+            "checked_card_id": "qa_1",
+            "candidates": [
+                {
+                    "card_id": "qa_2",
+                    "question": "问题",
+                    "summary": "摘要",
+                    "category": "Agent 开发",
+                    "duplicate_score": 0.91,
+                    "duplicate_level": "duplicate",
+                    "reason": "同分类",
+                    "debug": "hidden",
+                }
+            ],
+            "debug": "hidden",
+        },
+    )
+    merge_display = dispatcher.display_output(
+        "merge_qa_cards",
+        {
+            "ok": True,
+            "new_card_id": "qa_new",
+            "deleted_card_ids": ["qa_1", "qa_2"],
+            "source_type": "manual_qa",
+            "created_at": "2026-06-19T00:00:00+00:00",
+            "category": "Agent 开发",
+            "debug": "hidden",
+        },
+    )
+
+    assert duplicate_display == {
+        "ok": True,
+        "checked_card_id": "qa_1",
+        "candidates": [
+            {
+                "card_id": "qa_2",
+                "question": "问题",
+                "summary": "摘要",
+                "category": "Agent 开发",
+                "duplicate_score": 0.91,
+                "duplicate_level": "duplicate",
+                "reason": "同分类",
+            }
+        ],
+    }
+    assert merge_display == {
+        "ok": True,
+        "new_card_id": "qa_new",
+        "deleted_card_ids": ["qa_1", "qa_2"],
+        "source_type": "manual_qa",
+        "created_at": "2026-06-19T00:00:00+00:00",
+        "category": "Agent 开发",
     }
 
 
