@@ -267,7 +267,8 @@ last_updated: "2026-06-19"
   - 同一 session 的聊天请求必须串行执行；不同 session 不得共享 runtime `messages[]`。
   - Web Runtime 不缓存 `answer_delta` 到全局事件列表或 JSONL 开发日志。
   - Web Runtime 遇到高风险工具 `ask` 权限时，必须通过当前流式聊天事件向 HTML 页面发出 `permission_requested` 事件，并在当前 Agent run 内等待用户确认。
-  - Web Runtime 的高风险工具确认卡只展示后端生成的参数摘要和风险说明，不向 HTML 页面暴露完整 tool arguments。
+  - Web Runtime 的高风险工具确认必须通过 HTML 页面中的独立阻断式确认浮层完成，聊天消息流只展示轻量状态提示，不承载允许 / 拒绝按钮。
+  - Web Runtime 的高风险工具确认浮层只展示后端生成的参数摘要和风险说明，不向 HTML 页面暴露完整 tool arguments。
   - Web Runtime 的高风险工具确认等待时间为 5 分钟；用户允许后才执行工具，用户拒绝、确认超时、浏览器刷新或 SSE 断连时必须默认拒绝并返回 `permission_denied` tool result。
   - Web 第一版只覆盖 Chat + Cards，不提供编辑、删除、合并或复杂知识管理能力。
   - Web Runtime 的单轮 AgentLoop 执行失败时，应返回结构化错误，不得声称保存、查询或回答成功。
@@ -1004,7 +1005,7 @@ last_updated: "2026-06-19"
 | `v0.7` | `extract_graph_candidates` / `confirm_graph_candidate` | 从卡片抽取实体关系候选，并在确认后写入 Kuzu | 确认写入有副作用 | 是 |
 | `v0.7` | `search_graph_context` | 查询实体和关系上下文，并返回可追溯 card_id | 否 | 否 |
 
-高风险工具必须在真正执行前经过 PreToolUse permission gate。权限结果包括 `allow`、`deny` 和 `ask`：`allow` 直接执行，`deny` 不执行并返回 `permission_denied` tool result，`ask` 由当前 Runtime 询问用户。CLI Runtime 必须提供真实用户确认；Web Runtime 必须通过 HTML 消息流展示确认卡并等待用户确认。用户允许后才能执行工具；用户拒绝、5 分钟确认超时、浏览器刷新或 SSE 断连时必须默认拒绝并返回 `permission_denied` tool result。工具不得接受模型自由生成的自然语言确认作为执行依据。
+高风险工具必须在真正执行前经过 PreToolUse permission gate。权限结果包括 `allow`、`deny` 和 `ask`：`allow` 直接执行，`deny` 不执行并返回 `permission_denied` tool result，`ask` 由当前 Runtime 询问用户。CLI Runtime 必须提供真实用户确认；Web Runtime 必须通过 HTML 独立阻断式确认浮层等待用户确认，聊天消息流只展示轻量状态提示。用户允许后才能执行工具；用户拒绝、5 分钟确认超时、浏览器刷新或 SSE 断连时必须默认拒绝并返回 `permission_denied` tool result。工具不得接受模型自由生成的自然语言确认作为执行依据。
 
 v0.2 实现必须保持低侵入：
 
@@ -1329,7 +1330,7 @@ pka
   用户拒绝、Runtime 没有确认 UI、权限规则明确拒绝或 approval callback 抛错。
 
 - **用户可见反馈**:
-  CLI 应展示高风险工具请求和确认提示；拒绝后 Agent 应说明操作未执行。Web 应在本轮 Agent 消息流中展示高风险工具确认卡，确认卡展示后端生成的工具摘要、目标、变更字段和风险说明；用户允许后继续执行，拒绝、5 分钟超时、浏览器刷新或 SSE 断连时不执行工具。
+  CLI 应展示高风险工具请求和确认提示；拒绝后 Agent 应说明操作未执行。Web 应通过独立阻断式确认浮层展示后端生成的工具摘要、目标、变更字段和风险说明，聊天消息流只展示待确认和确认结果状态；用户允许后继续执行，拒绝、5 分钟超时、浏览器刷新或 SSE 断连时不执行工具。
 
 ### 5.12 v0.4 Hybrid 检索
 
@@ -1773,7 +1774,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
 | 工具执行失败 | 工具抛错或返回 `ok: false` | 不声称动作成功 | 展示失败原因 |
 | 高风险工具需确认 | 权限结果为 `ask` | Runtime 询问用户；允许才执行 | 展示工具名、参数摘要和风险原因 |
 | 用户拒绝高风险工具 | approval callback 返回 false | 不执行工具，返回 `permission_denied` tool result | 说明操作未执行 |
-| Web 高风险工具请求 | Web Runtime 遇到 `ask` 权限 | 通过流式事件展示确认卡；允许后执行，拒绝、5 分钟超时、浏览器刷新或 SSE 断连时返回 `permission_denied` | HTML 展示待确认、已允许、已拒绝或已超时状态，并在未执行时说明操作未执行 |
+| Web 高风险工具请求 | Web Runtime 遇到 `ask` 权限 | 通过流式事件触发独立阻断式确认浮层；允许后执行，拒绝、5 分钟超时、浏览器刷新或 SSE 断连时返回 `permission_denied` | HTML 确认浮层展示待确认操作，聊天消息流展示轻量状态，并在未执行时说明操作未执行 |
 | CLI 输入为空 | 用户直接回车 | 不调用 AgentLoop | 继续等待输入 |
 | CLI 退出 | 用户输入 `/exit` 或 `/quit` | 正常结束循环 | 输出退出提示 |
 | CLI Renderer 失败 | 渲染事件时发生异常 | 不影响工具执行和 Agent 最终回答 | 向 stderr 输出简短错误 |
@@ -1923,9 +1924,9 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   15. 高风险工具被用户拒绝时不得执行 handler。
   16. 高风险工具被用户允许时才执行 handler。
   17. 普通工具不得触发 approval callback。
-  18. Web Runtime 遇到高风险工具 ask 时不得阻塞等待终端输入，必须通过 Web 确认卡获取用户决定。
+  18. Web Runtime 遇到高风险工具 ask 时不得阻塞等待终端输入，必须通过 Web 独立阻断式确认浮层获取用户决定。
   18a. Web Runtime 高风险工具确认超时、浏览器刷新或 SSE 断连时不得执行 handler，必须返回 `permission_denied` tool result。
-  18b. Web UI 的高风险工具确认卡不得展示完整 tool arguments，只能展示后端生成的摘要；长文本必须截断或省略，避免破坏聊天布局。
+  18b. Web UI 的高风险工具确认浮层不得展示完整 tool arguments，只能展示后端生成的摘要；长文本必须截断或省略，避免破坏聊天布局。
   19. Web Runtime 不保留非流式 `/api/chat` 聊天路径。
   20. Web Runtime 不把 `answer_delta` 缓存到全局事件列表。
   21. 多个 Web session 不得共享 runtime `messages[]`。
