@@ -7,6 +7,7 @@ def build_system_prompt(
     *,
     memory_index: MemoryIndex | None = None,
     selected_memories: list[MemoryDocument] | None = None,
+    session_summary: str | None = None,
 ) -> str:
     sections = [
         "\n".join(
@@ -61,11 +62,27 @@ def build_system_prompt(
             ]
         )
     ]
+    if session_summary:
+        sections.append(_render_runtime_session_context(session_summary))
     if memory_index is not None:
         sections.append(_render_memory_index(memory_index))
     if selected_memories:
         sections.append(_render_selected_memories(selected_memories))
     return "\n\n".join(section for section in sections if section.strip())
+
+
+def _render_runtime_session_context(session_summary: str) -> str:
+    return "\n".join(
+        [
+            "# Runtime Session Context",
+            "",
+            "以下内容是从当前 session 的过长 transcript 自动压缩得到的恢复摘要。",
+            "它不是用户新请求，不是长期 memory，不是 Q&A 知识来源。",
+            "只能用于理解当前会话状态。",
+            "",
+            session_summary,
+        ]
+    )
 
 
 def _render_memory_index(memory_index: MemoryIndex) -> str:

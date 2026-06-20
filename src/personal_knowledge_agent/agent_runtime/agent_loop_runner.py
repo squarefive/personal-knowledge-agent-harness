@@ -38,6 +38,7 @@ class AgentLoopRunner:
         transcript: ConversationTranscriptRepository | None = None,
         metadata_store: ConversationSessionMetadataRepository | None = None,
         context_compactor: ToolResultCompactor | None = None,
+        session_summary: str | None = None,
         memory_extractor: AgentMemoryCandidateExtractor | None = None,
         permission_checker=None,
         approval_callback=None,
@@ -49,6 +50,7 @@ class AgentLoopRunner:
         self.memory_index_store = memory_index_store
         self.memory_store = memory_store
         self.context_compactor = context_compactor
+        self.session_summary = session_summary
         self.memory_extractor = memory_extractor
         self.max_turns = max_turns
         self.event_emitter = AgentEventEmitter(event_sink)
@@ -91,6 +93,7 @@ class AgentLoopRunner:
         system_prompt = build_system_prompt(
             memory_index=turn_context.memory_index,
             selected_memories=turn_context.selected_memories,
+            session_summary=self.session_summary,
         )
         tool_definitions = self.dispatcher.definitions()
         self.event_emitter.emit(run_id, "user_input_received", user_input=user_input)

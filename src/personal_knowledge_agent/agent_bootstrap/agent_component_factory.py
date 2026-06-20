@@ -80,6 +80,7 @@ def create_agent_components(
         transcript=transcript,
         metadata_store=metadata_store,
         context_compactor=ToolResultCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir),
+        session_summary=restore_result.summary,
         memory_extractor=AgentMemoryCandidateExtractor(),
         approval_callback=approval_callback if approval_callback is not None else None,
         event_sink=event_sink,
