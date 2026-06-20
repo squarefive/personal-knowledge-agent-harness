@@ -7,9 +7,10 @@ from personal_knowledge_agent.agent_context.agent_profile_memory import (
     AgentMemoryIndexRepository,
 )
 from personal_knowledge_agent.qa_data_access import QACardRepository
-from personal_knowledge_agent.llm_clients import LLMResponse
+from personal_knowledge_agent.llm_clients import LLMResponse, LLMUsage
+from personal_knowledge_agent.llm_clients.deepseek_chat_client import LLMContextLengthExceeded
 from personal_knowledge_agent.tool_runtime import ToolCall
-from personal_knowledge_agent.agent_context.conversation_sessions import ToolResultCompactor, ConversationSessionMetadataRepository, ConversationTranscriptRepository
+from personal_knowledge_agent.agent_context.conversation_sessions import RuntimeContextCompactor, ToolResultCompactor, ConversationSessionMetadataRepository, ConversationTranscriptRepository
 from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers
 from personal_knowledge_agent.tool_runtime import ToolDispatcher
 
@@ -28,9 +29,23 @@ class FakeLLM:
             }
         )
         response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
         if response.text and on_text_delta is not None:
             on_text_delta(response.text)
         return response
+
+
+class FakeSummarizer:
+    max_retries = 3
+
+    def __init__(self, summary="summary"):
+        self.summary = summary
+        self.calls = []
+
+    def summarize(self, messages):
+        self.calls.append(messages)
+        return self.summary, 1
 
 
 def create_dispatcher(tmp_path, qa_tools):
@@ -366,6 +381,52 @@ def test_agent_loop_injects_memory_context_using_recent_messages(tmp_path):
     assert "Q&A 知识库和 Agent memory 必须分开。" in system_prompt
 
 
+def test_agent_loop_injects_at_most_three_memory_document_contents(tmp_path):
+    memory_dir = tmp_path / ".memory"
+    memory_dir.mkdir()
+    index_lines = [
+        "# Memory Index",
+        "",
+        "| name | type | description | path |",
+        "|---|---|---|---|",
+    ]
+    for index in range(5):
+        name = f"memory-{index}"
+        index_lines.append(f"| {name} | project | memory compact 规则 {index} | .memory/{name}.md |")
+        (memory_dir / f"{name}.md").write_text(
+            "\n".join(
+                [
+                    "---",
+                    f'name: "{name}"',
+                    'type: "project"',
+                    f'description: "memory compact 规则 {index}"',
+                    'updated_at: "2026-06-20"',
+                    'source_type: "user_decision"',
+                    "---",
+                    "",
+                    f"正文内容 {index}",
+                ]
+            ),
+            encoding="utf-8",
+        )
+    (memory_dir / "MEMORY.md").write_text("\n".join(index_lines), encoding="utf-8")
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
+    fake_llm = FakeLLM([LLMResponse(text="继续。")])
+    loop = AgentLoopRunner(
+        llm=fake_llm,
+        dispatcher=dispatcher,
+        memory_index_store=AgentMemoryIndexRepository(tmp_path),
+        memory_store=AgentMemoryDocumentRepository(tmp_path),
+    )
+
+    loop.run("继续 memory compact 规则")
+
+    system_prompt = fake_llm.calls[0]["system_prompt"]
+    injected_contents = [f"正文内容 {index}" for index in range(5) if f"正文内容 {index}" in system_prompt]
+    assert len(injected_contents) == 3
+
+
 def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path):
     knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
@@ -453,3 +514,60 @@ def test_agent_loop_emits_memory_candidates(tmp_path):
     candidates_event = next(event for event in events if event.event_type == "memory_candidates_generated")
     assert candidates_event.payload["candidates"][0]["type"] == "user"
     assert candidates_event.payload["candidates"][0]["write_policy"] == "needs_confirmation"
+
+
+def test_agent_loop_compacts_before_next_run_when_last_prompt_usage_exceeds_threshold(tmp_path):
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
+    summarizer = FakeSummarizer(summary="压缩后的 summary")
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(text="第一轮回答。", usage=LLMUsage(prompt_tokens=80, total_tokens=90)),
+            LLMResponse(text="第二轮回答。"),
+        ]
+    )
+    loop = AgentLoopRunner(
+        llm=fake_llm,
+        dispatcher=dispatcher,
+        runtime_context_compactor=RuntimeContextCompactor(
+            tmp_path,
+            summarizer=summarizer,
+            recent_messages_count=1,
+        ),
+        context_window_tokens=100,
+    )
+
+    loop.run("第一轮")
+    loop.run("第二轮")
+
+    assert summarizer.calls
+    assert fake_llm.calls[1]["messages"] == [{"role": "user", "content": "第二轮"}]
+    assert "# Runtime Session Context" in fake_llm.calls[1]["system_prompt"]
+    assert "压缩后的 summary" in fake_llm.calls[1]["system_prompt"]
+
+
+def test_agent_loop_compacts_and_retries_once_on_context_limit_error(tmp_path):
+    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
+    summarizer = FakeSummarizer(summary="retry summary")
+    fake_llm = FakeLLM(
+        [
+            LLMContextLengthExceeded("context length exceeded"),
+            LLMResponse(text="重试成功。"),
+        ]
+    )
+    loop = AgentLoopRunner(
+        llm=fake_llm,
+        dispatcher=dispatcher,
+        runtime_context_compactor=RuntimeContextCompactor(
+            tmp_path,
+            summarizer=summarizer,
+            recent_messages_count=1,
+        ),
+    )
+
+    answer = loop.run("触发超限")
+
+    assert answer == "重试成功。"
+    assert len(fake_llm.calls) == 2
+    assert "retry summary" in fake_llm.calls[1]["system_prompt"]

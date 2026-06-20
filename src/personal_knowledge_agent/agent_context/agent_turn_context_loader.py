@@ -11,6 +11,8 @@ from .agent_profile_memory import (
     MemoryIndexEntry,
 )
 
+MAX_SELECTED_MEMORY_DOCUMENTS = 3
+
 
 @dataclass
 class TurnContext:
@@ -65,7 +67,7 @@ class TurnContextLoader:
         user_input: str,
         memory_index: MemoryIndex,
         recent_messages: list[dict[str, Any]] | None = None,
-        limit: int = 3,
+        limit: int = MAX_SELECTED_MEMORY_DOCUMENTS,
     ) -> list[MemoryIndexEntry]:
         query_parts = [user_input]
         if recent_messages:

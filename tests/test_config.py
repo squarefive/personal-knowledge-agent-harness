@@ -22,6 +22,7 @@ def test_load_config_reads_dotenv(tmp_path, monkeypatch):
 
     assert config.deepseek_api_key == "test-key"
     assert config.deepseek_model == "deepseek-v4-flash"
+    assert config.context_window_tokens == 1_000_000
     assert config.knowledge_db_path == Path(".knowledge/test.db")
     assert config.dashscope_api_key is None
     assert config.qwen_embedding_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -52,6 +53,7 @@ def test_load_config_reads_v04_embedding_settings(tmp_path, monkeypatch):
         "QWEN_EMBEDDING_DIMENSIONS",
         "QDRANT_PATH",
         "QDRANT_COLLECTION",
+        "DEEPSEEK_CONTEXT_WINDOW_TOKENS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -63,6 +65,22 @@ def test_load_config_reads_v04_embedding_settings(tmp_path, monkeypatch):
     assert config.qwen_embedding_dimensions == 1024
     assert config.qdrant_path == Path(".knowledge/test-qdrant")
     assert config.qdrant_collection == "test_cards"
+
+
+def test_load_config_reads_context_window_override(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DEEPSEEK_API_KEY=test-key\n"
+        "DEEPSEEK_CONTEXT_WINDOW_TOKENS=123456\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_CONTEXT_WINDOW_TOKENS", raising=False)
+
+    config = load_config(env_file)
+
+    assert config.context_window_tokens == 123456
 
 
 def test_load_config_requires_api_key(tmp_path, monkeypatch):

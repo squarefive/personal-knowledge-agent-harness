@@ -12,9 +12,10 @@ from ..agent_context import build_system_prompt
 from ..agent_context.conversation_sessions import (
     ConversationSessionMetadataRepository,
     ConversationTranscriptRepository,
+    RuntimeContextCompactor,
     ToolResultCompactor,
 )
-from ..llm_clients import DeepSeekChatClient
+from ..llm_clients import DeepSeekChatClient, LLMContextLengthExceeded
 from ..tool_runtime import ToolDispatcher, check_permission, default_approval_callback
 from .agent_llm_call_runner import AgentLLMCallRunner
 from .agent_event_emitter import AgentEventEmitter, EventSink
@@ -38,7 +39,10 @@ class AgentLoopRunner:
         transcript: ConversationTranscriptRepository | None = None,
         metadata_store: ConversationSessionMetadataRepository | None = None,
         context_compactor: ToolResultCompactor | None = None,
+        runtime_context_compactor: RuntimeContextCompactor | None = None,
         session_summary: str | None = None,
+        context_window_tokens: int = 1_000_000,
+        runtime_compact_usage_threshold: float = 0.75,
         memory_extractor: AgentMemoryCandidateExtractor | None = None,
         permission_checker=None,
         approval_callback=None,
@@ -50,7 +54,11 @@ class AgentLoopRunner:
         self.memory_index_store = memory_index_store
         self.memory_store = memory_store
         self.context_compactor = context_compactor
+        self.runtime_context_compactor = runtime_context_compactor
         self.session_summary = session_summary
+        self.context_window_tokens = context_window_tokens
+        self.runtime_compact_usage_threshold = runtime_compact_usage_threshold
+        self.last_prompt_usage_ratio: float | None = None
         self.memory_extractor = memory_extractor
         self.max_turns = max_turns
         self.event_emitter = AgentEventEmitter(event_sink)
@@ -86,6 +94,9 @@ class AgentLoopRunner:
         turn_start_index = len(self.messages)
         user_message = {"role": "user", "content": user_input}
         self.message_recorder.append(user_message)
+        if self._should_compact_before_llm_call():
+            self._apply_runtime_compaction()
+            turn_start_index = 0
         turn_context = self.turn_context_loader.load(
             user_input=user_input,
             recent_messages=self.messages[-12:],
@@ -99,13 +110,21 @@ class AgentLoopRunner:
         self.event_emitter.emit(run_id, "user_input_received", user_input=user_input)
 
         for turn in range(self.max_turns):
-            response = self.llm_call_step.run(
+            response, compacted_during_llm = self._run_llm_with_context_limit_retry(
                 run_id=run_id,
                 turn=turn,
-                messages=self.messages,
-                tools=tool_definitions,
+                tool_definitions=tool_definitions,
                 system_prompt=system_prompt,
+                turn_context=turn_context,
             )
+            if compacted_during_llm:
+                turn_start_index = 0
+                system_prompt = build_system_prompt(
+                    memory_index=turn_context.memory_index,
+                    selected_memories=turn_context.selected_memories,
+                    session_summary=self.session_summary,
+                )
+            self._update_prompt_usage_ratio(response)
             if not response.tool_calls:
                 return self.answer_finish_step.finish(
                     run_id=run_id,
@@ -134,3 +153,64 @@ class AgentLoopRunner:
             memory_index=turn_context.memory_index,
             recent_messages=self.messages[-12:],
         )
+
+    def _run_llm_with_context_limit_retry(
+        self,
+        *,
+        run_id: str,
+        turn: int,
+        tool_definitions: list[dict[str, Any]],
+        system_prompt: str,
+        turn_context,
+    ):
+        try:
+            return (
+                self.llm_call_step.run(
+                    run_id=run_id,
+                    turn=turn,
+                    messages=self.messages,
+                    tools=tool_definitions,
+                    system_prompt=system_prompt,
+                ),
+                False,
+            )
+        except LLMContextLengthExceeded:
+            if self.runtime_context_compactor is None:
+                raise
+            self._apply_runtime_compaction()
+            retry_system_prompt = build_system_prompt(
+                memory_index=turn_context.memory_index,
+                selected_memories=turn_context.selected_memories,
+                session_summary=self.session_summary,
+            )
+            return (
+                self.llm_call_step.run(
+                    run_id=run_id,
+                    turn=turn,
+                    messages=self.messages,
+                    tools=tool_definitions,
+                    system_prompt=retry_system_prompt,
+                ),
+                True,
+            )
+
+    def _should_compact_before_llm_call(self) -> bool:
+        if self.runtime_context_compactor is None or self.last_prompt_usage_ratio is None:
+            return False
+        return self.last_prompt_usage_ratio >= self.runtime_compact_usage_threshold
+
+    def _apply_runtime_compaction(self) -> None:
+        if self.runtime_context_compactor is None:
+            return
+        result = self.runtime_context_compactor.compact(
+            self.messages,
+            existing_summary=self.session_summary,
+        )
+        self.message_recorder.messages = result.messages
+        self.session_summary = result.session_summary
+        self.last_prompt_usage_ratio = None
+
+    def _update_prompt_usage_ratio(self, response) -> None:
+        if response.usage is None or response.usage.prompt_tokens is None:
+            return
+        self.last_prompt_usage_ratio = response.usage.prompt_tokens / self.context_window_tokens

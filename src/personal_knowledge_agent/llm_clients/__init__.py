@@ -1,4 +1,4 @@
-from .deepseek_chat_client import DeepSeekChatClient
-from .llm_models import LLMResponse
+from .deepseek_chat_client import DeepSeekChatClient, LLMContextLengthExceeded
+from .llm_models import LLMResponse, LLMUsage
 
-__all__ = ["DeepSeekChatClient", "LLMResponse"]
+__all__ = ["DeepSeekChatClient", "LLMContextLengthExceeded", "LLMResponse", "LLMUsage"]
