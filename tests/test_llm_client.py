@@ -6,6 +6,7 @@ import pytest
 
 from personal_knowledge_agent.llm_clients import deepseek_chat_client as llm_client
 from personal_knowledge_agent.llm_clients import DeepSeekChatClient
+from personal_knowledge_agent.llm_clients.deepseek_chat_client import LLMContextLengthExceeded
 
 
 class FakeStreamResponse:
@@ -142,6 +143,49 @@ def test_deepseek_client_streams_text_deltas(monkeypatch):
     assert deltas == ["你", "好"]
     assert response.text == "你好"
     assert response.tool_calls == []
+
+
+def test_deepseek_client_parses_stream_usage(monkeypatch):
+    def fake_urlopen(req, timeout):
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["stream_options"] == {"include_usage": True}
+        return FakeStreamResponse(
+            [
+                {"choices": [{"delta": {"content": "ok"}}]},
+                {
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 2,
+                        "total_tokens": 12,
+                    },
+                },
+            ]
+        )
+
+    monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
+
+    response = DeepSeekChatClient(api_key="key").chat(messages=[], tools=[], system_prompt="system")
+
+    assert response.usage is not None
+    assert response.usage.prompt_tokens == 10
+    assert response.usage.completion_tokens == 2
+    assert response.usage.total_tokens == 12
+
+
+def test_deepseek_client_raises_context_length_error(monkeypatch):
+    calls = []
+
+    def fake_urlopen(req, timeout):
+        calls.append((req, timeout))
+        raise http_error(400, '{"error":{"message":"context length exceeded"}}')
+
+    monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(LLMContextLengthExceeded):
+        DeepSeekChatClient(api_key="key").chat(messages=[], tools=[], system_prompt="system")
+
+    assert len(calls) == 1
 
 
 def test_deepseek_client_accumulates_streamed_tool_calls(monkeypatch):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Callable
 
 from ..llm_clients import DeepSeekChatClient, LLMResponse
@@ -45,5 +46,6 @@ class AgentLLMCallRunner:
             turn=turn,
             status="success",
             tool_calls_count=len(response.tool_calls),
+            usage=asdict(response.usage) if response.usage is not None else None,
         )
         return response

@@ -14,6 +14,7 @@ from ..agent_context.conversation_sessions import (
     ConversationSessionRestorer,
     ConversationSessionSummarizer,
     ConversationTranscriptRepository,
+    RuntimeContextCompactor,
     ToolResultCompactor,
 )
 from ..agent_runtime import AgentEvent, AgentLoopRunner
@@ -80,6 +81,13 @@ def create_agent_components(
         transcript=transcript,
         metadata_store=metadata_store,
         context_compactor=ToolResultCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir),
+        runtime_context_compactor=RuntimeContextCompactor(
+            workspace_root,
+            summarizer=ConversationSessionSummarizer(llm),
+            session_id=session_id,
+        ),
+        session_summary=restore_result.summary,
+        context_window_tokens=config.context_window_tokens,
         memory_extractor=AgentMemoryCandidateExtractor(),
         approval_callback=approval_callback if approval_callback is not None else None,
         event_sink=event_sink,

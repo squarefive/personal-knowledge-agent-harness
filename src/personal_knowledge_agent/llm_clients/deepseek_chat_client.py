@@ -9,12 +9,22 @@ from typing import Any, Callable, Iterator
 from urllib import error, request
 
 from ..tool_runtime.tool_models import ToolCall
-from .llm_models import LLMResponse
+from .llm_models import LLMResponse, LLMUsage
 
 logger = logging.getLogger(__name__)
 
 RETRYABLE_HTTP_STATUSES = {429, 500, 503}
 RETRYABLE_NETWORK_ERRORS = (error.URLError, TimeoutError, ssl.SSLError, ConnectionError)
+CONTEXT_LIMIT_ERROR_MARKERS = (
+    "context length exceeded",
+    "context_length_exceeded",
+    "token limit exceeded",
+    "maximum context length",
+)
+
+
+class LLMContextLengthExceeded(RuntimeError):
+    pass
 
 
 class DeepSeekChatClient:
@@ -51,10 +61,14 @@ class DeepSeekChatClient:
             "tools": tools,
             "tool_choice": "auto",
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         text_parts: list[str] = []
         tool_accumulator = _ToolCallAccumulator()
+        usage: LLMUsage | None = None
         for data in self._post_stream("/chat/completions", payload):
+            if data.get("usage") is not None:
+                usage = _parse_usage(data.get("usage"))
             delta = ((data.get("choices") or [{}])[0].get("delta")) or {}
             tool_call_deltas = delta.get("tool_calls") or []
             content = delta.get("content")
@@ -66,6 +80,7 @@ class DeepSeekChatClient:
         return LLMResponse(
             text="".join(text_parts) or None,
             tool_calls=tool_accumulator.to_tool_calls(),
+            usage=usage,
         )
 
     def _post_stream(self, path: str, payload: dict[str, Any]) -> Iterator[dict[str, Any]]:
@@ -91,6 +106,10 @@ class DeepSeekChatClient:
             except error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
                 logger.error("llm.deepseek.http_error", extra={"status": exc.code})
+                if _is_context_limit_error(detail):
+                    raise LLMContextLengthExceeded(
+                        f"DeepSeek context length exceeded with status {exc.code}: {detail}"
+                    ) from exc
                 if not emitted and exc.code in RETRYABLE_HTTP_STATUSES and attempt < self.max_retries:
                     self._sleep_before_retry(attempt)
                     continue
@@ -135,6 +154,27 @@ class DeepSeekChatClient:
         if isinstance(exc, error.URLError):
             return str(exc.reason)
         return str(exc)
+
+
+def _parse_usage(payload: Any) -> LLMUsage | None:
+    if not isinstance(payload, dict):
+        return None
+    return LLMUsage(
+        prompt_tokens=_optional_int(payload.get("prompt_tokens")),
+        completion_tokens=_optional_int(payload.get("completion_tokens")),
+        total_tokens=_optional_int(payload.get("total_tokens")),
+    )
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def _is_context_limit_error(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(marker in lowered for marker in CONTEXT_LIMIT_ERROR_MARKERS)
 
 
 class _ToolCallAccumulator:

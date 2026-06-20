@@ -44,7 +44,6 @@ class ConversationSessionRestorer:
                 summary_path.parent.mkdir(parents=True, exist_ok=True)
                 summary_path.write_text(summary, encoding="utf-8")
                 recent = _recent_messages(messages, self.recent_messages_count)
-                restored = [_summary_message(summary)] + recent
                 self.metadata_store.update_counts(
                     event_count=self.transcript.event_count(),
                     message_count=len(messages),
@@ -52,7 +51,7 @@ class ConversationSessionRestorer:
                     summary_attempts=attempts,
                     last_restore_mode="summary_plus_recent",
                 )
-                return SessionRestoreResult(messages=restored, mode="summary_plus_recent", summary=summary)
+                return SessionRestoreResult(messages=recent, mode="summary_plus_recent", summary=summary)
             except Exception as exc:
                 return self._fallback(messages, str(exc))
 
@@ -60,11 +59,7 @@ class ConversationSessionRestorer:
 
     def _fallback(self, messages: list[dict], error: str) -> SessionRestoreResult:
         notice = _recovery_notice(error, self.first_messages_count, self.recent_messages_count)
-        restored = (
-            messages[: self.first_messages_count]
-            + [{"role": "user", "content": notice}]
-            + _recent_messages(messages, self.recent_messages_count)
-        )
+        restored = _recent_messages(messages, self.recent_messages_count)
         self.metadata_store.update_counts(
             event_count=self.transcript.event_count(),
             message_count=len(messages),
@@ -73,15 +68,11 @@ class ConversationSessionRestorer:
             last_restore_mode="first_and_recent",
             summary_error=error[:240],
         )
-        return SessionRestoreResult(messages=restored, mode="first_and_recent", warning=notice)
+        return SessionRestoreResult(messages=restored, mode="first_and_recent", summary=notice, warning=notice)
 
 
 def _estimated_chars(messages: list[dict]) -> int:
     return len(json.dumps(messages, ensure_ascii=False))
-
-
-def _summary_message(summary: str) -> dict[str, str]:
-    return {"role": "user", "content": f"[Previous session summary]\n\n{summary}\n\nContinue from this state."}
 
 
 def _recent_messages(messages: list[dict], count: int) -> list[dict]:
