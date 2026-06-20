@@ -3,7 +3,7 @@ module: "local-qa-knowledge-agent"
 title: "本地个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-06-19"
+last_updated: "2026-06-20"
 ---
 
 # 本地个人 Q&A 知识库 Agent 开发上下文
@@ -47,7 +47,9 @@ last_updated: "2026-06-19"
   7. 能将可恢复 messages 追加写入 `.sessions/<session_id>/transcript.jsonl`。
   8. 能在 transcript 过长时生成 `summary.md`，并用 summary + recent messages 恢复上下文。
   9. 能对过大的上下文材料做 compact，保留摘要、相关性说明和可回读 artifact。
-  10. 能通过本地 Web Runtime 提供浏览器聊天入口和基础 Q&A 卡片浏览能力。
+  10. 能基于 LLM API 返回的真实 token usage 计算上下文占比，并在下一轮 LLM 调用前触发 runtime compact。
+  11. 能在 LLM API 明确返回上下文超限错误时执行 runtime compact，并对同一次 LLM 请求最多重试一次。
+  12. 能通过本地 Web Runtime 提供浏览器聊天入口和基础 Q&A 卡片浏览能力。
 
 - **包含能力**:
   1. 录入用户提供的 Q&A。
@@ -61,9 +63,10 @@ last_updated: "2026-06-19"
   9. 从 `.sessions/<session_id>/transcript.jsonl` 恢复 runtime `messages[]`。
   10. 在长 transcript 场景下使用 `summary.md` + recent messages 恢复。
   11. 将过大的 tool result 写入 `.sessions/<session_id>/artifacts/`，并在上下文中保留 compact record。
-  12. 在 turn 结束后提取 memory candidates，并通过事件暴露候选；当前不自动写入长期 memory 或维护待确认队列。
-  13. 提供本地 HTML 聊天入口，作为 CLI Runtime 的浏览器替代输入输出层。
-  14. 在 Web UI 中查看最近 Q&A 卡片、搜索 Q&A 卡片和查看卡片详情。
+  12. 将每轮注入上下文的 `.memory/*.md` 长期记忆文档全文限制为最多 3 条；`.memory/MEMORY.md` 索引不计入该上限。
+  13. 在 turn 结束后提取 memory candidates，并通过事件暴露候选；当前不自动写入长期 memory 或维护待确认队列。
+  14. 提供本地 HTML 聊天入口，作为 CLI Runtime 的浏览器替代输入输出层。
+  15. 在 Web UI 中查看最近 Q&A 卡片、搜索 Q&A 卡片和查看卡片详情。
 
 - **不包含能力**:
   1. 不做 Markdown Wiki。
@@ -138,7 +141,10 @@ last_updated: "2026-06-19"
   8. `.sessions/<session_id>/summary.md` 只表示当前会话 compact summary，不得当作长期事实来源。
   9. compact 只能缩减当前上下文窗口，不得替代长期记忆写入。
   10. memory candidate 只表示候选，不表示已写入长期 memory；当前实现不得声称候选已经保存。
-  11. Web UI 只能展示和发起用户意图，不得绕过 AgentLoop、Tools 或 Store 执行业务动作。
+  11. session summary 不得作为 user message 注入 `messages[]`；只能作为 `system_prompt` 中独立的 Runtime Session Context section 注入。
+  12. Runtime Session Context 只用于恢复当前 session 状态，不是用户新请求、长期 memory 或 Q&A 知识来源。
+  13. 每轮注入上下文的 `.memory/*.md` 长期记忆文档全文最多 3 条；`.memory/MEMORY.md` 索引不计入这 3 条。
+  14. Web UI 只能展示和发起用户意图，不得绕过 AgentLoop、Tools 或 Store 执行业务动作。
 
 ---
 
@@ -154,6 +160,14 @@ last_updated: "2026-06-19"
   - 调用 Tool Dispatcher 执行工具。
   - 将 tool result 回填 messages。
   - 在没有 tool calls 时返回最终回答。
+  - 使用 LLM API response 中的 usage 记录真实 token 用量，并基于 `usage.prompt_tokens / context_window_tokens` 计算 `prompt_usage_ratio`。
+  - `context_window_tokens` 是 Agent Runtime 必备配置值；当前默认模型 `deepseek-v4-flash` 的默认值为 `1_000_000`，可通过 `DEEPSEEK_CONTEXT_WINDOW_TOKENS` 覆盖。
+  - 当前不做本地 token 估算、不做字符数 preflight、不引入 provider token count API。
+  - 保存上一轮 LLM 调用后的 `last_prompt_usage_ratio`；下一轮 LLM 调用前，如果达到 `0.75`，先执行 runtime compact。
+  - 如果 LLM API 明确返回 context length exceeded / token limit exceeded 类错误，应执行 runtime compact，并对同一次 LLM 请求最多重试一次。
+  - 上下文超限 retry 只针对明确的上下文超限错误，不得泛化到 429、500、认证失败、参数错误或普通响应解析错误。
+  - runtime compact 是 harness 内部能力，不作为 LLM 可自由调用 tool 暴露。
+  - Agent Loop 只负责 compact 触发与 retry 编排；具体压缩由 Runtime Context Compactor 负责。
   - Agent loop runner 的主运行骨架保持 `run(user_input) -> str`，不得为了展示层流式效果新增第二套 Agent 主入口。
   - 在关键阶段产生结构化运行事件，包括 `user_input_received`、`llm_call_started`、`answer_delta`、`llm_call_finished`、`tool_call_started`、`tool_call_finished`、`evidence_checked`、`final_answer_generated` 和 `error`。
   - `answer_delta` 只表示最终回答文本的实时增量，用于 CLI / Web 展示；`final_answer_generated` 仍是 evidence check 后的权威最终答案。
@@ -171,17 +185,21 @@ last_updated: "2026-06-19"
   - 管理每轮 Agent 可用上下文，包括 prompt、conversation session、Agent profile memory 和 tool result compact。
   - 不把 conversation session transcript、summary 或 compact artifact 当作 Q&A 长期事实来源。
   - 不把 Agent profile memory 当作 Q&A 回答来源。
+  - Runtime Context Compactor 负责将 runtime `messages[]` 压缩为固定规格 session summary + recent messages，并写入 `.sessions/<session_id>/summary.md`。
+  - Runtime Context Compactor 失败时生成 recovery notice；该 notice 只能作为 Runtime Session Context 注入，不得伪装成 user message。
 
 - **Agent Prompt Builder 职责**:
   - 运行时拼接短 system prompt。
   - 包含身份、行为规则、工具使用规则、回答格式和拒答规则。
   - 在 turn-start 阶段接收 memory index、selected memories 和 session summary，并将其压缩注入本轮上下文。
+  - session summary 应注入为独立的 `# Runtime Session Context` section；该 section 必须声明 summary 不是用户新请求、不是长期 memory、不是 Q&A 知识来源。
   - 不保存业务数据。
   - 不承担数据库读写职责。
 
 - **Agent Profile Memory 职责**:
   - 读取 `.memory/MEMORY.md` memory index。
   - 按需读取少量相关 `.memory/*.md`。
+  - 每轮注入上下文的 `.memory/*.md` 长期记忆文档全文最多 3 条；`.memory/MEMORY.md` 索引不计入这 3 条。
   - 校验 memory frontmatter 和索引字段。
   - 当前仅提供 Agent memory 读取能力；尚未实现 memory candidate 写入入口、确认队列或索引更新流程。
   - 不直接回答用户知识问题。
@@ -200,8 +218,11 @@ last_updated: "2026-06-19"
 - **Conversation Session Restore / Summarizer 职责**:
   - 当 transcript 未超过预算时原样恢复 `messages[]`。
   - 当 transcript 超过预算时，调用 summarizer 生成 `.sessions/<session_id>/summary.md`。
+  - session summary 必须使用固定 Markdown 规格，包含 `# Session Summary`、`## Current Goal`、`## User Constraints`、`## Known Context`、`## Completed Work`、`## Next Step` 和 `## Boundaries`。
+  - `## Boundaries` 必须声明 summary 不是用户新请求、不是长期 memory、不是 Q&A 知识来源。
+  - session summary 不得作为 user message 注入 `messages[]`；restore compact 成功后应返回 recent messages 和独立 summary，由 Prompt Builder 注入 Runtime Session Context。
   - summarizer 最多重试 3 次。
-  - summarizer 失败时使用 first N messages + recovery notice + recent N messages 降级恢复。
+  - summarizer 失败时使用 recent messages + recovery notice 降级恢复；recovery notice 不得作为 user message 注入，只能作为 Runtime Session Context 注入。
 
 - **Tool Result Compactor 职责**:
   - 识别过大的 tool result 或旧上下文。
@@ -220,6 +241,8 @@ last_updated: "2026-06-19"
   - 作为 DeepSeek API 的薄适配层。
   - 接收 messages、tools 和 system_prompt。
   - 发起 DeepSeek streaming chat 请求，并在收到最终回答文本增量时调用可选 delta callback。
+  - 解析 API response 中的 usage，返回 prompt_tokens、completion_tokens 和 total_tokens。
+  - 保守识别 DeepSeek 明确返回的 context length exceeded / token limit exceeded 类错误，并将其转换为专用上下文超限错误供 Agent Runtime 处理。
   - 对 DeepSeek 临时故障执行有上限的有限重试，不得无限阻塞 CLI。
   - 可重试错误包括网络连接类错误、timeout、SSL EOF，以及 HTTP 429、500、503。
   - 不可重试错误包括 HTTP 400、401、402、422，以及响应解析错误和 tool call 参数解析错误。
