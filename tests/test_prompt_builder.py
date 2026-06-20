@@ -32,8 +32,10 @@ def test_build_system_prompt_keeps_base_rules():
     assert "通常先读取 rank=1 的候选" in prompt
     assert "应继续读取其他相关候选" in prompt
     assert "如果只返回 weak 候选，读取完整卡片后仍要判断依据是否足够" in prompt
-    assert "先调用 detect_duplicate_cards(mode=manual)" in prompt
-    assert "detect_duplicate_cards(mode=auto)" in prompt
+    assert "具体工具参数以工具定义为准" in prompt
+    assert "scope=all" not in prompt
+    assert "detect_duplicate_cards(mode=manual)" not in prompt
+    assert "detect_duplicate_cards(mode=auto)" not in prompt
     assert "真正合并必须调用 merge_qa_cards" in prompt
     assert "最终回答不要自行输出“来源：”区块" in prompt
     assert "来源区块由程序根据工具结果追加" in prompt

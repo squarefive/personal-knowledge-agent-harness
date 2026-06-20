@@ -167,6 +167,23 @@ class QACardRepository:
         cards = [self._row_to_card(row) for row in rows]
         return cards
 
+    def list_all_cards(self, category: str | None = None) -> list[QACard]:
+        """Return all cards in creation order, optionally filtered by category.
+
+        Inputs:
+            category: Optional category hard filter.
+        Outputs:
+            Q&A cards ordered by created_at ascending.
+        Side Effects:
+            None.
+        """
+        clean_category = self.validate_optional_category(category)
+        where, params = self._category_filter(clean_category)
+        sql = f"SELECT * FROM qa_cards{where} ORDER BY created_at ASC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._row_to_card(row) for row in rows]
+
     def list_unvectorized_cards(self, limit: int | None = None) -> list[QACard]:
         params: tuple[int, ...] = ()
         sql = "SELECT * FROM qa_cards WHERE is_vectorized = 0 ORDER BY created_at ASC"

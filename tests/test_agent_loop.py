@@ -114,6 +114,54 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
     assert "card_id" in events[4].payload["output"]
 
 
+def test_agent_loop_executes_full_library_duplicate_detection_once(tmp_path):
+    store = QACardRepository(tmp_path / "knowledge.db")
+    store.save_card(
+        question="DeepSeek API key 应该如何配置？",
+        answer="把 DeepSeek API key 放到环境变量中。",
+        summary="DeepSeek API key 配置方式。",
+        keywords=["DeepSeek", "API key", "配置"],
+        category="Agent 开发",
+    )
+    store.save_card(
+        question="DeepSeek 的 API key 怎么配置？",
+        answer="DeepSeek API key 应配置到环境变量。",
+        summary="配置 DeepSeek API key。",
+        keywords=["DeepSeek", "API key", "配置"],
+        category="Agent 开发",
+    )
+    knowledge_tools = QAKnowledgeToolHandlers(store)
+    dispatcher = create_dispatcher(tmp_path, knowledge_tools)
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        name="detect_duplicate_cards",
+                        arguments={"scope": "all", "mode": "manual"},
+                    )
+                ]
+            ),
+            LLMResponse(text="发现 1 组疑似重复。"),
+        ]
+    )
+    loop = AgentLoopRunner(llm=fake_llm, dispatcher=dispatcher)
+
+    answer = loop.run("本地有没有重复的卡片呢")
+
+    assert answer == "发现 1 组疑似重复。"
+    assert len(fake_llm.calls) == 2
+    tool_messages = [
+        message
+        for message in fake_llm.calls[1]["messages"]
+        if message["role"] == "tool"
+    ]
+    assert len(tool_messages) == 1
+    assert "duplicate_groups" in tool_messages[0]["content"]
+    assert "checked_count" in tool_messages[0]["content"]
+
+
 def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
     knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)

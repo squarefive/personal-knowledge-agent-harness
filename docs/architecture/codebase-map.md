@@ -142,6 +142,7 @@ last_updated: "2026-06-16"
 | `qa_card_models.py` | 定义 Q&A card 和关键词检索结果数据结构。 |
 | `qa_card_repository.py` | 初始化和读写 SQLite `qa_cards` 表。 |
 | `qa_card_semantic_index.py` | 封装 DashScope embedding 和 Qdrant local mode 语义索引。 |
+| `duplicate_detection.py` | 提供本地 Q&A 全库重复检测服务，负责候选召回、相似度打分和重复组构建。 |
 
 ### Tool Runtime
 

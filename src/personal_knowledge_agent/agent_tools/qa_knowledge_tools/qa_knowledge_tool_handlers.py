@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from ...qa_data_access import QACard, QACardRepository, QACardSemanticIndex
+from ...qa_data_access.duplicate_detection import DuplicateDetectionService, DuplicateGroup
 
 KEYWORD_SCORE_WEIGHT = 0.4
 SEMANTIC_SCORE_WEIGHT = 0.6
@@ -60,6 +61,7 @@ class QAKnowledgeToolHandlers:
     ):
         self.store = store
         self.semantic_index = semantic_index
+        self.duplicate_detection = DuplicateDetectionService()
 
     def save_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -242,10 +244,65 @@ class QAKnowledgeToolHandlers:
             return self._error("store_error", str(exc))
 
     def detect_duplicate_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Detect duplicate cards for a target card/query or the whole library.
+
+        Inputs:
+            arguments: Tool call arguments including scope, mode, and filters.
+        Outputs:
+            Structured tool result with candidates or duplicate groups.
+        Side Effects:
+            None.
+        """
         try:
             limit = self._optional_limit(arguments, default=5)
+            scope = self._duplicate_scope(arguments)
             mode = self._duplicate_mode(arguments)
             category = self._optional_category(arguments)
+            if scope == "all":
+                return self._detect_all_duplicate_cards(
+                    category=category,
+                    limit=limit,
+                    mode=mode,
+                )
+            return self._detect_target_duplicate_cards(
+                arguments=arguments,
+                category=category,
+                limit=limit,
+                mode=mode,
+            )
+        except Exception as exc:
+            return self._error("invalid_input", str(exc))
+
+    def _detect_all_duplicate_cards(
+        self,
+        *,
+        category: str | None,
+        limit: int,
+        mode: str,
+    ) -> dict[str, Any]:
+        """Return duplicate groups across all matching cards."""
+        cards = self.store.list_all_cards(category=category)
+        result = self.duplicate_detection.detect_all(cards, mode=mode, limit=limit)
+        return {
+            "ok": True,
+            "scope": "all",
+            "checked_count": result.checked_count,
+            "duplicate_groups": [
+                self._duplicate_group_payload(group)
+                for group in result.duplicate_groups
+            ],
+        }
+
+    def _detect_target_duplicate_cards(
+        self,
+        *,
+        arguments: dict[str, Any],
+        category: str | None,
+        limit: int,
+        mode: str,
+    ) -> dict[str, Any]:
+        """Return duplicate candidates for one target card or query."""
+        try:
             target_card = self._optional_target_card(arguments)
             query = self._duplicate_query(arguments, target_card)
             checked_card_id = target_card.id if target_card is not None else None
@@ -273,6 +330,7 @@ class QAKnowledgeToolHandlers:
                 candidates = [item for item in candidates if item[1].duplicate_level == "duplicate"]
             payload = {
                 "ok": True,
+                "scope": "target",
                 "checked_card_id": checked_card_id,
                 "candidates": [
                     self._duplicate_payload(card, candidate)
@@ -369,6 +427,14 @@ class QAKnowledgeToolHandlers:
         if card is None:
             raise ValueError(f"card not found: {card_id}")
         return card
+
+    @staticmethod
+    def _duplicate_scope(arguments: dict[str, Any]) -> str:
+        """Return the validated duplicate detection scope."""
+        scope = arguments.get("scope", "target")
+        if scope not in ("target", "all"):
+            raise ValueError("scope must be target or all")
+        return scope
 
     @staticmethod
     def _duplicate_mode(arguments: dict[str, Any]) -> str:
@@ -478,6 +544,25 @@ class QAKnowledgeToolHandlers:
             "question_overlap": candidate.question_overlap,
             "same_category": candidate.same_category,
             "reason": candidate.reason,
+        }
+
+    @staticmethod
+    def _duplicate_group_payload(group: DuplicateGroup) -> dict[str, Any]:
+        """Return the tool payload for one duplicate group."""
+        return {
+            "card_ids": group.card_ids,
+            "duplicate_score": group.duplicate_score,
+            "duplicate_level": group.duplicate_level,
+            "reason": group.reason,
+            "cards": [
+                {
+                    "card_id": card.id,
+                    "question": card.question,
+                    "summary": card.summary,
+                    "category": card.category,
+                }
+                for card in group.cards
+            ],
         }
 
     def _try_upsert_semantic_index(self, card: QACard) -> str | None:
@@ -779,10 +864,15 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "detect_duplicate_cards",
-            "description": "检测疑似重复的本地 Q&A 知识卡片，只返回 duplicate 或 possible_duplicate 候选。",
+            "description": "检测疑似重复的本地 Q&A 知识卡片。scope=target 用于指定 card_id/query 查重；scope=all 用于用户询问本地是否有重复卡片、全库查重或检查所有卡片重复时的一次性全库查重。只返回 duplicate 或 possible_duplicate 候选。",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "scope": {
+                        "type": "string",
+                        "enum": ["target", "all"],
+                        "description": "target 检测指定卡片或文本；all 检测本地知识库全部 Q&A 卡片。",
+                    },
                     "card_id": {"type": "string"},
                     "query": {"type": "string"},
                     "category": {"type": "string"},

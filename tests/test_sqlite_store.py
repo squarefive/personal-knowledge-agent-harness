@@ -30,6 +30,27 @@ def test_save_read_search_and_recent_cards(tmp_path):
     assert [item.id for item in recent] == [card.id]
 
 
+def test_list_all_cards_returns_all_and_applies_category_filter(tmp_path):
+    store = QACardRepository(tmp_path / "knowledge.db")
+    first = store.save_card(
+        question="第一个问题？",
+        answer="第一个答案。",
+        summary="第一个摘要。",
+        keywords=["第一个"],
+        category="Agent 开发",
+    )
+    second = store.save_card(
+        question="第二个问题？",
+        answer="第二个答案。",
+        summary="第二个摘要。",
+        keywords=["第二个"],
+        category="检索与知识库",
+    )
+
+    assert [card.id for card in store.list_all_cards()] == [first.id, second.id]
+    assert [card.id for card in store.list_all_cards(category="检索与知识库")] == [second.id]
+
+
 def test_search_returns_empty_for_no_match(tmp_path):
     store = QACardRepository(tmp_path / "knowledge.db")
     store.save_card(
