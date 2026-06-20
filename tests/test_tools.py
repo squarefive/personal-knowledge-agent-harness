@@ -101,6 +101,19 @@ def test_tool_dispatcher_aggregates_qa_and_memory_definitions(tmp_path):
     }
 
 
+def test_detect_duplicate_cards_definition_includes_all_scope(tmp_path):
+    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    definition = next(
+        item for item in tools.definitions()
+        if item["function"]["name"] == "detect_duplicate_cards"
+    )
+
+    properties = definition["function"]["parameters"]["properties"]
+
+    assert properties["scope"]["enum"] == ["target", "all"]
+    assert "scope=all" in definition["function"]["description"]
+
+
 def test_save_qa_card_validates_required_fields(tmp_path):
     tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
 
@@ -525,6 +538,100 @@ def test_detect_duplicate_cards_filters_self_and_auto_returns_only_duplicates(tm
     assert [card["card_id"] for card in auto["candidates"]] == [duplicate.id]
 
 
+def test_detect_duplicate_cards_all_scope_returns_duplicate_groups(tmp_path):
+    store = QACardRepository(tmp_path / "knowledge.db")
+    first = store.save_card(
+        question="DeepSeek API key 应该如何配置？",
+        answer="把 DeepSeek API key 放到环境变量中。",
+        summary="DeepSeek API key 配置方式。",
+        keywords=["DeepSeek", "API key", "配置"],
+        category="Agent 开发",
+    )
+    second = store.save_card(
+        question="DeepSeek 的 API key 怎么配置？",
+        answer="DeepSeek API key 应配置到环境变量。",
+        summary="配置 DeepSeek API key。",
+        keywords=["DeepSeek", "API key", "配置"],
+        category="Agent 开发",
+    )
+    third = store.save_card(
+        question="FastAPI 路由怎么测试？",
+        answer="使用 TestClient 测试路由。",
+        summary="FastAPI 路由测试。",
+        keywords=["FastAPI", "测试"],
+        category="工程架构",
+    )
+    tools = QAKnowledgeToolHandlers(store)
+
+    result = tools.detect_duplicate_cards({"scope": "all", "mode": "manual", "limit": 20})
+
+    assert result["ok"] is True
+    assert result["scope"] == "all"
+    assert result["checked_count"] == 3
+    assert len(result["duplicate_groups"]) == 1
+    assert result["duplicate_groups"][0]["card_ids"] == [first.id, second.id]
+    assert result["duplicate_groups"][0]["duplicate_level"] == "duplicate"
+    assert [card["card_id"] for card in result["duplicate_groups"][0]["cards"]] == [first.id, second.id]
+    assert third.id not in result["duplicate_groups"][0]["card_ids"]
+
+
+def test_detect_duplicate_cards_all_scope_merges_connected_pairs(tmp_path):
+    store = QACardRepository(tmp_path / "knowledge.db")
+    first = store.save_card(
+        question="上下文压缩什么时候触发？",
+        answer="达到真实 token 阈值后触发。",
+        summary="上下文压缩由 token usage 触发。",
+        keywords=["上下文压缩", "token", "触发"],
+        category="上下文管理",
+    )
+    second = store.save_card(
+        question="context compact 何时触发？",
+        answer="根据 token usage 判断是否触发。",
+        summary="context compact 根据 token usage 触发。",
+        keywords=["上下文压缩", "token", "compact"],
+        category="上下文管理",
+    )
+    third = store.save_card(
+        question="runtime compact 什么时候执行？",
+        answer="上一轮 prompt token 占比超过阈值时执行。",
+        summary="runtime compact 使用 token usage 判断。",
+        keywords=["runtime compact", "token", "触发"],
+        category="上下文管理",
+    )
+    tools = QAKnowledgeToolHandlers(store)
+
+    result = tools.detect_duplicate_cards({"scope": "all", "mode": "manual", "limit": 20})
+
+    assert len(result["duplicate_groups"]) == 1
+    assert result["duplicate_groups"][0]["card_ids"] == [first.id, second.id, third.id]
+
+
+def test_detect_duplicate_cards_all_scope_auto_returns_only_duplicates(tmp_path):
+    store = QACardRepository(tmp_path / "knowledge.db")
+    store.save_card(
+        question="DeepSeek API key 应该如何配置？",
+        answer="把 key 放到环境变量。",
+        summary="DeepSeek API key 配置。",
+        keywords=["DeepSeek", "API key", "配置"],
+        category="Agent 开发",
+    )
+    store.save_card(
+        question="DeepSeek token 放在哪里？",
+        answer="放到环境变量。",
+        summary="DeepSeek token 配置。",
+        keywords=["DeepSeek", "token", "配置"],
+        category="Agent 开发",
+    )
+    tools = QAKnowledgeToolHandlers(store)
+
+    manual = tools.detect_duplicate_cards({"scope": "all", "mode": "manual", "limit": 20})
+    auto = tools.detect_duplicate_cards({"scope": "all", "mode": "auto", "limit": 20})
+
+    assert len(manual["duplicate_groups"]) == 1
+    assert manual["duplicate_groups"][0]["duplicate_level"] == "possible_duplicate"
+    assert auto["duplicate_groups"] == []
+
+
 def test_detect_duplicate_cards_applies_category_filter_and_degrades_to_keyword(tmp_path):
     store = QACardRepository(tmp_path / "knowledge.db")
     target = store.save_card(
@@ -843,7 +950,9 @@ def test_tool_dispatcher_display_output_includes_duplicate_and_merge_fields(tmp_
         "detect_duplicate_cards",
         {
             "ok": True,
+            "scope": "all",
             "checked_card_id": "qa_1",
+            "checked_count": 2,
             "candidates": [
                 {
                     "card_id": "qa_2",
@@ -853,6 +962,24 @@ def test_tool_dispatcher_display_output_includes_duplicate_and_merge_fields(tmp_
                     "duplicate_score": 0.91,
                     "duplicate_level": "duplicate",
                     "reason": "同分类",
+                    "debug": "hidden",
+                }
+            ],
+            "duplicate_groups": [
+                {
+                    "card_ids": ["qa_1", "qa_2"],
+                    "duplicate_score": 0.91,
+                    "duplicate_level": "duplicate",
+                    "reason": "同分类",
+                    "cards": [
+                        {
+                            "card_id": "qa_1",
+                            "question": "问题一",
+                            "summary": "摘要一",
+                            "category": "Agent 开发",
+                            "debug": "hidden",
+                        }
+                    ],
                     "debug": "hidden",
                 }
             ],
@@ -874,7 +1001,9 @@ def test_tool_dispatcher_display_output_includes_duplicate_and_merge_fields(tmp_
 
     assert duplicate_display == {
         "ok": True,
+        "scope": "all",
         "checked_card_id": "qa_1",
+        "checked_count": 2,
         "candidates": [
             {
                 "card_id": "qa_2",
@@ -884,6 +1013,22 @@ def test_tool_dispatcher_display_output_includes_duplicate_and_merge_fields(tmp_
                 "duplicate_score": 0.91,
                 "duplicate_level": "duplicate",
                 "reason": "同分类",
+            }
+        ],
+        "duplicate_groups": [
+            {
+                "card_ids": ["qa_1", "qa_2"],
+                "duplicate_score": 0.91,
+                "duplicate_level": "duplicate",
+                "reason": "同分类",
+                "cards": [
+                    {
+                        "card_id": "qa_1",
+                        "question": "问题一",
+                        "summary": "摘要一",
+                        "category": "Agent 开发",
+                    }
+                ],
             }
         ],
     }
