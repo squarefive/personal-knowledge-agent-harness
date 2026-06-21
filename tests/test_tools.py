@@ -101,6 +101,22 @@ def test_tool_dispatcher_aggregates_qa_and_memory_definitions(tmp_path):
     }
 
 
+def test_tool_definitions_include_parameter_descriptions(tmp_path):
+    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(qa_tools, create_memory_tools(tmp_path))
+
+    for definition in dispatcher.definitions():
+        function = definition["function"]
+        parameters = function["parameters"]
+
+        assert definition["type"] == "function"
+        assert function["description"]
+        assert parameters["type"] == "object"
+        assert parameters["additionalProperties"] is False
+        for property_schema in parameters["properties"].values():
+            assert property_schema["description"]
+
+
 def test_detect_duplicate_cards_definition_includes_all_scope(tmp_path):
     tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     definition = next(
@@ -111,7 +127,7 @@ def test_detect_duplicate_cards_definition_includes_all_scope(tmp_path):
     properties = definition["function"]["parameters"]["properties"]
 
     assert properties["scope"]["enum"] == ["target", "all"]
-    assert "scope=all" in definition["function"]["description"]
+    assert "all 检测本地知识库全部 Q&A 卡片" in properties["scope"]["description"]
 
 
 def test_save_qa_card_validates_required_fields(tmp_path):
