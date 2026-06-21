@@ -94,8 +94,9 @@ class AgentLoopRunner:
         turn_start_index = len(self.messages)
         user_message = {"role": "user", "content": user_input}
         self.message_recorder.append(user_message)
+        self.event_emitter.emit(run_id, "user_input_received", user_input=user_input)
         if self._should_compact_before_llm_call():
-            self._apply_runtime_compaction()
+            self._apply_runtime_compaction(run_id=run_id, reason="usage_threshold")
             turn_start_index = 0
         turn_context = self.turn_context_loader.load(
             user_input=user_input,
@@ -107,7 +108,6 @@ class AgentLoopRunner:
             session_summary=self.session_summary,
         )
         tool_definitions = self.dispatcher.definitions()
-        self.event_emitter.emit(run_id, "user_input_received", user_input=user_input)
 
         for turn in range(self.max_turns):
             response, compacted_during_llm = self._run_llm_with_context_limit_retry(
@@ -124,7 +124,7 @@ class AgentLoopRunner:
                     selected_memories=turn_context.selected_memories,
                     session_summary=self.session_summary,
                 )
-            self._update_prompt_usage_ratio(response)
+            self._update_prompt_usage_ratio(run_id, response)
             if not response.tool_calls:
                 return self.answer_finish_step.finish(
                     run_id=run_id,
@@ -177,7 +177,7 @@ class AgentLoopRunner:
         except LLMContextLengthExceeded:
             if self.runtime_context_compactor is None:
                 raise
-            self._apply_runtime_compaction()
+            self._apply_runtime_compaction(run_id=run_id, reason="context_length_exceeded")
             retry_system_prompt = build_system_prompt(
                 memory_index=turn_context.memory_index,
                 selected_memories=turn_context.selected_memories,
@@ -199,9 +199,17 @@ class AgentLoopRunner:
             return False
         return self.last_prompt_usage_ratio >= self.runtime_compact_usage_threshold
 
-    def _apply_runtime_compaction(self) -> None:
+    def _apply_runtime_compaction(self, *, run_id: str, reason: str) -> None:
         if self.runtime_context_compactor is None:
             return
+        previous_prompt_usage_ratio = self.last_prompt_usage_ratio
+        self.event_emitter.emit(
+            run_id,
+            "runtime_context_compaction_started",
+            reason=reason,
+            prompt_usage_ratio=previous_prompt_usage_ratio,
+            threshold=self.runtime_compact_usage_threshold,
+        )
         result = self.runtime_context_compactor.compact(
             self.messages,
             existing_summary=self.session_summary,
@@ -209,8 +217,21 @@ class AgentLoopRunner:
         self.message_recorder.messages = result.messages
         self.session_summary = result.session_summary
         self.last_prompt_usage_ratio = None
+        self.event_emitter.emit(
+            run_id,
+            "runtime_context_compaction_finished",
+            reason=reason,
+            prompt_usage_ratio=previous_prompt_usage_ratio,
+            threshold=self.runtime_compact_usage_threshold,
+            mode=result.mode,
+        )
 
-    def _update_prompt_usage_ratio(self, response) -> None:
+    def _update_prompt_usage_ratio(self, run_id: str, response) -> None:
         if response.usage is None or response.usage.prompt_tokens is None:
             return
         self.last_prompt_usage_ratio = response.usage.prompt_tokens / self.context_window_tokens
+        self.event_emitter.emit(
+            run_id,
+            "prompt_usage_updated",
+            prompt_usage_ratio=self.last_prompt_usage_ratio,
+        )

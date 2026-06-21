@@ -567,6 +567,7 @@ def test_agent_loop_emits_memory_candidates(tmp_path):
 def test_agent_loop_compacts_before_next_run_when_last_prompt_usage_exceeds_threshold(tmp_path):
     knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
+    events = []
     summarizer = FakeSummarizer(summary="压缩后的 summary")
     fake_llm = FakeLLM(
         [
@@ -583,6 +584,7 @@ def test_agent_loop_compacts_before_next_run_when_last_prompt_usage_exceeds_thre
             recent_messages_count=1,
         ),
         context_window_tokens=100,
+        event_sink=events.append,
     )
 
     loop.run("第一轮")
@@ -592,11 +594,32 @@ def test_agent_loop_compacts_before_next_run_when_last_prompt_usage_exceeds_thre
     assert fake_llm.calls[1]["messages"] == [{"role": "user", "content": "第二轮"}]
     assert "# Runtime Session Context" in fake_llm.calls[1]["system_prompt"]
     assert "压缩后的 summary" in fake_llm.calls[1]["system_prompt"]
+    prompt_usage_events = [event for event in events if event.event_type == "prompt_usage_updated"]
+    assert prompt_usage_events[0].payload == {"prompt_usage_ratio": 0.8}
+    compaction_events = [
+        event for event in events if event.event_type.startswith("runtime_context_compaction_")
+    ]
+    assert [event.event_type for event in compaction_events] == [
+        "runtime_context_compaction_started",
+        "runtime_context_compaction_finished",
+    ]
+    assert compaction_events[0].payload == {
+        "reason": "usage_threshold",
+        "prompt_usage_ratio": 0.8,
+        "threshold": 0.75,
+    }
+    assert compaction_events[1].payload == {
+        "reason": "usage_threshold",
+        "prompt_usage_ratio": 0.8,
+        "threshold": 0.75,
+        "mode": "summary_plus_recent",
+    }
 
 
 def test_agent_loop_compacts_and_retries_once_on_context_limit_error(tmp_path):
     knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
+    events = []
     summarizer = FakeSummarizer(summary="retry summary")
     fake_llm = FakeLLM(
         [
@@ -612,6 +635,7 @@ def test_agent_loop_compacts_and_retries_once_on_context_limit_error(tmp_path):
             summarizer=summarizer,
             recent_messages_count=1,
         ),
+        event_sink=events.append,
     )
 
     answer = loop.run("触发超限")
@@ -619,3 +643,21 @@ def test_agent_loop_compacts_and_retries_once_on_context_limit_error(tmp_path):
     assert answer == "重试成功。"
     assert len(fake_llm.calls) == 2
     assert "retry summary" in fake_llm.calls[1]["system_prompt"]
+    compaction_events = [
+        event for event in events if event.event_type.startswith("runtime_context_compaction_")
+    ]
+    assert [event.event_type for event in compaction_events] == [
+        "runtime_context_compaction_started",
+        "runtime_context_compaction_finished",
+    ]
+    assert compaction_events[0].payload == {
+        "reason": "context_length_exceeded",
+        "prompt_usage_ratio": None,
+        "threshold": 0.75,
+    }
+    assert compaction_events[1].payload == {
+        "reason": "context_length_exceeded",
+        "prompt_usage_ratio": None,
+        "threshold": 0.75,
+        "mode": "summary_plus_recent",
+    }

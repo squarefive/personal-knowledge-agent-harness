@@ -21,6 +21,7 @@ const elements = {
   chatForm: document.querySelector("#chatForm"),
   messageInput: document.querySelector("#messageInput"),
   sendButton: document.querySelector("#sendButton"),
+  contextStatus: document.querySelector("#contextStatus"),
   messages: document.querySelector("#messages"),
   statusText: document.querySelector("#statusText"),
   refreshCardsButton: document.querySelector("#refreshCardsButton"),
@@ -358,6 +359,15 @@ function renderAgentEvent(message, event) {
     case "llm_call_finished":
       finishLlmTurn(message, event);
       break;
+    case "prompt_usage_updated":
+      updateContextStatus(event.prompt_usage_ratio);
+      break;
+    case "runtime_context_compaction_started":
+      addStep(message, contextCompactionStartText(event));
+      break;
+    case "runtime_context_compaction_finished":
+      addStep(message, contextCompactionFinishText(event));
+      break;
     case "tool_call_started":
       addToolStep(message, event);
       break;
@@ -394,6 +404,26 @@ function addStep(message, text) {
   step.textContent = text;
   message._steps.append(step);
   return step;
+}
+
+function updateContextStatus(promptUsageRatio) {
+  const ratio = Number(promptUsageRatio);
+  const percentage = Number.isFinite(ratio) ? Math.max(0, Math.round(ratio * 100)) : 0;
+  elements.contextStatus.textContent = `Context ${percentage}%`;
+}
+
+function contextCompactionStartText(event) {
+  if (event.reason === "context_length_exceeded") {
+    return "上下文超限，正在压缩上下文";
+  }
+  return "正在压缩上下文";
+}
+
+function contextCompactionFinishText(event) {
+  if (event.reason === "context_length_exceeded") {
+    return "上下文已压缩，正在重试";
+  }
+  return "上下文已压缩";
 }
 
 function appendAnswerDelta(message, turn, text) {
