@@ -760,17 +760,34 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "save_qa_card",
-            "description": "保存一条本地 Q&A 知识卡片。",
+            "description": "保存一条本地 Q&A 知识卡片。仅在用户明确提供 Q&A 并表达保存意图时使用；本工具会写入 SQLite 事实库，并在语义索引启用时同步 Qdrant。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "question": {"type": "string"},
-                    "answer": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "keywords": {"type": "array", "items": {"type": "string"}},
-                    "category": {"type": "string"},
+                    "question": {
+                        "type": "string",
+                        "description": "用户提供的原始问题，不要改写为模型自造问题。",
+                    },
+                    "answer": {
+                        "type": "string",
+                        "description": "用户提供的原始答案，不要用模型外部知识补写。",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "对答案的简短摘要，用于快速浏览和检索。",
+                    },
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "检索关键词，包括主题词、技术名词、项目名、工具名、API 名、模型名、数据库名、函数名或关键概念。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "知识卡片唯一的语义主归属分类。必须是具体稳定的短名词短语，不超过 24 个字符；不得使用其他、未分类、杂项、默认分类、未知、待分类等兜底分类；不得使用函数名、字段名、模型名、数据库名、工具名或 API 名。",
+                    },
                 },
                 "required": ["question", "answer", "summary", "keywords", "category"],
+                "additionalProperties": False,
             },
         },
     },
@@ -778,15 +795,25 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_qa_cards",
-            "description": "使用 SQLite LIKE 检索本地 Q&A 知识卡片，作为关键词检索和降级兜底。",
+            "description": "使用 SQLite LIKE 检索本地 Q&A 知识卡片，作为关键词检索和降级兜底。返回候选摘要，不是完整回答依据；需要回答时继续读取完整卡片。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "limit": {"type": "integer"},
-                    "category": {"type": "string"},
+                    "query": {
+                        "type": "string",
+                        "description": "用户问题或检索关键词。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大返回数量，工具会限制到允许范围。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "可选硬过滤分类。只有用户明确限定分类时才传入；指定分类无结果时不要跨分类兜底。",
+                    },
                 },
                 "required": ["query"],
+                "additionalProperties": False,
             },
         },
     },
@@ -794,15 +821,25 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "hybrid_search_qa_cards",
-            "description": "默认问答检索工具。结合 SQLite LIKE 和 Qdrant 语义召回检索本地 Q&A 知识卡片。",
+            "description": "默认本地 Q&A 检索工具。用于用户要求基于本地知识库、已保存 Q&A、历史记录或来源回答时；返回候选摘要和排序信息，不是完整回答依据。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "limit": {"type": "integer"},
-                    "category": {"type": "string"},
+                    "query": {
+                        "type": "string",
+                        "description": "用户问题或检索意图。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大返回数量，工具会限制到允许范围。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "可选硬过滤分类。只有用户明确限定分类时才传入；指定分类无结果时不要跨分类兜底。",
+                    },
                 },
                 "required": ["query"],
+                "additionalProperties": False,
             },
         },
     },
@@ -810,11 +847,17 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_qa_card",
-            "description": "按 card_id 读取完整 Q&A 知识卡片。",
+            "description": "按 card_id 读取完整 Q&A 知识卡片。用于把检索、最近列表或保存结果中的真实 card_id 转换为完整回答依据。",
             "parameters": {
                 "type": "object",
-                "properties": {"card_id": {"type": "string"}},
+                "properties": {
+                    "card_id": {
+                        "type": "string",
+                        "description": "来自检索、最近列表或保存结果的真实 card_id。",
+                    }
+                },
                 "required": ["card_id"],
+                "additionalProperties": False,
             },
         },
     },
@@ -822,18 +865,38 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_qa_card",
-            "description": "更新一条本地 Q&A 知识卡片。该工具执行前必须经过 harness 权限确认。",
+            "description": "更新一条本地 Q&A 知识卡片。仅当用户明确要求修改某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "card_id": {"type": "string"},
-                    "question": {"type": "string"},
-                    "answer": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "keywords": {"type": "array", "items": {"type": "string"}},
-                    "category": {"type": "string"},
+                    "card_id": {
+                        "type": "string",
+                        "description": "要更新的卡片 ID。",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "新的问题文本，不得用模型自造问题覆盖用户真实意图。",
+                    },
+                    "answer": {
+                        "type": "string",
+                        "description": "新的答案文本，不得用模型外部知识补写。",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "新的摘要，用于快速浏览和检索。",
+                    },
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "新的检索关键词，包括主题词、技术名词、项目名、工具名、API 名、模型名、数据库名、函数名或关键概念。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "新的唯一语义主分类。必须是具体稳定的短名词短语，不超过 24 个字符；不得使用兜底分类；不得使用函数名、字段名、模型名、数据库名、工具名或 API 名。",
+                    },
                 },
                 "required": ["card_id"],
+                "additionalProperties": False,
             },
         },
     },
@@ -841,11 +904,17 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delete_qa_card",
-            "description": "物理删除一条本地 Q&A 知识卡片。该工具执行前必须经过 harness 权限确认。",
+            "description": "物理删除一条本地 Q&A 知识卡片。仅当用户明确要求删除某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
-                "properties": {"card_id": {"type": "string"}},
+                "properties": {
+                    "card_id": {
+                        "type": "string",
+                        "description": "要删除的卡片 ID。",
+                    }
+                },
                 "required": ["card_id"],
+                "additionalProperties": False,
             },
         },
     },
@@ -853,10 +922,20 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_recent_cards",
-            "description": "列出最近保存的 Q&A 知识卡片。",
+            "description": "列出最近保存的 Q&A 知识卡片。用于查看最近卡片、浏览知识库或选择要读取、更新、删除的卡片；返回摘要，不是完整回答依据。",
             "parameters": {
                 "type": "object",
-                "properties": {"limit": {"type": "integer"}, "category": {"type": "string"}},
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大返回数量，工具会限制到允许范围。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "可选硬过滤分类。只有用户明确限定分类时才传入；指定分类无结果时不要跨分类兜底。",
+                    },
+                },
+                "additionalProperties": False,
             },
         },
     },
@@ -864,7 +943,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "detect_duplicate_cards",
-            "description": "检测疑似重复的本地 Q&A 知识卡片。scope=target 用于指定 card_id/query 查重；scope=all 用于用户询问本地是否有重复卡片、全库查重或检查所有卡片重复时的一次性全库查重。只返回 duplicate 或 possible_duplicate 候选。",
+            "description": "检测疑似重复的本地 Q&A 知识卡片，只返回 duplicate 或 possible_duplicate 候选。用户主动查重、整理或合并时使用 mode=manual；保存或更新后的低打扰检测使用 mode=auto，且不得自动合并。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -873,12 +952,29 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "enum": ["target", "all"],
                         "description": "target 检测指定卡片或文本；all 检测本地知识库全部 Q&A 卡片。",
                     },
-                    "card_id": {"type": "string"},
-                    "query": {"type": "string"},
-                    "category": {"type": "string"},
-                    "limit": {"type": "integer"},
-                    "mode": {"type": "string", "enum": ["manual", "auto"]},
+                    "card_id": {
+                        "type": "string",
+                        "description": "以某张已有卡片为目标进行查重。",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "未指定 card_id 时使用的查重查询文本。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "可选硬过滤分类。",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大返回数量，工具会限制到允许范围。",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["manual", "auto"],
+                        "description": "manual 表示用户主动查重；auto 表示保存或更新后的低打扰检测。",
+                    },
                 },
+                "additionalProperties": False,
             },
         },
     },
@@ -886,18 +982,39 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "merge_qa_cards",
-            "description": "合并多张本地 Q&A 知识卡片，创建新卡片并物理删除原卡片。该工具执行前必须经过 harness 权限确认。",
+            "description": "合并多张本地 Q&A 知识卡片：创建一张新卡片，并物理删除原卡片。仅当用户明确要求合并且已确认合并草案时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "card_ids": {"type": "array", "items": {"type": "string"}},
-                    "question": {"type": "string"},
-                    "answer": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "keywords": {"type": "array", "items": {"type": "string"}},
-                    "category": {"type": "string"},
+                    "card_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要合并并删除的原卡片 ID，至少两张。",
+                    },
+                    "question": {
+                        "type": "string",
+                        "description": "合并后新卡片的问题，应综合原卡片且不要引入无来源内容。",
+                    },
+                    "answer": {
+                        "type": "string",
+                        "description": "合并后新卡片的答案，应综合原卡片且不要引入无来源内容。",
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "合并后新卡片的摘要。",
+                    },
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "合并后新卡片的检索关键词，包括主题词、技术名词、项目名、工具名、API 名、模型名、数据库名、函数名或关键概念。",
+                    },
+                    "category": {
+                        "type": "string",
+                        "description": "合并后新卡片的唯一语义主分类。必须是具体稳定的短名词短语，不超过 24 个字符；不得使用兜底分类；不得使用函数名、字段名、模型名、数据库名、工具名或 API 名。",
+                    },
                 },
                 "required": ["card_ids", "question", "answer", "summary", "keywords", "category"],
+                "additionalProperties": False,
             },
         },
     },
@@ -905,10 +1022,16 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "rebuild_qa_semantic_index",
-            "description": "把尚未向量化的历史 Q&A 卡片写入 Qdrant 本地语义索引。",
+            "description": "把尚未向量化的历史 Q&A 卡片写入 Qdrant 本地语义索引。用于维护或修复语义索引，不改变 SQLite 事实内容；不是普通问答检索工具。",
             "parameters": {
                 "type": "object",
-                "properties": {"limit": {"type": "integer"}},
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "本次最多处理的未向量化卡片数量。",
+                    }
+                },
+                "additionalProperties": False,
             },
         },
     },

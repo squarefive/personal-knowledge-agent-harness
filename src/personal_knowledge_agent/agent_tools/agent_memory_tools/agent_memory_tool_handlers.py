@@ -66,10 +66,16 @@ AGENT_MEMORY_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_memory_index",
-            "description": "列出 Agent memory 索引。",
+            "description": "列出 Agent memory 索引。Agent memory 只用于理解用户偏好、项目约束和协作上下文，不能作为 Q&A 知识库事实来源。",
             "parameters": {
                 "type": "object",
-                "properties": {"limit": {"type": "integer"}},
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "最大返回数量，工具会限制到允许范围。",
+                    }
+                },
+                "additionalProperties": False,
             },
         },
     },
@@ -77,11 +83,17 @@ AGENT_MEMORY_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_memory",
-            "description": "按 memory name 读取 Agent memory 全文。",
+            "description": "按 memory name 读取 Agent memory 全文。仅用于理解用户偏好、项目约束和协作上下文；不得把 memory 内容作为 Q&A 卡片来源或本地知识库事实依据。",
             "parameters": {
                 "type": "object",
-                "properties": {"name": {"type": "string"}},
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "来自 memory index 的 memory name。",
+                    }
+                },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
