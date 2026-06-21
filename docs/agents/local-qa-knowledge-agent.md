@@ -297,11 +297,15 @@ last_updated: "2026-06-20"
   - Web Runtime 遇到高风险工具 `ask` 权限时，必须通过当前流式聊天事件向 HTML 页面发出 `permission_requested` 事件，并在当前 Agent run 内等待用户确认。
   - Web Runtime 的高风险工具确认必须通过 HTML 页面中的独立阻断式确认浮层完成，聊天消息流只展示轻量状态提示，不承载允许 / 拒绝按钮。
   - Web Runtime 的高风险工具确认浮层只展示后端生成的参数摘要和风险说明，不向 HTML 页面暴露完整 tool arguments。
+  - Web Runtime 的 `permission_requested` 和 `permission_resolved` 必须作为 Web 运行事件统一发布，同时进入当前 SSE queue、内存事件列表和本地 JSONL 开发日志。
+  - Web 权限确认事件只能记录后端生成的安全摘要，不得记录完整 tool arguments、完整 answer、完整 runtime messages、system prompt 或 secret。
+  - `merge_qa_cards` 的 Web 权限确认摘要必须展示要合并的 card_id、合并影响和截断预览，不得展示完整合并 answer。
   - Web Runtime 的高风险工具确认等待时间为 5 分钟；用户允许后才执行工具，用户拒绝、确认超时、浏览器刷新或 SSE 断连时必须默认拒绝并返回 `permission_denied` tool result。
   - Web Runtime 应转发 runtime context compaction 的轻量运行事件。
   - Web UI 可以在当前 Agent run steps 中展示 runtime context compaction 的开始、完成和上下文超限重试状态。
   - 底部 Context 百分比只使用 LLM API response usage 计算；没有 usage 时显示 `Context 0%`。
   - Web UI 不得展示完整 system prompt、完整 runtime messages、完整 session summary 或 compact summary 内容。
+  - Web Markdown renderer 可以安全支持 `<br>`、`<br/>` 和 `<br />` 换行，但不得开放任意 HTML 渲染。
   - Web 第一版只覆盖 Chat + Cards，不提供编辑、删除、合并或复杂知识管理能力。
   - Web Runtime 的单轮 AgentLoop 执行失败时，应返回结构化错误，不得声称保存、查询或回答成功。
 
@@ -1547,6 +1551,7 @@ pka
 
 - **用户可见反馈**:
   CLI 应展示高风险工具请求和确认提示；拒绝后 Agent 应说明操作未执行。Web 应通过独立阻断式确认浮层展示后端生成的工具摘要、目标、变更字段和风险说明，聊天消息流只展示待确认和确认结果状态；用户允许后继续执行，拒绝、5 分钟超时、浏览器刷新或 SSE 断连时不执行工具。
+  Web 权限确认事件必须进入本地 JSONL 开发日志，日志只包含安全摘要和确认状态，不包含完整工具参数。
 
 ### 5.12 v0.4 Hybrid 检索
 
@@ -2148,6 +2153,8 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   25. Web Runtime 在 AgentLoop、session 读取或卡片读取失败时返回结构化错误。
   26. CLI Runtime 不把 `answer_delta` 写入 JSONL 开发日志，但仍记录 `final_answer_generated`。
   27. Web Runtime 能通过 SSE 转发 runtime context compaction 事件和 `prompt_usage_updated` 事件。
+  28. Web Runtime 能通过 SSE 转发 `permission_requested`，并在用户允许后返回 `permission_resolved` 的 `approved` 状态。
+  29. Web Runtime 能将 `permission_requested` 和 `permission_resolved` 写入本地 JSONL 开发日志，且日志不包含完整 tool arguments 或完整合并 answer。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
@@ -2170,11 +2177,13 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   18. Web Runtime 遇到高风险工具 ask 时不得阻塞等待终端输入，必须通过 Web 独立阻断式确认浮层获取用户决定。
   18a. Web Runtime 高风险工具确认超时、浏览器刷新或 SSE 断连时不得执行 handler，必须返回 `permission_denied` tool result。
   18b. Web UI 的高风险工具确认浮层不得展示完整 tool arguments，只能展示后端生成的摘要；长文本必须截断或省略，避免破坏聊天布局。
+  18c. `merge_qa_cards` 的 Web 权限确认摘要不得展示完整合并 answer。
   19. Web Runtime 不保留非流式 `/api/chat` 聊天路径。
   20. Web Runtime 不把 `answer_delta` 缓存到全局事件列表。
   21. 多个 Web session 不得共享 runtime `messages[]`。
   22. Web 历史消息 API 不得返回 tool result、assistant tool call、system prompt 或完整内部 payload。
   23. Web UI 不得展示完整 system prompt、完整 runtime messages、完整 session summary 或 compact summary 内容。
+  24. Web Markdown renderer 只允许 `<br>`、`<br/>` 和 `<br />` 转换为换行，不得渲染其他 HTML 标签。
 
 - **可选 Live Smoke Test**:
   1. 仅在存在 `DEEPSEEK_API_KEY` 时运行。

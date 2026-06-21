@@ -21,6 +21,7 @@ from ...agent_context.conversation_sessions import (
     SessionMetadata,
     validate_session_id,
 )
+from ...agent_observability import AgentEventJsonlLogger
 from ...agent_runtime import AgentEvent, new_run_id
 from ...tool_runtime import ApprovalRequest, default_approval_callback
 
@@ -32,6 +33,7 @@ APPROVAL_SUMMARY_ELLIPSIS = "..."
 DEFAULT_CARD_LIMIT = 10
 MIN_CARD_LIMIT = 1
 MAX_CARD_LIMIT = 50
+MERGE_TOOL_NAME = "merge_qa_cards"
 
 
 class ChatAgent(Protocol):
@@ -217,19 +219,34 @@ class WebApprovalManager:
 
 
 class WebSessionRunner:
-    def __init__(self, *, session_id: str, agent: ChatAgent | None, events: list[dict[str, Any]]):
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        agent: ChatAgent | None,
+        events: list[dict[str, Any]],
+        event_logger: AgentEventJsonlLogger | None = None,
+    ):
         self.session_id = session_id
         self.agent = agent
         self.events = events
+        self.event_logger = event_logger
         self.lock = threading.Lock()
         self.active_event_queue: queue.Queue[dict[str, Any] | object] | None = None
         self.active_event_queue_lock = threading.Lock()
 
     def collect_event(self, event: AgentEvent) -> None:
         event_dict = event.to_log_dict()
-        if event.event_type != "answer_delta":
-            self.events.append(event_dict)
-        self.put_event(event_dict)
+        self.publish_event(event_dict, log_event=event)
+
+    def publish_event(self, event: dict[str, Any], log_event: AgentEvent | None = None) -> bool:
+        """Publish a Web runtime event to audit storage and the active SSE stream."""
+
+        if event.get("event_type") != "answer_delta":
+            self.events.append(event)
+            if self.event_logger is not None:
+                self.event_logger.write(log_event or _agent_event_from_dict(event))
+        return self.put_event(event)
 
     def put_event(self, event: dict[str, Any]) -> bool:
         with self.active_event_queue_lock:
@@ -245,6 +262,7 @@ def create_web_app(
     config: AgentConfig | None = None,
     agent: ChatAgent | None = None,
     tools: CardTools | None = None,
+    event_logger: AgentEventJsonlLogger | None = None,
 ) -> FastAPI:
     events: list[dict[str, Any]] = []
     resolved_config = config or (load_config() if agent is None or tools is None else None)
@@ -257,7 +275,7 @@ def create_web_app(
         return approval_manager.request_approval(
             session_id=runner.session_id,
             request=request,
-            emit_event=runner.put_event,
+            emit_event=runner.publish_event,
         )
 
     def make_approval_callback(runner: WebSessionRunner) -> Callable[[ApprovalRequest], bool]:
@@ -269,9 +287,19 @@ def create_web_app(
             if safe_session_id in runners:
                 return runners[safe_session_id]
             if agent is not None:
-                runner = WebSessionRunner(session_id=safe_session_id, agent=agent, events=events)
+                runner = WebSessionRunner(
+                    session_id=safe_session_id,
+                    agent=agent,
+                    events=events,
+                    event_logger=event_logger,
+                )
             else:
-                placeholder = WebSessionRunner(session_id=safe_session_id, agent=None, events=events)
+                placeholder = WebSessionRunner(
+                    session_id=safe_session_id,
+                    agent=None,
+                    events=events,
+                    event_logger=event_logger,
+                )
                 components = create_agent_components(
                     resolved_config,
                     event_sink=placeholder.collect_event,
@@ -293,6 +321,7 @@ def create_web_app(
     app = FastAPI(title="Personal Knowledge Agent")
     app.state.agent_events = events
     app.state.approval_manager = approval_manager
+    app.state.event_logger = event_logger
 
     static_dir = Path(__file__).with_name("static")
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -444,6 +473,22 @@ def _event_error(error_code: str, message: str) -> dict[str, Any]:
     }
 
 
+def _agent_event_from_dict(event: dict[str, Any]) -> AgentEvent:
+    """Convert a Web-only event dict into the shared AgentEvent log shape."""
+
+    payload = {
+        key: value
+        for key, value in event.items()
+        if key not in {"run_id", "event_type", "timestamp"}
+    }
+    return AgentEvent(
+        run_id=str(event.get("run_id") or new_run_id()),
+        event_type=str(event.get("event_type") or "unknown"),
+        payload=payload,
+        timestamp=str(event["timestamp"]) if event.get("timestamp") else datetime.now(UTC).isoformat(),
+    )
+
+
 def _sse(data: dict[str, Any]) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -495,6 +540,23 @@ def build_approval_summary(request: ApprovalRequest) -> dict[str, Any]:
             "risk": "将覆盖当前卡片内容。",
             "reason": _truncate_summary_text(request.reason),
         }
+    if request.tool_name == MERGE_TOOL_NAME:
+        card_ids = [str(card_id) for card_id in arguments.get("card_ids", [])]
+        question = str(arguments.get("question") or "")
+        category = str(arguments.get("category") or "")
+        keywords = arguments.get("keywords") or []
+        preview = _merge_preview(question=question, category=category, keywords=keywords)
+        return {
+            "title": "合并知识卡片",
+            "tool_name": request.tool_name,
+            "tool_label": "合并知识卡片",
+            "target_label": "原卡片",
+            "target": _truncate_summary_text(", ".join(card_ids)),
+            "changes": ["创建 1 张新卡片", f"删除 {len(card_ids)} 张原卡片"],
+            "preview": _truncate_summary_text(preview),
+            "risk": "将创建新卡片并物理删除原卡片。",
+            "reason": _truncate_summary_text(request.reason),
+        }
     return {
         "title": "确认高风险工具",
         "tool_name": request.tool_name,
@@ -518,6 +580,20 @@ def _first_update_preview(arguments: dict[str, Any]) -> str:
         if value:
             return str(value)
     return ""
+
+
+def _merge_preview(*, question: str, category: str, keywords: Any) -> str:
+    """Build a safe merge approval preview without including the full answer."""
+
+    keyword_text = ", ".join(str(item) for item in keywords) if isinstance(keywords, list) else str(keywords)
+    parts = []
+    if question:
+        parts.append(f"合并后问题：{question}")
+    if category:
+        parts.append(f"分类：{category}")
+    if keyword_text:
+        parts.append(f"关键词：{keyword_text}")
+    return "；".join(parts)
 
 
 def _truncate_summary_text(value: str, limit: int = APPROVAL_SUMMARY_TEXT_LIMIT) -> str:
