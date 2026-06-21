@@ -12,6 +12,17 @@ from personal_knowledge_agent.apps.web import create_web_app
 from personal_knowledge_agent.apps.web.web_app import WebApprovalManager
 
 
+LONG_MERGE_ANSWER = "完整答案" * 120
+MERGE_ARGUMENTS = {
+    "card_ids": ["qa_1", "qa_2"],
+    "question": "合并后的问题",
+    "answer": LONG_MERGE_ANSWER,
+    "summary": "合并后的摘要",
+    "keywords": ["合并", "权限"],
+    "category": "知识整理",
+}
+
+
 class FakeAgent:
     def __init__(self, fail=False):
         self.fail = fail
@@ -88,6 +99,17 @@ class FakeTools:
                 "updated_at": "2026-06-02T00:00:00Z",
             },
         }
+
+
+class FakeEventLogger:
+    def __init__(self):
+        self.events = []
+
+    def write(self, event):
+        self.events.append(event.to_log_dict())
+
+    def close(self):
+        return None
 
 
 def make_client(agent=None, tools=None):
@@ -259,6 +281,107 @@ def test_web_permission_summary_for_update_omits_full_arguments(tmp_path, monkey
     assert summary["risk"] == "将覆盖当前卡片内容。"
 
 
+def test_web_permission_summary_for_merge_omits_full_answer():
+    manager = WebApprovalManager(timeout_seconds=3)
+    request = approval_request(tool_name="merge_qa_cards", arguments=MERGE_ARGUMENTS)
+    thread, events, _result_holder = start_pending_approval(manager, request)
+
+    requested = next_approval_event(events, "permission_requested")
+    manager.resolve(requested["approval_id"], "deny")
+    next_approval_event(events, "permission_resolved")
+    assert_approval_finished(thread)
+
+    summary = requested["summary"]
+    serialized_event = json.dumps(requested, ensure_ascii=False)
+    assert "arguments" not in requested
+    assert LONG_MERGE_ANSWER not in serialized_event
+    assert summary["tool_name"] == "merge_qa_cards"
+    assert summary["tool_label"] == "合并知识卡片"
+    assert summary["target"] == "qa_1, qa_2"
+    assert summary["changes"] == ["创建 1 张新卡片", "删除 2 张原卡片"]
+    assert summary["risk"] == "将创建新卡片并物理删除原卡片。"
+
+
+def test_chat_stream_publishes_and_logs_web_approval_events(tmp_path, monkeypatch):
+    class ApprovalAgent:
+        def __init__(self, approval_callback):
+            self.approval_callback = approval_callback
+            self.approved = None
+
+        def run(self, user_input):
+            self.approved = self.approval_callback(
+                ApprovalRequest(
+                    tool_name="merge_qa_cards",
+                    arguments=MERGE_ARGUMENTS,
+                    reason="合并卡片需要确认",
+                )
+            )
+            return "已合并" if self.approved else "未合并"
+
+    captured = {}
+
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
+        agent = ApprovalAgent(approval_callback)
+        captured["agent"] = agent
+        return type("Components", (), {"agent": agent, "tools": FakeTools()})()
+
+    import personal_knowledge_agent.apps.web.web_app as app_module
+
+    monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
+    event_logger = FakeEventLogger()
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    app = create_web_app(config=config, event_logger=event_logger)
+    client = TestClient(app)
+    result = {}
+
+    def send_message():
+        result["response"] = client.post("/api/chat/stream", json={"session_id": "chat_1", "message": "合并"})
+
+    thread = threading.Thread(target=send_message)
+    thread.start()
+
+    requested = None
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        requested = next(
+            (event for event in app.state.agent_events if event["event_type"] == "permission_requested"),
+            None,
+        )
+        if requested is not None:
+            break
+        time.sleep(0.01)
+    assert requested is not None
+    assert requested["summary"]["tool_name"] == "merge_qa_cards"
+
+    approval_response = client.post(
+        f"/api/approvals/{requested['approval_id']}",
+        json={"decision": "approve"},
+    )
+    assert approval_response.status_code == 200
+    assert approval_response.json()["status"] == "approved"
+
+    thread.join(timeout=3)
+    assert not thread.is_alive()
+    assert result["response"].status_code == 200
+
+    events = read_sse_events(result["response"])
+    event_types = [event["event_type"] for event in events]
+    logged_types = [event["event_type"] for event in event_logger.events]
+    serialized_log = json.dumps(event_logger.events, ensure_ascii=False)
+
+    assert "permission_requested" in event_types
+    assert "permission_resolved" in event_types
+    assert "permission_requested" in logged_types
+    assert "permission_resolved" in logged_types
+    assert "arguments" not in next(event for event in event_logger.events if event["event_type"] == "permission_requested")
+    assert LONG_MERGE_ANSWER not in serialized_log
+    assert captured["agent"].approved is True
+
+
 def test_chat_rejects_empty_message():
     client = make_client()
 
@@ -398,6 +521,8 @@ def test_web_static_context_status_ui_is_lightweight():
     assert "Context 0%" in index_response.text
     assert "runtime_context_compaction_started" in app_response.text
     assert "上下文超限，正在压缩上下文" in app_response.text
+    assert "<br\\s*\\/?>" in app_response.text
+    assert 'document.createElement("br")' in app_response.text
     assert "完整 system prompt" not in index_response.text
     assert "完整 runtime messages" not in index_response.text
     assert "完整 session summary" not in index_response.text

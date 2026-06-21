@@ -7,6 +7,7 @@ import webbrowser
 
 import uvicorn
 
+from ...agent_observability import AgentEventJsonlLogger
 from .web_app import create_web_app
 
 
@@ -17,8 +18,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-open", action="store_true", help="Do not open the browser automatically.")
     args = parser.parse_args(argv)
 
+    event_logger = AgentEventJsonlLogger()
     try:
-        app = create_web_app()
+        app = create_web_app(event_logger=event_logger)
     except Exception as exc:
         print(f"Web 启动失败：{exc}", file=sys.stderr)
         return 1
@@ -33,6 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"Web 服务运行失败：{exc}", file=sys.stderr)
         return 1
+    finally:
+        event_logger.close()
     return 0
 
 

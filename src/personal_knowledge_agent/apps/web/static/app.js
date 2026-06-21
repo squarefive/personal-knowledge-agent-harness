@@ -719,6 +719,7 @@ function toolDisplayName(toolName) {
     list_recent_cards: "读取最近卡片",
     update_qa_card: "更新知识卡片",
     delete_qa_card: "删除知识卡片",
+    merge_qa_cards: "合并知识卡片",
   };
   return labels[toolName] || "调用工具";
 }
@@ -825,7 +826,7 @@ function parseTableRow(line) {
 }
 
 function appendInlineMarkdown(parent, text, options = {}) {
-  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|<br\s*\/?>)/gi;
   let lastIndex = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > lastIndex) {
@@ -836,6 +837,8 @@ function appendInlineMarkdown(parent, text, options = {}) {
       const strong = document.createElement("strong");
       strong.textContent = token.slice(2, -2);
       parent.append(strong);
+    } else if (/^<br\s*\/?>$/i.test(token)) {
+      parent.append(document.createElement("br"));
     } else {
       const code = document.createElement("code");
       code.textContent = token.slice(1, -1);
