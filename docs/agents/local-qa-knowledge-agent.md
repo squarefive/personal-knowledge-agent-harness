@@ -190,7 +190,8 @@ last_updated: "2026-06-20"
 
 - **Agent Prompt Builder 职责**:
   - 运行时拼接短 system prompt。
-  - 包含身份、行为规则、工具使用规则、回答格式和拒答规则。
+  - 包含身份、通用行为规则、证据纪律、权限边界、记忆边界、能力边界、回答格式和拒答规则。
+  - 不长期维护具体工具链编排细节、工具参数字段细则或单个工具的候选结果语义；这些内容应沉淀到 LLM-facing tools schema 的 `function.description` 和 `parameters.properties.*.description` 中。
   - 在 turn-start 阶段接收 memory index、selected memories 和 session summary，并将其压缩注入本轮上下文。
   - session summary 应注入为独立的 `# Runtime Session Context` section；该 section 必须声明 summary 不是用户新请求、不是长期 memory、不是 Q&A 知识来源。
   - 不保存业务数据。
@@ -307,6 +308,11 @@ last_updated: "2026-06-20"
 
 - **Agent Tools 职责**:
   - 作为 LLM 可调用工具的 adapter，是 Agent 可执行动作的唯一入口。
+  - LLM-facing tools schema 必须保持 OpenAI-compatible function calling 结构，只包含标准工具定义字段，包括 `type`、`function.name`、`function.description` 和 `function.parameters`。
+  - 每个工具的 `function.description` 应说明工具用途、适用场景和关键限制；每个参数应在 JSON Schema `description` 中说明含义和约束。
+  - 工具 `parameters` 的 object schema 应声明 `additionalProperties: false`，避免模型传入未声明参数。
+  - 当前不默认启用 `strict: true`，除非后续确认 DeepSeek 对 strict tools schema 的兼容性。
+  - `returns`、`side_effect`、`dangerous`、展示字段和权限策略等本地运行时元数据不得作为非标准字段传给 LLM。
   - 校验工具输入。
   - `QAKnowledgeToolHandlers` 只提供 Q&A 卡片保存、检索、读取、更新、删除、最近列表和语义索引维护工具。
   - `AgentMemoryToolHandlers` 只提供 Agent profile memory index 和 memory 全文读取工具。
