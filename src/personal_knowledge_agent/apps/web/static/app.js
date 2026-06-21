@@ -926,7 +926,9 @@ function renderCards(cards, emptyText = "暂无卡片。") {
 
     const meta = document.createElement("div");
     meta.className = "card-meta";
-    meta.textContent = [card.source_type || "unknown", formatTimestamp(card.created_at)].filter(Boolean).join(" · ");
+    meta.textContent = [card.category, card.source_type || "unknown", formatTimestamp(card.created_at)]
+      .filter(Boolean)
+      .join(" · ");
 
     button.append(question, summary, meta);
     elements.cardsList.append(button);
@@ -970,6 +972,7 @@ function renderCardDetail(card) {
   addDetail(list, "原始答案", card.answer);
   addDetail(list, "summary", card.summary);
   addDetail(list, "keywords", keywords);
+  addDetail(list, "category", card.category);
   addDetail(list, "source_type", card.source_type);
   addDetail(list, "创建时间", formatTimestamp(card.created_at, { detail: true }));
   addDetail(list, "更新时间", formatTimestamp(card.updated_at, { detail: true }));

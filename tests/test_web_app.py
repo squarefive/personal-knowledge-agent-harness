@@ -50,6 +50,7 @@ class FakeTools:
                     "question": "问题一",
                     "summary": "摘要一",
                     "keywords": ["本地"],
+                    "category": "Agent 开发",
                     "source_type": "manual_qa",
                     "created_at": "2026-06-02T00:00:00Z",
                 }
@@ -66,6 +67,7 @@ class FakeTools:
                     "summary": "摘要一",
                     "answer_snippet": "答案片段",
                     "score": 4,
+                    "category": "Agent 开发",
                     "source_type": "manual_qa",
                     "created_at": "2026-06-02T00:00:00Z",
                 }
@@ -83,6 +85,7 @@ class FakeTools:
                 "answer": "答案一",
                 "summary": "摘要一",
                 "keywords": ["本地"],
+                "category": "Agent 开发",
                 "source_type": "manual_qa",
                 "created_at": "2026-06-02T00:00:00Z",
                 "updated_at": "2026-06-02T00:00:00Z",
@@ -432,6 +435,7 @@ def test_recent_cards_returns_tool_result():
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert response.json()["cards"][0]["card_id"] == "qa_1"
+    assert response.json()["cards"][0]["category"] == "Agent 开发"
 
 
 def test_search_cards_returns_tool_result():
@@ -442,6 +446,7 @@ def test_search_cards_returns_tool_result():
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert response.json()["cards"][0]["question"] == "本地"
+    assert response.json()["cards"][0]["category"] == "Agent 开发"
 
 
 def test_search_cards_rejects_empty_query():
@@ -462,6 +467,7 @@ def test_read_card_returns_tool_result():
     assert response.status_code == 200
     assert response.json()["ok"] is True
     assert response.json()["card"]["card_id"] == "qa_1"
+    assert response.json()["card"]["category"] == "Agent 开发"
 
 
 def test_read_card_preserves_tool_error():
