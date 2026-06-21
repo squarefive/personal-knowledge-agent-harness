@@ -315,6 +315,94 @@ def test_chat_stream_does_not_cache_answer_delta(tmp_path, monkeypatch):
     assert [event["event_type"] for event in app.state.agent_events] == ["final_answer_generated"]
 
 
+def test_chat_stream_forwards_context_compaction_events(tmp_path, monkeypatch):
+    class EventAgent:
+        def __init__(self, sink):
+            self.sink = sink
+
+        def run(self, user_input):
+            self.sink(
+                AgentEvent(
+                    run_id="run_1",
+                    event_type="prompt_usage_updated",
+                    payload={"prompt_usage_ratio": 0.78},
+                )
+            )
+            self.sink(
+                AgentEvent(
+                    run_id="run_1",
+                    event_type="runtime_context_compaction_started",
+                    payload={
+                        "reason": "usage_threshold",
+                        "prompt_usage_ratio": 0.78,
+                        "threshold": 0.75,
+                    },
+                )
+            )
+            self.sink(
+                AgentEvent(
+                    run_id="run_1",
+                    event_type="runtime_context_compaction_finished",
+                    payload={
+                        "reason": "usage_threshold",
+                        "prompt_usage_ratio": 0.78,
+                        "threshold": 0.75,
+                        "mode": "summary_plus_recent",
+                    },
+                )
+            )
+            self.sink(AgentEvent(run_id="run_1", event_type="final_answer_generated", payload={"answer": "完成"}))
+            return "完成"
+
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
+        return type("Components", (), {"agent": EventAgent(event_sink), "tools": FakeTools()})()
+
+    import personal_knowledge_agent.apps.web.web_app as app_module
+
+    monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    app = create_web_app(config=config)
+    client = TestClient(app)
+
+    response = client.post("/api/chat/stream", json={"message": "你好"})
+
+    assert response.status_code == 200
+    events = read_sse_events(response)
+    assert [event["event_type"] for event in events] == [
+        "prompt_usage_updated",
+        "runtime_context_compaction_started",
+        "runtime_context_compaction_finished",
+        "final_answer_generated",
+    ]
+    assert events[0]["prompt_usage_ratio"] == 0.78
+    assert events[1]["reason"] == "usage_threshold"
+    assert events[2]["mode"] == "summary_plus_recent"
+    assert "summary" not in events[2]
+    assert "messages" not in events[2]
+    assert "system_prompt" not in events[2]
+
+
+def test_web_static_context_status_ui_is_lightweight():
+    client = make_client()
+
+    index_response = client.get("/")
+    app_response = client.get("/static/app.js")
+
+    assert index_response.status_code == 200
+    assert app_response.status_code == 200
+    assert 'id="contextStatus"' in index_response.text
+    assert "Context 0%" in index_response.text
+    assert "runtime_context_compaction_started" in app_response.text
+    assert "上下文超限，正在压缩上下文" in app_response.text
+    assert "完整 system prompt" not in index_response.text
+    assert "完整 runtime messages" not in index_response.text
+    assert "完整 session summary" not in index_response.text
+
+
 def test_chat_serializes_agent_access():
     agent = BlockingAgent()
     client = make_client(agent=agent)

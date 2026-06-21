@@ -170,6 +170,10 @@ last_updated: "2026-06-20"
   - Agent Loop 只负责 compact 触发与 retry 编排；具体压缩由 Runtime Context Compactor 负责。
   - Agent loop runner 的主运行骨架保持 `run(user_input) -> str`，不得为了展示层流式效果新增第二套 Agent 主入口。
   - 在关键阶段产生结构化运行事件，包括 `user_input_received`、`llm_call_started`、`answer_delta`、`llm_call_finished`、`tool_call_started`、`tool_call_finished`、`evidence_checked`、`final_answer_generated` 和 `error`。
+  - LLM response 返回 usage 后，应基于真实 usage 发出 `prompt_usage_updated` 事件。
+  - runtime compact 开始时，应发出 `runtime_context_compaction_started` 事件；runtime compact 完成时，应发出 `runtime_context_compaction_finished` 事件。
+  - runtime context compaction 事件只暴露轻量字段，例如 `reason`、`prompt_usage_ratio`、`threshold` 和 `mode`；不得暴露完整 `messages[]`、system prompt、session summary 或 compact summary 内容。
+  - runtime compact 完成后不得伪造新的 `prompt_usage_ratio`；新的 Context 百分比必须等待后续 LLM response usage 返回后再更新。
   - `answer_delta` 只表示最终回答文本的实时增量，用于 CLI / Web 展示；`final_answer_generated` 仍是 evidence check 后的权威最终答案。
   - 运行事件用于 CLI 实时展示和本地开发日志，不作为长期知识来源。
   - `answer_delta` 默认不写入 JSONL 开发日志，避免 token 级事件刷屏；JSONL 日志仍记录 `final_answer_generated` 的完整最终答案。
@@ -294,6 +298,10 @@ last_updated: "2026-06-20"
   - Web Runtime 的高风险工具确认必须通过 HTML 页面中的独立阻断式确认浮层完成，聊天消息流只展示轻量状态提示，不承载允许 / 拒绝按钮。
   - Web Runtime 的高风险工具确认浮层只展示后端生成的参数摘要和风险说明，不向 HTML 页面暴露完整 tool arguments。
   - Web Runtime 的高风险工具确认等待时间为 5 分钟；用户允许后才执行工具，用户拒绝、确认超时、浏览器刷新或 SSE 断连时必须默认拒绝并返回 `permission_denied` tool result。
+  - Web Runtime 应转发 runtime context compaction 的轻量运行事件。
+  - Web UI 可以在当前 Agent run steps 中展示 runtime context compaction 的开始、完成和上下文超限重试状态。
+  - 底部 Context 百分比只使用 LLM API response usage 计算；没有 usage 时显示 `Context 0%`。
+  - Web UI 不得展示完整 system prompt、完整 runtime messages、完整 session summary 或 compact summary 内容。
   - Web 第一版只覆盖 Chat + Cards，不提供编辑、删除、合并或复杂知识管理能力。
   - Web Runtime 的单轮 AgentLoop 执行失败时，应返回结构化错误，不得声称保存、查询或回答成功。
 
@@ -2108,6 +2116,9 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   24. user / feedback candidate 默认不自动写入长期 memory。
   25. `agent_component_factory.py` 能创建 `AgentLoopRunner` 及其依赖，并可被 CLI Runtime 和 Web Runtime 复用。
   26. `agent_component_factory.py` 支持指定 session_id 创建 `AgentLoopRunner`。
+  27. Agent Loop 能在 LLM response 返回真实 usage 后产生 `prompt_usage_updated` 事件。
+  28. Agent Loop 能在 usage 阈值触发 runtime compact 时产生 `runtime_context_compaction_started` 和 `runtime_context_compaction_finished` 事件。
+  29. Agent Loop 能在上下文超限 compact retry 时产生 `runtime_context_compaction_started` 和 `runtime_context_compaction_finished` 事件，并且同一次 LLM 请求最多 retry 一次。
 
 - **集成测试**:
   1. Agent Loop 能接收 fake LLM 的 tool call，执行工具并回填 tool result。
@@ -2136,6 +2147,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   24. Web Runtime 能返回最近卡片、搜索卡片和卡片详情的结构化结果。
   25. Web Runtime 在 AgentLoop、session 读取或卡片读取失败时返回结构化错误。
   26. CLI Runtime 不把 `answer_delta` 写入 JSONL 开发日志，但仍记录 `final_answer_generated`。
+  27. Web Runtime 能通过 SSE 转发 runtime context compaction 事件和 `prompt_usage_updated` 事件。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
@@ -2162,6 +2174,7 @@ memory candidate 是 turn-end 提取出的长期 Agent memory 候选。当前实
   20. Web Runtime 不把 `answer_delta` 缓存到全局事件列表。
   21. 多个 Web session 不得共享 runtime `messages[]`。
   22. Web 历史消息 API 不得返回 tool result、assistant tool call、system prompt 或完整内部 payload。
+  23. Web UI 不得展示完整 system prompt、完整 runtime messages、完整 session summary 或 compact summary 内容。
 
 - **可选 Live Smoke Test**:
   1. 仅在存在 `DEEPSEEK_API_KEY` 时运行。

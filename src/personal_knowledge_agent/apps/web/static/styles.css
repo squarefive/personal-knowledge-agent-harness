@@ -768,6 +768,28 @@ h3 {
   padding: 14px max(24px, calc((100% - 820px) / 2));
 }
 
+.context-status {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 18px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 720;
+  line-height: 1.4;
+}
+
+.context-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(31, 118, 95, 0.12);
+}
+
 .search-form {
   padding: 10px;
 }

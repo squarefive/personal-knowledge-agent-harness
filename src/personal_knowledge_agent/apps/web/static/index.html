@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Personal Knowledge Agent</title>
-    <link rel="stylesheet" href="/static/styles.css?v=web-approval-modal-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=context-status-1" />
   </head>
   <body>
     <main id="appShell" class="app-shell">
@@ -61,6 +61,7 @@
             autocomplete="off"
           ></textarea>
           <button id="sendButton" type="submit">发送</button>
+          <div id="contextStatus" class="context-status" aria-live="polite">Context 0%</div>
         </form>
       </section>
 
@@ -103,6 +104,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=web-approval-modal-1" defer></script>
+    <script src="/static/app.js?v=context-status-1" defer></script>
   </body>
 </html>
