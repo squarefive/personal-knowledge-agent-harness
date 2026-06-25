@@ -1595,27 +1595,17 @@ h3 {
   padding: 0 16px 0 18px;
 }
 
-.cards-header p,
-.search-form,
-.card-list-section .section-title {
+.cards-header p {
   display: none;
 }
 
 .cards-pane {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.card-list-section {
-  display: none;
+  grid-template-rows: auto auto minmax(180px, 1fr) minmax(220px, 38%);
 }
 
 .card-detail-section {
-  border-top: 0;
+  border-top: 1px solid var(--line);
   background: var(--surface);
-}
-
-.card-detail-section .section-title {
-  display: none;
 }
 
 .card-detail {
