@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = ROOT / "docs/templates/agent-development-context.template.md"
 AGENTS_DIR = ROOT / "docs/agents"
-EXPECTED_TEMPLATE_SHA256 = "b939e1c68cc771a214d9766fe725c93ea23464c3617ba3475904a2a284e0d0dc"
+EXPECTED_TEMPLATE_SHA256 = "830c7d9fab94f5af06d4709a9b0ccadf7c77fc34635c852d504ca04b70511db8"
 
 REQUIRED_FRONTMATTER_FIELDS = [
     "module",
@@ -48,6 +48,8 @@ REQUIRED_TEMPLATE_PLACEHOLDERS = [
     "{{agent_chinese_name}}",
     "{{YYYY-MM-DD}}",
 ]
+
+AGENT_DOC_RECOMMENDED_MAX_LINES = 1000
 
 
 def rel(path: Path) -> str:
@@ -151,6 +153,18 @@ def check_agent_doc(path: Path) -> list[str]:
     return errors
 
 
+def check_agent_doc_length(path: Path, content: str) -> list[str]:
+    line_count = len(content.splitlines())
+    if line_count <= AGENT_DOC_RECOMMENDED_MAX_LINES:
+        return []
+    display_path = rel(path).replace("\\", "/")
+    return [
+        f"{display_path} has {line_count} lines, exceeds recommended limit "
+        f"{AGENT_DOC_RECOMMENDED_MAX_LINES}; please consolidate content within "
+        "the existing agent document template"
+    ]
+
+
 def resolve_target(target: str) -> tuple[list[Path], list[str]]:
     path = (ROOT / target).resolve() if not Path(target).is_absolute() else Path(target)
     errors: list[str] = []
@@ -206,17 +220,25 @@ def main() -> int:
 
     unique_files = sorted(set(files))
     checked = 0
+    warnings: list[str] = []
 
     for path in unique_files:
         checked += 1
         path_errors = (
             check_template_doc(path) if path == TEMPLATE_PATH else check_agent_doc(path)
         )
+        if path != TEMPLATE_PATH:
+            warnings.extend(check_agent_doc_length(path, read_text(path)))
         if path_errors:
             errors.extend(f"{rel(path)}: {error}" for error in path_errors)
             print(f"[fail] {rel(path)}")
         else:
             print(f"[pass] {rel(path)}")
+
+    if warnings:
+        print("\nWarnings:")
+        for warning in warnings:
+            print(f"- {warning}")
 
     if errors:
         print("\nErrors:")

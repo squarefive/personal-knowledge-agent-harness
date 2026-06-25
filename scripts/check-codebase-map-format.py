@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = ROOT / "docs/templates/codebase-map.template.md"
 MAP_PATH = ROOT / "docs/architecture/codebase-map.md"
-EXPECTED_TEMPLATE_SHA256 = "8d0994e007732781906296f8beddded1bac7aa085f36cc3739abb6e13500000a"
+EXPECTED_TEMPLATE_SHA256 = "487aa32845626a57b705883e31b529191700f3ad2c94a4b436dd16e72977c387"
 
 REQUIRED_FRONTMATTER_FIELDS = [
     "title",
