@@ -739,6 +739,9 @@ function toolDisplayName(toolName) {
     update_qa_card: "更新知识卡片",
     delete_qa_card: "删除知识卡片",
     merge_qa_cards: "合并知识卡片",
+    create_todo: "保存待办",
+    list_todos: "查询待办",
+    update_todo: "更新待办",
   };
   return labels[toolName] || "调用工具";
 }
@@ -753,6 +756,12 @@ function summarizeToolResult(event) {
   }
   if (Array.isArray(output.cards)) {
     return output.cards.length ? `找到 ${output.cards.length} 条记录` : "未找到相关记录";
+  }
+  if (Array.isArray(output.todos)) {
+    return output.todos.length ? `找到 ${output.todos.length} 条待办` : "未找到待办";
+  }
+  if (output.todo && output.todo.todo_id) {
+    return output.todo.status === "open" ? "待办已保存" : "待办已更新";
   }
   if (output.card_id) {
     return "知识卡片已保存";

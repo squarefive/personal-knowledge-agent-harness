@@ -1,6 +1,6 @@
 ---
 title: "Personal Knowledge Agent Harness 代码地图"
-last_updated: "2026-06-25"
+last_updated: "2026-06-26"
 ---
 
 # Personal Knowledge Agent Harness 代码地图
@@ -21,7 +21,9 @@ last_updated: "2026-06-25"
 | `src/personal_knowledge_agent/agent_tools/` | LLM 可调用工具 adapter。 |
 | `src/personal_knowledge_agent/agent_tools/qa_knowledge_tools/` | Q&A 知识工具 handler。 |
 | `src/personal_knowledge_agent/agent_tools/agent_memory_tools/` | Agent memory 读取工具 handler。 |
+| `src/personal_knowledge_agent/agent_tools/todo_tools/` | Todo 待办工具 handler。 |
 | `src/personal_knowledge_agent/qa_data_access/` | Q&A card 的 SQLite 和 Qdrant 数据访问。 |
+| `src/personal_knowledge_agent/todo_data_access/` | Todo 待办项的 SQLite 数据访问。 |
 | `src/personal_knowledge_agent/tool_runtime/` | 通用 tool dispatcher。 |
 | `src/personal_knowledge_agent/llm_clients/` | LLM provider client。 |
 | `src/personal_knowledge_agent/agent_observability/` | Agent 运行事件日志等可观测性适配。 |
@@ -53,7 +55,7 @@ last_updated: "2026-06-25"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent bootstrap 公共入口。 |
-| `agent_component_factory.py` | 创建 Agent loop runner、两个 tool handler 及其依赖。 |
+| `agent_component_factory.py` | 创建 Agent loop runner、Q&A、todo、memory tool handler 及其依赖。 |
 | `agent_runtime_config.py` | 从 `.env` 和环境变量读取运行配置。 |
 
 ### Agent Runtime
@@ -129,6 +131,7 @@ last_updated: "2026-06-25"
 | `__init__.py` | 导出 Agent tool handler。 |
 | `qa_knowledge_tools/qa_knowledge_tool_handlers.py` | Q&A 保存、检索、读取、更新、删除、最近列表和语义索引维护工具。 |
 | `agent_memory_tools/agent_memory_tool_handlers.py` | Agent memory 读取工具 adapter。 |
+| `todo_tools/todo_tool_handlers.py` | Todo 保存、查询和更新工具。 |
 
 ### QA Data Access
 
@@ -144,11 +147,23 @@ last_updated: "2026-06-25"
 | `qa_card_semantic_index.py` | 封装 DashScope embedding 和 Qdrant local mode 语义索引。 |
 | `duplicate_detection.py` | 提供本地 Q&A 全库重复检测服务，负责候选召回、相似度打分和重复组构建。 |
 
+### Todo Data Access
+
+模块目录：`src/personal_knowledge_agent/todo_data_access/`
+
+模块作用：管理 todo 待办项的 SQLite 事实表。
+
+| 文件 | 作用 |
+|---|---|
+| `__init__.py` | 导出 todo 数据访问组件。 |
+| `todo_models.py` | 定义 todo 待办项数据结构。 |
+| `todo_repository.py` | 初始化和读写 SQLite `todo_items` 表。 |
+
 ### Tool Runtime
 
 模块目录：`src/personal_knowledge_agent/tool_runtime/`
 
-模块作用：汇总 Q&A 与 Agent memory handler，执行 LLM tool call 分发、权限判断和展示字段筛选。
+模块作用：汇总 Q&A、todo 与 Agent memory handler，执行 LLM tool call 分发、权限判断和展示字段筛选。
 
 | 文件 | 作用 |
 |---|---|
@@ -232,7 +247,9 @@ last_updated: "2026-06-25"
 | `test_agent_factory.py` | 覆盖 Agent 组件装配。 |
 | `test_agent_loop.py` | 覆盖 Agent loop 的工具调用、权限、消息和最终回答流程。 |
 | `test_tools.py` | 覆盖 Agent tool handler 和 tool dispatcher。 |
+| `test_todo_tools.py` | 覆盖 todo tool handler 和 tool dispatcher 集成。 |
 | `test_sqlite_store.py` | 覆盖 Q&A card repository。 |
+| `test_todo_store.py` | 覆盖 todo repository。 |
 | `test_qa_semantic_index.py` | 覆盖 Q&A semantic index。 |
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |

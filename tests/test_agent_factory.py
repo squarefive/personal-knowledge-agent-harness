@@ -2,6 +2,7 @@ from personal_knowledge_agent.agent_bootstrap import create_agent, create_agent_
 from personal_knowledge_agent.agent_runtime import AgentLoopRunner
 from personal_knowledge_agent.agent_bootstrap import AgentConfig
 from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
+from personal_knowledge_agent.agent_tools.todo_tools import TodoToolHandlers
 
 
 def test_create_agent_components_returns_agent_and_tools(tmp_path, monkeypatch):
@@ -16,6 +17,7 @@ def test_create_agent_components_returns_agent_and_tools(tmp_path, monkeypatch):
 
     assert isinstance(components.agent, AgentLoopRunner)
     assert isinstance(components.tools, QAKnowledgeToolHandlers)
+    assert isinstance(components.todo_tools, TodoToolHandlers)
 
 
 def test_create_agent_returns_agent_loop(tmp_path, monkeypatch):
