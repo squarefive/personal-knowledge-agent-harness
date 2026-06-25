@@ -1,6 +1,6 @@
 ---
 title: "Personal Knowledge Agent Harness 代码地图"
-last_updated: "2026-06-16"
+last_updated: "2026-06-25"
 ---
 
 # Personal Knowledge Agent Harness 代码地图
@@ -216,7 +216,7 @@ last_updated: "2026-06-16"
 | 文件 | 作用 |
 |---|---|
 | `backfill-qa-categories.py` | 为历史 Q&A 卡片生成 category 并重建 category 约束。 |
-| `check-agent-doc-format.py` | 检查 Agent 开发上下文模板和具体 Agent 文档格式。 |
+| `check-agent-doc-format.py` | 检查 Agent 开发上下文模板、具体 Agent 文档格式和文档篇幅告警。 |
 | `check-codebase-map-format.py` | 检查代码地图模板和实际代码地图格式。 |
 | `clean-merged-branches.sh` | 清理已合并的本地分支。 |
 
@@ -233,6 +233,7 @@ last_updated: "2026-06-16"
 | `test_tools.py` | 覆盖 Agent tool handler 和 tool dispatcher。 |
 | `test_sqlite_store.py` | 覆盖 Q&A card repository。 |
 | `test_qa_semantic_index.py` | 覆盖 Q&A semantic index。 |
+| `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |
 | `test_web_app.py` | 覆盖 Web API、SSE 聊天、session 隔离和卡片接口。 |
 | `test_cli.py` | 覆盖 CLI 输入循环、退出、错误处理和审批交互。 |
 | `test_*.py` | 其他测试覆盖配置、日志、session、memory、source evidence 和 LLM client。 |
