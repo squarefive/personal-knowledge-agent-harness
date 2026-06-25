@@ -60,6 +60,7 @@ last_updated: "2026-06-25"
   10. 将过大的 tool result 写入 `.sessions/<session_id>/artifacts/` 并保留 compact record。
   11. 生成 memory candidate 事件；当前不自动写入长期 memory。
   12. Web UI 支持聊天、session 列表、历史恢复、最近卡片、搜索卡片和卡片详情。
+  13. 保存、查询和更新本地 todo 待办项。
 
 - **不包含能力**:
   1. 不做 Markdown Wiki、文件监听或自动索引。
@@ -70,6 +71,7 @@ last_updated: "2026-06-25"
   6. 不自动写入长期 memory 或维护 memory 确认队列。
   7. 不使用 Qdrant 或 Kuzu 替代 SQLite 事实源。
   8. Web 第一版不做卡片编辑、删除、合并、自动知识图谱或后台任务。
+  9. Todo 第一版不做专门 Web UI、物理删除、提醒、定时任务、自然语言时间解析、优先级、标签、重复任务或历史版本。
 
 - **行为约束**:
   1. 涉及长期知识库保存、检索、读取、更新、删除或合并的动作，必须通过声明工具完成。
@@ -79,6 +81,7 @@ last_updated: "2026-06-25"
   5. 删除、更新、合并和图谱关系确认等高风险操作必须经过 permission gate。
   6. SQLite `qa_cards` 是 Q&A 事实源；Qdrant 只作为语义召回索引。
   7. 未调用检索工具时允许普通回答，但不得声称回答来自本地知识库或伪造 `card_id`。
+  8. SQLite `todo_items` 是 todo 事实源；todo 数据不得作为 Q&A 知识库回答的来源证据。
 
 ---
 
@@ -113,7 +116,7 @@ last_updated: "2026-06-25"
 
 - **Tools 职责**:
   - 作为 Agent 可执行知识库动作的唯一入口。
-  - 封装 Q&A 工具和 Agent memory 读取工具。
+  - 封装 Q&A 工具、todo 工具和 Agent memory 读取工具。
   - 对输入非法、权限不足和底层失败返回结构化错误。
 
 - **Services / Repositories 职责**:
@@ -123,6 +126,7 @@ last_updated: "2026-06-25"
 
 - **Storage / External API 职责**:
   - SQLite `qa_cards` 保存 Q&A 事实数据。
+  - SQLite `todo_items` 保存 todo 事实数据。
   - Qdrant local mode 保存 Q&A 语义索引。
   - `.memory/` 保存用户可见的 Agent 长期工作记忆。
   - `.sessions/` 保存当前会话恢复数据。
@@ -146,6 +150,7 @@ last_updated: "2026-06-25"
 | `src/personal_knowledge_agent/agent_context/` | Prompt、memory、session transcript、summary 和 compact 管理。 |
 | `src/personal_knowledge_agent/agent_tools/` | LLM 可调用工具 adapter。 |
 | `src/personal_knowledge_agent/qa_data_access/` | SQLite Q&A 事实库、Qdrant 语义索引和重复检测。 |
+| `src/personal_knowledge_agent/todo_data_access/` | SQLite todo 事实库。 |
 | `src/personal_knowledge_agent/tool_runtime/` | Tool dispatcher、tool model 和权限策略。 |
 | `src/personal_knowledge_agent/llm_clients/` | LLM provider client。 |
 | `src/personal_knowledge_agent/agent_observability/` | Agent 运行事件 JSONL 日志。 |
@@ -170,6 +175,9 @@ last_updated: "2026-06-25"
 | `detect_duplicate_cards` | 检测疑似重复卡片 | 合并前或用户要求查重时 | 否 | 否 |
 | `merge_qa_cards` | 合并重复卡片 | 用户确认合并时 | 是 | 是 |
 | `rebuild_qa_semantic_index` | 重建语义索引 | 系统维护或索引修复时 | 是 | 否 |
+| `create_todo` | 保存一条 todo 待办项 | 用户明确要求记录之后要做的行动项、任务或待办时 | 是 | 否 |
+| `list_todos` | 查询 todo 待办项 | 用户要求查看、搜索或核对本地 todo 列表时 | 否 | 否 |
+| `update_todo` | 更新 todo 待办项 | 用户要求修改 todo 内容、备注、截止时间或状态时 | 是 | 否 |
 | `list_memory_index` | 读取 Agent memory 索引 | 需要理解长期协作偏好时 | 否 | 否 |
 | `read_memory` | 读取指定 memory 文档 | memory index 显示相关时 | 否 | 否 |
 
@@ -458,6 +466,86 @@ last_updated: "2026-06-25"
 - **副作用**: 写入或重建 Qdrant 向量，并更新 `is_vectorized`。
 - **失败处理**: 单卡失败不应破坏 SQLite 事实源；整体失败返回结构化错误。
 
+#### `create_todo`
+
+- **职责**: 保存一条本地 todo 待办项。
+- **输入**:
+
+```json
+{
+  "title": "string, required",
+  "notes": "string",
+  "due_at": "string"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": "boolean",
+  "todo": "object",
+  "error": "string"
+}
+```
+
+- **副作用**: 写入 SQLite `todo_items`。
+- **失败处理**: `title` 缺失、字段类型非法或数据库写入失败时返回结构化错误。
+
+#### `list_todos`
+
+- **职责**: 查询本地 todo 待办项。
+- **输入**:
+
+```json
+{
+  "query": "string",
+  "status": "string, one of: open, done, canceled, all",
+  "limit": "integer"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": "boolean",
+  "todos": ["object"],
+  "error": "string"
+}
+```
+
+- **副作用**: 无。
+- **失败处理**: 查询条件非法或数据库读取失败时返回结构化错误；未命中时返回空 `todos`。
+
+#### `update_todo`
+
+- **职责**: 更新已有 todo 待办项的内容、备注、截止时间或状态。
+- **输入**:
+
+```json
+{
+  "todo_id": "string, required",
+  "title": "string",
+  "notes": "string",
+  "status": "string, one of: open, done, canceled",
+  "due_at": "string"
+}
+```
+
+- **输出**:
+
+```json
+{
+  "ok": "boolean",
+  "todo": "object",
+  "error": "string"
+}
+```
+
+- **副作用**: 更新 SQLite `todo_items`。
+- **失败处理**: 目标不存在、字段非法、未提供更新字段或数据库写入失败时返回结构化错误；第一版不要求 permission gate。
+
 #### `list_memory_index`
 
 - **职责**: 读取 `.memory/MEMORY.md` memory index。
@@ -513,6 +601,7 @@ last_updated: "2026-06-25"
 3. JSONL 开发日志写入。
 4. memory candidate 生成事件。
 5. Web session 管理和 SSE 事件分发。
+6. todo 提醒、定时任务和专门 Web UI。
 
 ### 3.4 v0.2-v0.7 工具演进边界
 
@@ -594,7 +683,18 @@ last_updated: "2026-06-25"
 - **失败条件**: 用户拒绝、权限超时、工具失败或目标卡片不存在。
 - **用户可见反馈**: 展示已执行动作和目标 `card_id`；未执行时明确说明原因。
 
-### 5.4 CLI / Web 持续交互
+### 5.4 维护 todo
+
+1. Agent 识别用户保存、查询或更新 todo 的意图。
+2. Agent 调用 `create_todo`、`list_todos` 或 `update_todo`。
+3. Tool 读写 SQLite `todo_items`。
+4. Agent 基于 tool result 返回维护结果。
+
+- **成功条件**: 对应工具返回 `ok: true`。
+- **失败条件**: 输入缺失关键字段、工具失败或目标 todo 不存在。
+- **用户可见反馈**: 保存或更新成功时展示 `todo_id`；失败时展示失败原因，不得声称已完成。
+
+### 5.5 CLI / Web 持续交互
 
 1. Runtime 使用同一套 Agent 装配逻辑创建 AgentLoop。
 2. CLI 通过终端输入输出驱动；Web 通过本地 HTTP、SSE 和静态页面驱动。
@@ -605,7 +705,7 @@ last_updated: "2026-06-25"
 - **失败条件**: 配置缺失、session 非法、AgentLoop 失败或 Web API 失败。
 - **用户可见反馈**: CLI / Web 展示结构化错误，不伪造成功状态。
 
-### 5.5 Session 恢复和上下文压缩
+### 5.6 Session 恢复和上下文压缩
 
 1. Runtime 从 `.sessions/<session_id>/transcript.jsonl` 恢复短 transcript。
 2. 长 transcript 使用 `summary.md` + recent messages 恢复。
@@ -616,7 +716,7 @@ last_updated: "2026-06-25"
 - **失败条件**: transcript 非法、summary 生成失败或 artifact 落盘失败。
 - **用户可见反馈**: 可提示恢复降级，但不得解释为 Q&A 知识库缺少依据。
 
-### 5.6 Turn-end memory candidate 提取
+### 5.7 Turn-end memory candidate 提取
 
 1. Agent 在 turn 结束后从用户反馈和协作偏好中提取候选记忆。
 2. Runtime 只通过事件暴露候选。
@@ -655,7 +755,30 @@ last_updated: "2026-06-25"
 6. 更新卡片不保存历史版本或 before / after 快照。
 7. schema 初始化只能补齐缺失表和字段，不得破坏已有数据。
 
-### 6.3 `.memory/MEMORY.md`
+### 6.3 `todo_items`
+
+| 字段 | 类型 | 是否必填 | 说明 |
+|---|---|---|---|
+| `todo_id` / `id` | `TEXT` | 是 | todo 唯一 ID。 |
+| `title` | `TEXT` | 是 | todo 标题。 |
+| `notes` | `TEXT` | 是 | todo 补充说明，可为空字符串。 |
+| `status` | `TEXT` | 是 | todo 状态，只允许 `open`、`done` 或 `canceled`。 |
+| `due_at` | `TEXT` | 否 | 可选截止时间字符串；第一版不做自然语言解析或提醒。 |
+| `created_at` | `TEXT` | 是 | 系统生成创建时间。 |
+| `updated_at` | `TEXT` | 是 | 系统生成更新时间。 |
+
+### 6.4 Todo 数据约束
+
+1. `todo_id` 必须稳定且唯一。
+2. `title` 不得为空。
+3. `notes` 为空时保存为空字符串。
+4. `status` 只允许 `open`、`done` 或 `canceled`。
+5. `list_todos` 默认只返回 `open` 状态；用户明确要求全部、已完成或已取消时才调整过滤条件；`all` 只用于查询不过滤状态，不保存到数据库。
+6. `due_at` 只保存用户提供的截止时间字符串或空值，不触发提醒、定时任务或自然语言时间解析。
+7. 第一版不提供 `delete_todo`；取消 todo 应通过 `status=canceled` 表达。
+8. Todo 不保存历史版本或 before / after 快照。
+
+### 6.5 `.memory/MEMORY.md`
 
 | 字段 | 类型 | 是否必填 | 说明 |
 |---|---|---|---|
@@ -664,15 +787,15 @@ last_updated: "2026-06-25"
 | `description` | `string` | 是 | memory 内容说明。 |
 | `path` | `string` | 是 | 对应 `.memory/*.md` 路径。 |
 
-### 6.4 `.memory/*.md`
+### 6.6 `.memory/*.md`
 
 每个 memory 文档必须包含 frontmatter：`name`、`type`、`description`。Memory 文档用于 Agent 协作行为，不得作为 Q&A 回答事实来源。
 
-### 6.5 `.sessions/<session_id>/transcript.jsonl`
+### 6.7 `.sessions/<session_id>/transcript.jsonl`
 
 transcript 保存可恢复 messages，包括 user message、assistant message、assistant tool call message 和 tool result message。它用于恢复当前 session，不是长期知识来源。
 
-### 6.6 `.sessions/<session_id>/metadata.json`
+### 6.8 `.sessions/<session_id>/metadata.json`
 
 | 字段 | 类型 | 是否必填 | 说明 |
 |---|---|---|---|
@@ -682,7 +805,7 @@ transcript 保存可恢复 messages，包括 user message、assistant message、
 | `created_at` | `string` | 是 | 创建时间。 |
 | `updated_at` | `string` | 是 | 更新时间。 |
 
-### 6.7 `.sessions/<session_id>/summary.md`
+### 6.9 `.sessions/<session_id>/summary.md`
 
 `summary.md` 是长 transcript compact 后的恢复摘要，不是长期事实来源。
 
@@ -705,7 +828,7 @@ Recent State:
 - 最近讨论集中在 transcript 恢复、summary 降级和 runtime messages 边界。
 ```
 
-### 6.8 Compact Record
+### 6.10 Compact Record
 
 | 字段 | 类型 | 是否必填 | 说明 |
 |---|---|---|---|
@@ -714,7 +837,7 @@ Recent State:
 | `relevance` | `string` | 是 | 与当前任务的相关性说明。 |
 | `must_keep` | `boolean` | 是 | 是否必须保留。 |
 
-### 6.9 Memory Candidate
+### 6.11 Memory Candidate
 
 | 字段 | 类型 | 是否必填 | 说明 |
 |---|---|---|---|
@@ -723,7 +846,7 @@ Recent State:
 | `reason` | `string` | 是 | 提取原因。 |
 | `confidence` | `number` | 是 | 置信度。 |
 
-### 6.10 v0.2-v0.7 规划数据模型
+### 6.12 v0.2-v0.7 规划数据模型
 
 1. v0.4 引入 Qdrant 语义索引和 `is_vectorized`。
 2. v0.5 引入必填 `category`。
@@ -740,6 +863,7 @@ Recent State:
 | 检索结果不相关 | 候选卡片无法支持问题 | 不基于弱证据回答 | 说明没有足够可靠依据 |
 | 读取卡片失败 | `read_qa_card` 找不到目标或数据库错误 | 不引用该卡片 | 说明来源读取失败 |
 | 工具执行失败 | 工具返回 `ok: false` 或抛错 | 不声称动作成功 | 展示失败原因 |
+| Todo 不存在 | `update_todo` 找不到目标 | 不声称已更新 | 说明目标 todo 不存在 |
 | 高风险工具需确认 | 权限策略返回 `ask` | 等待用户确认 | 展示操作摘要和风险说明 |
 | 用户拒绝高风险工具 | 用户未批准操作 | 不执行 handler | 说明操作未执行 |
 | LLM 可重试故障 | 网络错误、timeout、HTTP 429、500 或 503 | 有限重试 | 说明模型调用失败，可稍后重试 |
@@ -759,11 +883,12 @@ Recent State:
   2. 依据不足时必须明确说明。
   3. 未落库内容不得作为长期记忆引用。
   4. Agent memory 失败不得阻断 Q&A 主流程。
-  5. Session transcript / summary 失败不得被解释为本地知识库缺少依据。
-  6. Compact 失败不得丢失回答所需证据。
-  7. Memory candidate 只是候选事件；当前实现不得声称 Agent 已经记住。
-  8. Web API 失败时必须返回结构化错误，不得伪造成功状态。
-  9. 日志不得记录 API key、完整 prompt、完整 messages、secret 或未声明为可展示的内部 payload。
+  5. Todo 工具失败不得阻断 Q&A 主流程。
+  6. Session transcript / summary 失败不得被解释为本地知识库缺少依据。
+  7. Compact 失败不得丢失回答所需证据。
+  8. Memory candidate 只是候选事件；当前实现不得声称 Agent 已经记住。
+  9. Web API 失败时必须返回结构化错误，不得伪造成功状态。
+  10. 日志不得记录 API key、完整 prompt、完整 messages、secret 或未声明为可展示的内部 payload。
 
 ---
 
@@ -775,10 +900,12 @@ Recent State:
   3. Q&A tool handler 覆盖必填字段、非法输入、结构化错误和展示字段。
   4. Tool Dispatcher 覆盖工具分发、未知工具、权限策略和展示字段筛选。
   5. LLM Client 覆盖 streaming、tool call 聚合、usage、可重试错误和不可重试错误。
-  6. Memory repository 覆盖 index、document、frontmatter 和非法格式。
-  7. Session repository 覆盖 transcript、metadata、summary、restore 和非法 session_id。
-  8. Tool result compactor 覆盖 artifact 落盘、compact record 和失败降级。
-  9. Memory candidate extractor 覆盖只生成候选、不写入长期 memory。
+  6. Todo Repository 覆盖保存、查询、更新、状态约束和非法输入。
+  7. Todo tool handler 覆盖必填字段、非法输入、结构化错误和展示字段。
+  8. Memory repository 覆盖 index、document、frontmatter 和非法格式。
+  9. Session repository 覆盖 transcript、metadata、summary、restore 和非法 session_id。
+  10. Tool result compactor 覆盖 artifact 落盘、compact record 和失败降级。
+  11. Memory candidate extractor 覆盖只生成候选、不写入长期 memory。
 
 - **集成测试**:
   1. Agent Loop 能执行 fake LLM tool call 并回填 tool result。
@@ -789,18 +916,20 @@ Recent State:
   6. Web Runtime 能处理流式聊天、session 隔离、历史恢复和卡片浏览。
   7. Web 高风险操作必须通过阻断式确认流程。
   8. JSONL Logger 异步写入运行事件，且失败不阻断主流程。
+  9. Todo 保存后查询能召回同一条待办，更新后能读取最新状态。
 
 - **回归测试**:
   1. 检索为空时不会生成虚假来源。
   2. 工具失败时不会返回保存成功。
   3. Q&A 检索不得混入 `.memory/*.md`。
-  4. `.sessions/<session_id>/summary.md` 和 compact artifact 不得作为 Q&A 回答来源。
-  5. Memory candidate 未写入时不得声称已经记住。
-  6. 日志不得输出 API key、完整 system prompt 或完整 messages。
-  7. Web UI 不得展示完整内部 payload。
-  8. 高风险工具被拒绝、超时、刷新或 SSE 断连时不得执行 handler。
-  9. 多个 Web session 不得共享 runtime `messages[]`。
-  10. Web Markdown renderer 不得渲染未允许的 HTML 标签。
+  4. Q&A 来源证据不得混入 todo 工具结果。
+  5. `.sessions/<session_id>/summary.md` 和 compact artifact 不得作为 Q&A 回答来源。
+  6. Memory candidate 未写入时不得声称已经记住。
+  7. 日志不得输出 API key、完整 system prompt 或完整 messages。
+  8. Web UI 不得展示完整内部 payload。
+  9. 高风险工具被拒绝、超时、刷新或 SSE 断连时不得执行 handler。
+  10. 多个 Web session 不得共享 runtime `messages[]`。
+  11. Web Markdown renderer 不得渲染未允许的 HTML 标签。
 
 - **验收清单**:
   1. 符合本文档定义的能力边界。
@@ -808,9 +937,10 @@ Recent State:
   3. 工具契约稳定、可测、可审计。
   4. DeepSeek 只出现在薄 LLM Client 中。
   5. Q&A 知识库和 Agent memory 保持分离。
-  6. session summary 和 compact artifact 只用于上下文恢复，不作为长期事实。
-  7. CLI / Web Runtime 不绕过 AgentLoop 和 Tools。
-  8. 失败场景不会编造结果或伪造来源。
+  6. Q&A 知识库和 todo 保持分离。
+  7. session summary 和 compact artifact 只用于上下文恢复，不作为长期事实。
+  8. CLI / Web Runtime 不绕过 AgentLoop 和 Tools。
+  9. 失败场景不会编造结果或伪造来源。
 
 ---
 
@@ -826,3 +956,4 @@ Recent State:
 | `2026-06-16` | 明确 Agent 开发上下文只记录稳定设计边界，不记录任务计划 | 区分 Agent 设计约束与 AI Coding 协作过程 | `TBD` |
 | `2026-06-20` | 扩展 `detect_duplicate_cards` 支持 `scope=all` 全库查重 | 避免 Agent 逐张卡片循环调用查重工具 | `TBD` |
 | `2026-06-25` | 按模板章节整理正文内容并压缩重复描述 | 保持模板架构不变，提升设计文档可读性和维护性 | `TBD` |
+| `2026-06-26` | 补充本地 todo 工具和数据边界 | 支持聊天内待办保存、查询和更新闭环 | `TBD` |

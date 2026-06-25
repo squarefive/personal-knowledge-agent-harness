@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from ..agent_tools.agent_memory_tools import AgentMemoryToolHandlers
 from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
+from ..agent_tools.todo_tools import TodoToolHandlers
 from .tool_models import ToolCall
 
 
@@ -12,8 +13,13 @@ class ToolDispatcher:
         self,
         qa_tools: QAKnowledgeToolHandlers,
         memory_tools: AgentMemoryToolHandlers,
+        todo_tools: TodoToolHandlers | None = None,
     ):
-        self._definitions = [*qa_tools.definitions(), *memory_tools.definitions()]
+        self._definitions = [
+            *qa_tools.definitions(),
+            *(todo_tools.definitions() if todo_tools is not None else []),
+            *memory_tools.definitions(),
+        ]
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "save_qa_card": qa_tools.save_qa_card,
             "search_qa_cards": qa_tools.search_qa_cards,
@@ -28,6 +34,14 @@ class ToolDispatcher:
             "list_memory_index": memory_tools.list_memory_index,
             "read_memory": memory_tools.read_memory,
         }
+        if todo_tools is not None:
+            self._handlers.update(
+                {
+                    "create_todo": todo_tools.create_todo,
+                    "list_todos": todo_tools.list_todos,
+                    "update_todo": todo_tools.update_todo,
+                }
+            )
 
     def definitions(self) -> list[dict[str, Any]]:
         return self._definitions
@@ -90,6 +104,9 @@ DISPLAY_INPUT_FIELDS: dict[str, tuple[str, ...]] = {
     "detect_duplicate_cards": ("scope", "card_id", "query", "category", "limit", "mode"),
     "merge_qa_cards": ("card_ids", "question", "answer", "summary", "keywords", "category"),
     "rebuild_qa_semantic_index": ("limit",),
+    "create_todo": ("title", "notes", "due_at"),
+    "list_todos": ("query", "status", "limit"),
+    "update_todo": ("todo_id", "title", "notes", "status", "due_at"),
     "list_memory_index": ("limit",),
     "read_memory": ("name",),
 }
@@ -221,6 +238,42 @@ DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
         "indexed",
         "failed",
         "failed_card_ids",
+        "error_code",
+        "message",
+    ),
+    "create_todo": (
+        "ok",
+        "todo.todo_id",
+        "todo.title",
+        "todo.notes",
+        "todo.status",
+        "todo.due_at",
+        "todo.created_at",
+        "todo.updated_at",
+        "error_code",
+        "message",
+    ),
+    "list_todos": (
+        "ok",
+        "todos.todo_id",
+        "todos.title",
+        "todos.notes",
+        "todos.status",
+        "todos.due_at",
+        "todos.created_at",
+        "todos.updated_at",
+        "error_code",
+        "message",
+    ),
+    "update_todo": (
+        "ok",
+        "todo.todo_id",
+        "todo.title",
+        "todo.notes",
+        "todo.status",
+        "todo.due_at",
+        "todo.created_at",
+        "todo.updated_at",
         "error_code",
         "message",
     ),

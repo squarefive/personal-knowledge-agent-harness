@@ -123,6 +123,34 @@ def test_extract_sources_from_list_recent_cards_result():
     assert sources[0].evidence_kind == "searched"
 
 
+def test_todo_tool_results_are_not_q_and_a_sources():
+    messages = [
+        assistant_tool_call("call_1", "create_todo", {"title": "整理 prompt 原则"}),
+        tool_result(
+            "call_1",
+            {
+                "ok": True,
+                "todo": {
+                    "todo_id": "todo_1",
+                    "title": "整理 prompt 原则",
+                    "notes": "",
+                    "status": "open",
+                    "due_at": None,
+                    "created_at": "2026-06-26T00:00:00+00:00",
+                    "updated_at": "2026-06-26T00:00:00+00:00",
+                },
+            },
+        ),
+    ]
+
+    trusted = finalize_answer("已保存待办。根据本地知识库", messages)
+
+    assert extract_sources(messages) == []
+    assert trusted.source_count == 0
+    assert "来源：" not in trusted.answer
+    assert "根据本地知识库" not in trusted.answer
+
+
 def test_hybrid_search_and_read_same_card_are_counted_once():
     messages = [
         assistant_tool_call("call_1", "hybrid_search_qa_cards", {"query": "skills", "limit": 3}),

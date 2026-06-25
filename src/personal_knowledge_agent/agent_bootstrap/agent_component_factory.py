@@ -20,8 +20,10 @@ from ..agent_context.conversation_sessions import (
 from ..agent_runtime import AgentEvent, AgentLoopRunner
 from ..agent_tools.agent_memory_tools import AgentMemoryToolHandlers
 from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
+from ..agent_tools.todo_tools import TodoToolHandlers
 from ..llm_clients import DeepSeekChatClient
 from ..qa_data_access import QACardRepository, QACardSemanticIndex
+from ..todo_data_access import TodoRepository
 from ..tool_runtime import ApprovalRequest, ToolDispatcher
 from .agent_runtime_config import AgentConfig
 
@@ -30,6 +32,7 @@ from .agent_runtime_config import AgentConfig
 class AgentComponents:
     agent: AgentLoopRunner
     tools: QAKnowledgeToolHandlers
+    todo_tools: TodoToolHandlers
 
 
 def create_agent_components(
@@ -39,6 +42,7 @@ def create_agent_components(
     session_id: str = "default",
 ) -> AgentComponents:
     store = QACardRepository(config.knowledge_db_path)
+    todo_store = TodoRepository(config.knowledge_db_path)
     workspace_root = Path.cwd()
     llm = DeepSeekChatClient(
         api_key=config.deepseek_api_key,
@@ -67,11 +71,12 @@ def create_agent_components(
         collection_name=config.qdrant_collection,
     )
     tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
+    todo_tools = TodoToolHandlers(todo_store)
     memory_tools = AgentMemoryToolHandlers(
         memory_index_repository=memory_index_store,
         memory_document_repository=memory_store,
     )
-    dispatcher = ToolDispatcher(tools, memory_tools)
+    dispatcher = ToolDispatcher(tools, memory_tools, todo_tools=todo_tools)
     agent = AgentLoopRunner(
         llm=llm,
         dispatcher=dispatcher,
@@ -92,7 +97,7 @@ def create_agent_components(
         approval_callback=approval_callback if approval_callback is not None else None,
         event_sink=event_sink,
     )
-    return AgentComponents(agent=agent, tools=tools)
+    return AgentComponents(agent=agent, tools=tools, todo_tools=todo_tools)
 
 
 def create_agent(

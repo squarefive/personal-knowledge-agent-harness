@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = ROOT / "docs/templates/agent-development-context.template.md"
 AGENTS_DIR = ROOT / "docs/agents"
-EXPECTED_TEMPLATE_SHA256 = "830c7d9fab94f5af06d4709a9b0ccadf7c77fc34635c852d504ca04b70511db8"
+EXPECTED_TEMPLATE_SHA256 = "b939e1c68cc771a214d9766fe725c93ea23464c3617ba3475904a2a284e0d0dc"
 
 REQUIRED_FRONTMATTER_FIELDS = [
     "module",
