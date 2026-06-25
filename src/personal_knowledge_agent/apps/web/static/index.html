@@ -4,64 +4,123 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Personal Knowledge Agent</title>
-    <link rel="stylesheet" href="/static/styles.css?v=context-status-1" />
+    <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="%23f7f5ef"/><path d="M18 18l14-7 14 7v19L32 45 18 37z" fill="none" stroke="%232f5d46" stroke-width="4" stroke-linejoin="round"/><path d="M18 19l14 8 14-8M32 27v18" stroke="%232f5d46" stroke-width="4" stroke-linecap="round"/></svg>' />
+    <link rel="stylesheet" href="/static/styles.css?v=workbench-4" />
   </head>
   <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="icon-box" viewBox="0 0 24 24"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="m4 7.5 8 4.5 8-4.5"/><path d="M12 12v9"/></symbol>
+      <symbol id="icon-edit" viewBox="0 0 24 24"><path d="M4 20h4l11-11a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></symbol>
+      <symbol id="icon-message" viewBox="0 0 24 24"><path d="M5 6.5h14v9H9l-4 3z"/></symbol>
+      <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 4v10"/><path d="m8 10 4 4 4-4"/><path d="M5 19h14"/></symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1a8 8 0 0 0-1.7-1L14.5 3h-5l-.3 3.1a8 8 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1a8 8 0 0 0 1.7 1l.3 3.1h5l.3-3.1a8 8 0 0 0 1.7-1l2.4 1 2-3.4-2-1.5q.1-.5.1-1"/></symbol>
+      <symbol id="icon-panel-left" viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M9 5v14"/></symbol>
+      <symbol id="icon-panel-right" viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M15 5v14"/></symbol>
+      <symbol id="icon-sliders" viewBox="0 0 24 24"><path d="M4 7h9"/><path d="M17 7h3"/><circle cx="15" cy="7" r="2"/><path d="M4 17h3"/><path d="M11 17h9"/><circle cx="9" cy="17" r="2"/></symbol>
+      <symbol id="icon-paperclip" viewBox="0 0 24 24"><path d="M8 12.5 14.5 6a4 4 0 0 1 5.7 5.7L10.8 21a5.5 5.5 0 0 1-7.8-7.8l9.5-9.5a3 3 0 0 1 4.2 4.2l-9.3 9.3"/></symbol>
+      <symbol id="icon-table" viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="M4 11h16"/><path d="M10 5v14"/></symbol>
+      <symbol id="icon-code" viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"/><path d="m16 9 4 3-4 3"/><path d="m14 5-4 14"/></symbol>
+      <symbol id="icon-send" viewBox="0 0 24 24"><path d="M21 4 10 21l-2-8-7-3z"/><path d="m21 4-13 9"/></symbol>
+      <symbol id="icon-copy" viewBox="0 0 24 24"><path d="M8 8h11v11H8z"/><path d="M5 16H4V5h11v1"/></symbol>
+      <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
+      <symbol id="icon-file" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5"/></symbol>
+      <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 5h5v5"/><path d="m19 5-8 8"/><path d="M19 14v5H5V5h5"/></symbol>
+      <symbol id="icon-tray" viewBox="0 0 24 24"><path d="M5 14h4l2 3h2l2-3h4"/><path d="M5 14v5h14v-5"/><path d="M8 10l4-4 4 4"/><path d="M12 6v8"/></symbol>
+    </svg>
     <main id="appShell" class="app-shell">
       <aside class="sessions-pane" aria-label="会话">
         <header class="sessions-header">
-          <div>
-            <h2>会话</h2>
-            <p id="sessionStatus">加载中</p>
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="#icon-box"></use></svg></span>
+            <div>
+              <h2>本地知识库</h2>
+              <p id="sessionStatus">加载中</p>
+            </div>
           </div>
-          <button id="newSessionButton" class="icon-button" type="button" title="新建会话" aria-label="新建会话">
-            +
+          <button id="renameSessionButton" class="icon-button" type="button" title="重命名会话" aria-label="重命名会话">
+            <svg class="icon"><use href="#icon-edit"></use></svg>
           </button>
         </header>
+        <section class="sessions-tools">
+          <div class="section-title">
+            <h3>会话</h3>
+            <button id="newSessionButton" class="plain-icon-button" type="button" title="新建会话" aria-label="新建会话">
+              <svg class="icon"><use href="#icon-plus"></use></svg>
+            </button>
+          </div>
+          <label class="sidebar-search">
+            <svg class="icon"><use href="#icon-search"></use></svg>
+            <input type="search" placeholder="搜索会话" aria-label="搜索会话" />
+          </label>
+        </section>
         <div id="sessionsList" class="sessions-list"></div>
+        <footer class="sessions-footer">
+          <button class="footer-action" type="button">
+            <svg class="icon"><use href="#icon-download"></use></svg>
+            <span>保存记录</span>
+          </button>
+          <button class="plain-icon-button" type="button" aria-label="设置" title="设置">
+            <svg class="icon"><use href="#icon-settings"></use></svg>
+          </button>
+        </footer>
       </aside>
 
       <section class="chat-pane" aria-label="聊天">
         <header class="pane-header">
-          <div class="pane-actions">
+          <div class="pane-actions pane-actions-left">
             <button id="toggleSessionsButton" class="icon-button" type="button" title="隐藏会话" aria-label="隐藏会话">
-              ☰
-            </button>
-            <button id="toggleCardsButton" class="icon-button" type="button" title="隐藏知识卡片" aria-label="隐藏知识卡片">
-              ▣
+              <svg class="icon"><use href="#icon-panel-left"></use></svg>
             </button>
           </div>
           <div class="pane-title">
-            <h1 id="activeSessionTitle">Personal Knowledge Agent</h1>
-            <p id="statusText">本地 Web UI 已就绪</p>
+            <h1 id="activeSessionTitle">检索结果</h1>
+            <p id="statusText">本地知识库问答助手</p>
           </div>
-          <div class="pane-actions">
-            <button id="renameSessionButton" class="icon-button" type="button" title="重命名会话" aria-label="重命名会话">
-              ✎
-            </button>
+          <div class="pane-actions pane-actions-right">
+            <div class="context-meter">
+              <span id="contextStatus" class="context-status" aria-live="polite">Context 0%</span>
+              <span class="context-track"><span class="context-fill"></span></span>
+            </div>
             <button id="refreshCardsButton" class="icon-button" type="button" title="刷新卡片" aria-label="刷新卡片">
-              ↻
+              <svg class="icon"><use href="#icon-sliders"></use></svg>
+            </button>
+            <button id="toggleCardsButton" class="icon-button" type="button" title="隐藏知识卡片" aria-label="隐藏知识卡片">
+              <svg class="icon"><use href="#icon-panel-right"></use></svg>
             </button>
           </div>
         </header>
 
         <div id="messages" class="messages" aria-live="polite">
-          <article class="message agent-message">
-            <div class="message-role">Agent</div>
-            <div class="message-body">你好。你可以录入一条 Q&A，也可以提问，我会基于本地知识库回答。</div>
-          </article>
+          <section class="empty-workspace">
+            <svg class="empty-icon" aria-hidden="true"><use href="#icon-tray"></use></svg>
+            <h2>本地知识库问答助手</h2>
+            <p>从右侧选择知识卡片查看详情，或在下方提问开始对话。</p>
+          </section>
         </div>
 
         <form id="chatForm" class="composer">
-          <textarea
-            id="messageInput"
-            name="message"
-            rows="3"
-            placeholder="输入 Q&A 录入请求或问题..."
-            autocomplete="off"
-          ></textarea>
-          <button id="sendButton" type="submit">发送</button>
-          <div id="contextStatus" class="context-status" aria-live="polite">Context 0%</div>
+          <div class="composer-field">
+            <textarea
+              id="messageInput"
+              name="message"
+              rows="3"
+              placeholder="提问或录入 Q&A..."
+              autocomplete="off"
+            ></textarea>
+            <div class="composer-toolbar">
+              <div class="composer-tools" aria-label="输入工具">
+                <button class="tool-icon-button" type="button" aria-label="附件"><svg class="icon"><use href="#icon-paperclip"></use></svg></button>
+                <button class="tool-icon-button" type="button" aria-label="表格"><svg class="icon"><use href="#icon-table"></use></svg></button>
+                <button class="tool-icon-button" type="button" aria-label="代码"><svg class="icon"><use href="#icon-code"></use></svg></button>
+              </div>
+              <button id="sendButton" class="send-button" type="submit" aria-label="发送">
+                <svg class="icon"><use href="#icon-send"></use></svg>
+              </button>
+            </div>
+          </div>
         </form>
       </section>
 
@@ -69,7 +128,12 @@
         <header class="cards-header">
           <div>
             <h2>知识卡片</h2>
-            <p>最近记录与搜索结果</p>
+            <p>问题、摘要与来源</p>
+          </div>
+          <div class="pane-actions">
+            <button class="icon-button" type="button" title="编辑卡片" aria-label="编辑卡片"><svg class="icon"><use href="#icon-edit"></use></svg></button>
+            <button class="icon-button" type="button" title="更多操作" aria-label="更多操作"><svg class="icon"><use href="#icon-more"></use></svg></button>
+            <button id="closeCardDetailButton" class="icon-button" type="button" title="关闭知识卡片" aria-label="关闭知识卡片"><svg class="icon"><use href="#icon-close"></use></svg></button>
           </div>
         </header>
 
@@ -88,22 +152,13 @@
 
         <section class="card-detail-section">
           <div class="section-title">
-            <h3>卡片详情</h3>
-            <button
-              id="closeCardDetailButton"
-              class="detail-close-button"
-              type="button"
-              title="关闭卡片详情"
-              aria-label="关闭卡片详情"
-            >
-              ×
-            </button>
+            <h3>来源</h3>
           </div>
-          <div id="cardDetail" class="card-detail empty-state">选择一张卡片查看详情。</div>
+          <div id="cardDetail" class="card-detail empty-state">选择一张知识卡片查看来源详情。</div>
         </section>
       </aside>
     </main>
 
-    <script src="/static/app.js?v=context-status-1" defer></script>
+    <script src="/static/app.js?v=workbench-4" defer></script>
   </body>
 </html>

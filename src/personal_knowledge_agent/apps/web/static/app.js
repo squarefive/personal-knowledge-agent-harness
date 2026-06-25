@@ -210,7 +210,7 @@ function renderSessions(sessions) {
   if (!sessions.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state session-empty";
-    empty.textContent = "还没有会话。";
+    empty.textContent = "创建会话后开始录入或检索 Q&A。";
     elements.sessionsList.append(empty);
     return;
   }
@@ -226,32 +226,47 @@ function renderSessions(sessions) {
       }
     });
 
+    const rowIcon = document.createElement("span");
+    rowIcon.className = "row-icon";
+    rowIcon.append(icon("message"));
+
+    const content = document.createElement("span");
+    content.className = "row-content";
+
+    const titleLine = document.createElement("span");
+    titleLine.className = "row-title-line";
+
     const title = document.createElement("strong");
     title.textContent = session.title || "新会话";
 
     const meta = document.createElement("span");
+    meta.className = "row-time";
     meta.textContent = formatSessionMeta(session);
 
-    button.append(title, meta);
+    const count = document.createElement("span");
+    count.className = "row-subtitle";
+    count.textContent = session.last_user_message ? "最近会话" : "准备记录";
+
+    titleLine.append(title, meta);
+    content.append(titleLine, count);
+    button.append(rowIcon, content);
     elements.sessionsList.append(button);
   }
 }
 
 function renderActiveSessionTitle() {
-  const activeSession = state.sessions.find((session) => session.session_id === state.activeSessionId);
-  elements.activeSessionTitle.textContent = activeSession?.title || "Personal Knowledge Agent";
+  elements.activeSessionTitle.textContent = "检索结果";
 }
 
 function resetMessages(message) {
   elements.messages.replaceChildren();
-  const greeting = appendMessage("agent", "Agent", message);
-  greeting.classList.add("intro-message");
+  appendEmptyWorkspace(message);
 }
 
 function renderHistoryMessages(messages) {
   elements.messages.replaceChildren();
   if (!messages.length) {
-    resetMessages("你好。你可以录入一条 Q&A，也可以提问，我会基于本地知识库回答。");
+    resetMessages("你好。你可以录入一条 Q&A，也可以提问，我会基于本地知识库回答并列出来源。");
     return;
   }
   for (const message of messages) {
@@ -410,6 +425,10 @@ function updateContextStatus(promptUsageRatio) {
   const ratio = Number(promptUsageRatio);
   const percentage = Number.isFinite(ratio) ? Math.max(0, Math.round(ratio * 100)) : 0;
   elements.contextStatus.textContent = `Context ${percentage}%`;
+  const fill = document.querySelector(".context-fill");
+  if (fill) {
+    fill.style.width = `${Math.min(100, percentage)}%`;
+  }
 }
 
 function contextCompactionStartText(event) {
@@ -870,7 +889,7 @@ function setBusy(busy, text) {
 }
 
 async function loadRecentCards() {
-  elements.cardsTitle.textContent = "最近卡片";
+  elements.cardsTitle.textContent = "保存记录";
   setCardsLoading(true);
   const result = await getJson("/api/cards/recent?limit=10").finally(() => setCardsLoading(false));
   if (!result.ok) {
@@ -881,7 +900,7 @@ async function loadRecentCards() {
 }
 
 async function searchCards(query) {
-  elements.cardsTitle.textContent = "搜索结果";
+  elements.cardsTitle.textContent = "检索结果";
   setCardsLoading(true);
   const result = await getJson(`/api/cards/search?q=${encodeURIComponent(query)}&limit=10`).finally(() =>
     setCardsLoading(false),
@@ -893,7 +912,7 @@ async function searchCards(query) {
   renderCards(result.cards || []);
 }
 
-function renderCards(cards, emptyText = "暂无卡片。") {
+function renderCards(cards, emptyText = "还没有知识卡片。保存一条 Q&A 后会显示在这里。") {
   state.cards = cards;
   if (!cards.some((card) => card.card_id === state.selectedCardId)) {
     closeCardDetail();
@@ -905,7 +924,9 @@ function renderCards(cards, emptyText = "暂无卡片。") {
   if (!cards.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = emptyText;
+    const text = document.createElement("span");
+    text.textContent = emptyText;
+    empty.append(text);
     elements.cardsList.append(empty);
     return;
   }
@@ -921,6 +942,13 @@ function renderCards(cards, emptyText = "暂无卡片。") {
     }
     button.addEventListener("click", () => loadCardDetail(card.card_id));
 
+    const rowIcon = document.createElement("span");
+    rowIcon.className = "row-icon";
+    rowIcon.append(icon("file"));
+
+    const content = document.createElement("span");
+    content.className = "row-content";
+
     const question = document.createElement("strong");
     question.textContent = card.question || card.card_id;
 
@@ -933,7 +961,8 @@ function renderCards(cards, emptyText = "暂无卡片。") {
       .filter(Boolean)
       .join(" · ");
 
-    button.append(question, summary, meta);
+    content.append(question, summary, meta);
+    button.append(rowIcon, content);
     elements.cardsList.append(button);
   }
 }
@@ -961,7 +990,7 @@ function closeCardDetail() {
   elements.cardsPane.classList.remove("has-card-detail");
   markSelectedCard(null);
   elements.cardDetail.className = "card-detail empty-state";
-  elements.cardDetail.textContent = "选择一张卡片查看详情。";
+  elements.cardDetail.textContent = "选择一张知识卡片查看来源详情。";
 }
 
 function renderCardDetail(card) {
@@ -969,17 +998,62 @@ function renderCardDetail(card) {
   const keywords = Array.isArray(card.keywords) ? card.keywords.join(", ") : "";
   elements.cardDetail.innerHTML = "";
 
-  const list = document.createElement("dl");
-  addDetail(list, "card_id", card.card_id);
-  addDetail(list, "原始问题", card.question);
-  addDetail(list, "原始答案", card.answer);
-  addDetail(list, "summary", card.summary);
-  addDetail(list, "keywords", keywords);
-  addDetail(list, "category", card.category);
-  addDetail(list, "source_type", card.source_type);
-  addDetail(list, "创建时间", formatTimestamp(card.created_at, { detail: true }));
-  addDetail(list, "更新时间", formatTimestamp(card.updated_at, { detail: true }));
-  elements.cardDetail.append(list);
+  const cardBody = document.createElement("article");
+  cardBody.className = "knowledge-card";
+
+  const questionBlock = document.createElement("section");
+  questionBlock.className = "knowledge-section knowledge-question";
+  const questionLabel = document.createElement("div");
+  questionLabel.className = "knowledge-label";
+  questionLabel.textContent = "问题";
+  const questionTitle = document.createElement("h4");
+  questionTitle.textContent = card.question || card.card_id || "";
+  const copyButton = document.createElement("button");
+  copyButton.className = "inline-copy-button";
+  copyButton.type = "button";
+  copyButton.title = "复制问题";
+  copyButton.setAttribute("aria-label", "复制问题");
+  copyButton.append(icon("copy"));
+  questionBlock.append(questionLabel, questionTitle, copyButton);
+
+  const summaryBlock = document.createElement("section");
+  summaryBlock.className = "knowledge-section";
+  appendKnowledgeText(summaryBlock, "摘要", card.summary || card.answer || "");
+
+  const answerBlock = document.createElement("section");
+  answerBlock.className = "knowledge-section";
+  appendKnowledgeText(answerBlock, "原始答案", card.answer || "");
+
+  const metaGrid = document.createElement("section");
+  metaGrid.className = "knowledge-meta-grid";
+  metaGrid.append(
+    metaItem("分类", card.category || "未分类", "chip"),
+    metaItem("关键词", keywords || "无"),
+    metaItem("创建时间", formatTimestamp(card.created_at, { detail: true })),
+    metaItem("更新时间", formatTimestamp(card.updated_at, { detail: true })),
+    metaItem("来源类型", card.source_type || "unknown"),
+    metaItem("card_id", card.card_id || "")
+  );
+
+  const sources = document.createElement("section");
+  sources.className = "source-list-section";
+  const sourceTitle = document.createElement("div");
+  sourceTitle.className = "knowledge-label";
+  sourceTitle.textContent = "来源";
+  const sourceList = document.createElement("div");
+  sourceList.className = "source-list";
+  sourceList.append(
+    sourceRow("本地 Q&A 卡片", card.card_id || "", "100%"),
+    sourceRow(card.source_type || "manual_qa", "SQLite", "事实源")
+  );
+  const sourceLink = document.createElement("button");
+  sourceLink.className = "source-link";
+  sourceLink.type = "button";
+  sourceLink.append(document.createTextNode("查看原文"), icon("external"));
+  sources.append(sourceTitle, sourceList, sourceLink);
+
+  cardBody.append(questionBlock, summaryBlock, answerBlock, metaGrid, sources);
+  elements.cardDetail.append(cardBody);
 }
 
 function formatTimestamp(value, options = {}) {
@@ -1008,9 +1082,17 @@ function getStoredBoolean(key, fallback) {
 function setPaneCollapsed(side, collapsed) {
   if (side === "left") {
     state.leftCollapsed = collapsed;
+    if (!collapsed && window.matchMedia("(max-width: 760px)").matches) {
+      state.rightCollapsed = true;
+      window.localStorage.setItem("right_pane_collapsed", String(state.rightCollapsed));
+    }
     window.localStorage.setItem("left_pane_collapsed", String(collapsed));
   } else {
     state.rightCollapsed = collapsed;
+    if (!collapsed && window.matchMedia("(max-width: 760px)").matches) {
+      state.leftCollapsed = true;
+      window.localStorage.setItem("left_pane_collapsed", String(state.leftCollapsed));
+    }
     window.localStorage.setItem("right_pane_collapsed", String(collapsed));
   }
   applyPaneState();
@@ -1037,7 +1119,7 @@ function setCardsLoading(loading) {
   elements.cardsList.replaceChildren();
   const loadingNode = document.createElement("div");
   loadingNode.className = "empty-state";
-  loadingNode.textContent = "正在读取卡片...";
+  loadingNode.textContent = "正在读取知识卡片";
   elements.cardsList.append(loadingNode);
 }
 
@@ -1049,12 +1131,77 @@ function markSelectedCard(cardId) {
   }
 }
 
-function addDetail(list, label, value) {
+function addDetail(list, label, value, valueClass = "") {
   const term = document.createElement("dt");
   term.textContent = label;
   const description = document.createElement("dd");
+  if (valueClass) {
+    description.className = valueClass;
+  }
   description.textContent = value || "";
   list.append(term, description);
+}
+
+function icon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#icon-${name}`);
+  svg.append(use);
+  return svg;
+}
+
+function appendEmptyWorkspace(message) {
+  const empty = document.createElement("section");
+  empty.className = "empty-workspace";
+  const emptyIcon = icon("tray");
+  emptyIcon.classList.add("empty-icon");
+  const title = document.createElement("h2");
+  title.textContent = "本地知识库问答助手";
+  const body = document.createElement("p");
+  body.textContent = message || "从右侧选择知识卡片查看详情，或在下方提问开始对话。";
+  empty.append(emptyIcon, title, body);
+  elements.messages.append(empty);
+}
+
+function appendKnowledgeText(container, label, text) {
+  const title = document.createElement("div");
+  title.className = "knowledge-label";
+  title.textContent = label;
+  const paragraph = document.createElement("p");
+  paragraph.textContent = text || "暂无内容";
+  container.append(title, paragraph);
+}
+
+function metaItem(label, value, variant = "") {
+  const item = document.createElement("div");
+  item.className = "knowledge-meta-item";
+  const labelNode = document.createElement("span");
+  labelNode.textContent = label;
+  const valueNode = document.createElement("strong");
+  if (variant) {
+    valueNode.className = variant;
+  }
+  valueNode.textContent = value || "";
+  item.append(labelNode, valueNode);
+  return item;
+}
+
+function sourceRow(name, detail, score) {
+  const row = document.createElement("div");
+  row.className = "source-row";
+  const fileIcon = document.createElement("span");
+  fileIcon.className = "row-icon";
+  fileIcon.append(icon("file"));
+  const title = document.createElement("strong");
+  title.textContent = name;
+  const detailNode = document.createElement("span");
+  detailNode.textContent = detail;
+  const scoreNode = document.createElement("span");
+  scoreNode.textContent = score;
+  row.append(fileIcon, title, detailNode, scoreNode);
+  return row;
 }
 
 initializeApp().catch((error) => {
