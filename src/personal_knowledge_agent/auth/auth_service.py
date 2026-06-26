@@ -14,7 +14,9 @@ from personal_knowledge_agent.security.token_hashing import (
 
 from .auth_models import (
     AuthFailure,
+    AuthenticatedSession,
     AuthSessionRecord,
+    AuthSessionWithUserRecord,
     AuthUser,
     IssuedLoginCode,
     LoginCodeRecord,
@@ -40,6 +42,12 @@ class AuthRepository(Protocol):
     def consume_login_code(self, login_code_id: str, consumed_at: datetime) -> None: ...
 
     def create_auth_session(self, session: AuthSessionRecord) -> None: ...
+
+    def get_auth_session_by_token_hash(self, token_hash: str) -> AuthSessionWithUserRecord | None: ...
+
+    def update_auth_session_last_seen(self, session_id: str, last_seen_at: datetime) -> None: ...
+
+    def revoke_auth_session(self, token_hash: str, revoked_at: datetime) -> None: ...
 
 
 class AuthService:
@@ -154,6 +162,48 @@ class AuthService:
             session_token=session_token,
             expires_at=session_expires_at,
         )
+
+    def authenticate_session_token(self, session_token: str) -> AuthenticatedSession | AuthFailure:
+        stripped_token = session_token.strip()
+        if not stripped_token:
+            return AuthFailure(ok=False, error_code="empty_session_token", message="session token is required")
+
+        session = self._repository.get_auth_session_by_token_hash(hash_token(stripped_token))
+        if session is None:
+            return AuthFailure(ok=False, error_code="auth_session_not_found", message="auth session not found")
+
+        now = self._now()
+        if session.revoked_at is not None:
+            return AuthFailure(ok=False, error_code="auth_session_revoked", message="auth session has been revoked")
+        if session.expires_at <= now:
+            return AuthFailure(ok=False, error_code="auth_session_expired", message="auth session has expired")
+
+        self._repository.update_auth_session_last_seen(session.session_id, now)
+        return AuthenticatedSession(
+            ok=True,
+            user_id=session.user_id,
+            email=session.email,
+            llm_provider_user_id=session.llm_provider_user_id,
+            session_id=session.session_id,
+            expires_at=session.expires_at,
+        )
+
+    def revoke_session_token(self, session_token: str) -> bool:
+        stripped_token = session_token.strip()
+        if not stripped_token:
+            return False
+
+        token_hash = hash_token(stripped_token)
+        session = self._repository.get_auth_session_by_token_hash(token_hash)
+        if session is None:
+            return False
+
+        now = self._now()
+        if session.revoked_at is not None or session.expires_at <= now:
+            return False
+
+        self._repository.revoke_auth_session(token_hash, now)
+        return True
 
     def _ensure_user(self, email: str, now: datetime) -> AuthUser:
         existing = self._repository.get_user_by_email(email)

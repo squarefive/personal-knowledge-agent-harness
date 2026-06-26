@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol
 
-from personal_knowledge_agent.auth import AuthSessionRecord, AuthUser, LoginCodeRecord
+from personal_knowledge_agent.auth import AuthSessionRecord, AuthSessionWithUserRecord, AuthUser, LoginCodeRecord
 
 
 class PostgresConnection(Protocol):
@@ -131,6 +131,50 @@ class PostgresAuthRepository:
         )
         self._commit()
 
+    def get_auth_session_by_token_hash(self, token_hash: str) -> AuthSessionWithUserRecord | None:
+        cursor = self._connection.execute(
+            """
+            SELECT
+              s.session_id,
+              s.user_id,
+              u.email,
+              u.llm_provider_user_id,
+              s.expires_at,
+              s.revoked_at,
+              s.last_seen_at
+            FROM auth_sessions s
+            JOIN users u ON u.user_id = s.user_id
+            WHERE s.token_hash = %s
+            """,
+            (token_hash,),
+        )
+        row = _fetchone(cursor)
+        if row is None:
+            return None
+        return _auth_session_with_user_from_row(row)
+
+    def update_auth_session_last_seen(self, session_id: str, last_seen_at: datetime) -> None:
+        self._connection.execute(
+            """
+            UPDATE auth_sessions
+            SET last_seen_at = %s
+            WHERE session_id = %s
+            """,
+            (last_seen_at, session_id),
+        )
+        self._commit()
+
+    def revoke_auth_session(self, token_hash: str, revoked_at: datetime) -> None:
+        self._connection.execute(
+            """
+            UPDATE auth_sessions
+            SET revoked_at = %s
+            WHERE token_hash = %s
+            """,
+            (revoked_at, token_hash),
+        )
+        self._commit()
+
     def _commit(self) -> None:
         commit = getattr(self._connection, "commit", None)
         if callable(commit):
@@ -163,6 +207,18 @@ def _login_code_from_row(row: object) -> LoginCodeRecord:
         consumed=_row_value(row, 6, "consumed"),
         attempt_count=_row_value(row, 7, "attempt_count"),
         created_at=_row_value(row, 8, "created_at"),
+    )
+
+
+def _auth_session_with_user_from_row(row: object) -> AuthSessionWithUserRecord:
+    return AuthSessionWithUserRecord(
+        session_id=_row_value(row, 0, "session_id"),
+        user_id=_row_value(row, 1, "user_id"),
+        email=_row_value(row, 2, "email"),
+        llm_provider_user_id=_row_value(row, 3, "llm_provider_user_id"),
+        expires_at=_row_value(row, 4, "expires_at"),
+        revoked_at=_row_value(row, 5, "revoked_at"),
+        last_seen_at=_row_value(row, 6, "last_seen_at"),
     )
 
 

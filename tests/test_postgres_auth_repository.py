@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from personal_knowledge_agent.auth import AuthSessionRecord, AuthUser, LoginCodeRecord
+from personal_knowledge_agent.auth import AuthSessionRecord, AuthSessionWithUserRecord, AuthUser, LoginCodeRecord
 from personal_knowledge_agent.postgres import PostgresAuthRepository
 
 
@@ -165,3 +165,75 @@ def test_create_auth_session_inserts_token_hash_only() -> None:
     assert "plain-session-token" not in params
     assert "sha256:session-hash" in params
     assert connection.commit_count == 1
+
+
+def test_get_auth_session_by_token_hash_joins_user_and_maps_session_without_token_hash() -> None:
+    connection = FakeConnection()
+    connection.next_row = (
+        "sess_1",
+        "usr_1",
+        "1033795760@qq.com",
+        "llm_1",
+        NOW + timedelta(days=30),
+        None,
+        NOW + timedelta(minutes=1),
+    )
+    repo = PostgresAuthRepository(connection)
+
+    session = repo.get_auth_session_by_token_hash("sha256:session-hash")
+
+    assert session == AuthSessionWithUserRecord(
+        session_id="sess_1",
+        user_id="usr_1",
+        email="1033795760@qq.com",
+        llm_provider_user_id="llm_1",
+        expires_at=NOW + timedelta(days=30),
+        revoked_at=None,
+        last_seen_at=NOW + timedelta(minutes=1),
+    )
+    assert not hasattr(session, "token_hash")
+    sql, params = connection.executed[0]
+    assert "FROM auth_sessions s JOIN users u ON u.user_id = s.user_id WHERE s.token_hash = %s" in sql
+    assert "s.revoked_at" in sql
+    assert "s.last_seen_at" in sql
+    assert "sha256:session-hash" not in sql
+    assert params == ("sha256:session-hash",)
+
+
+def test_update_auth_session_last_seen_uses_session_id_parameter() -> None:
+    connection = FakeConnection()
+    repo = PostgresAuthRepository(connection)
+
+    repo.update_auth_session_last_seen("sess_1", NOW)
+
+    sql, params = connection.executed[0]
+    assert "UPDATE auth_sessions SET last_seen_at = %s WHERE session_id = %s" in sql
+    assert params == (NOW, "sess_1")
+    assert connection.commit_count == 1
+
+
+def test_revoke_auth_session_uses_token_hash_parameter_and_never_plaintext_token() -> None:
+    connection = FakeConnection()
+    repo = PostgresAuthRepository(connection)
+
+    repo.revoke_auth_session("sha256:session-hash", NOW)
+
+    sql, params = connection.executed[0]
+    assert "UPDATE auth_sessions SET revoked_at = %s WHERE token_hash = %s" in sql
+    assert "plain-session-token" not in sql
+    assert "plain-session-token" not in params
+    assert "sha256:session-hash" not in sql
+    assert params == (NOW, "sha256:session-hash")
+    assert connection.commit_count == 1
+
+
+def test_auth_session_lookup_does_not_concatenate_user_input_into_sql() -> None:
+    connection = FakeConnection()
+    repo = PostgresAuthRepository(connection)
+    malicious_hash = "sha256:anything' OR '1'='1"
+
+    repo.get_auth_session_by_token_hash(malicious_hash)
+
+    sql, params = connection.executed[0]
+    assert malicious_hash not in sql
+    assert params == (malicious_hash,)

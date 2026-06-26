@@ -5,7 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from personal_knowledge_agent.auth import AuthService, AuthSessionRecord, AuthUser, LoginCodeRecord
+from personal_knowledge_agent.auth import AuthService, AuthSessionRecord, AuthSessionWithUserRecord, AuthUser, LoginCodeRecord
+from personal_knowledge_agent.security.token_hashing import hash_token
 
 
 ALLOWED_EMAIL = "1033795760@qq.com"
@@ -17,6 +18,8 @@ class FakeAuthRepository:
         self.users_by_email: dict[str, AuthUser] = {}
         self.login_codes: list[LoginCodeRecord] = []
         self.sessions: list[AuthSessionRecord] = []
+        self.revoked_session_hashes: dict[str, datetime] = {}
+        self.last_seen_updates: list[tuple[str, datetime]] = []
 
     def get_user_by_email(self, email: str) -> AuthUser | None:
         return self.users_by_email.get(email)
@@ -47,6 +50,27 @@ class FakeAuthRepository:
 
     def create_auth_session(self, session: AuthSessionRecord) -> None:
         self.sessions.append(session)
+
+    def get_auth_session_by_token_hash(self, token_hash: str) -> AuthSessionWithUserRecord | None:
+        session = next((candidate for candidate in self.sessions if candidate.token_hash == token_hash), None)
+        if session is None:
+            return None
+        user = next(candidate for candidate in self.users_by_email.values() if candidate.user_id == session.user_id)
+        return AuthSessionWithUserRecord(
+            session_id=session.session_id,
+            user_id=session.user_id,
+            email=user.email,
+            llm_provider_user_id=user.llm_provider_user_id,
+            expires_at=session.expires_at,
+            revoked_at=self.revoked_session_hashes.get(token_hash),
+            last_seen_at=None,
+        )
+
+    def update_auth_session_last_seen(self, session_id: str, last_seen_at: datetime) -> None:
+        self.last_seen_updates.append((session_id, last_seen_at))
+
+    def revoke_auth_session(self, token_hash: str, revoked_at: datetime) -> None:
+        self.revoked_session_hashes[token_hash] = revoked_at
 
 
 def build_service(repo: FakeAuthRepository, *, now: datetime = NOW, max_attempts: int = 5) -> AuthService:
@@ -159,6 +183,103 @@ def test_verify_login_code_consumes_code_and_stores_session_token_hash_only():
     assert repo.login_codes[0].consumed
     assert repo.sessions[0].token_hash != "plain-session-token"
     assert repo.sessions[0].token_hash.startswith("sha256:")
+
+
+def test_authenticate_session_token_returns_user_session_and_updates_last_seen_without_token_hash():
+    repo = FakeAuthRepository()
+    service = build_service(repo)
+    service.request_login_code(ALLOWED_EMAIL)
+    login_result = service.verify_login_code(ALLOWED_EMAIL, "123456")
+
+    result = service.authenticate_session_token(login_result.session_token)
+
+    assert result.ok
+    assert result.user_id == "usr_test_1"
+    assert result.email == ALLOWED_EMAIL
+    assert result.llm_provider_user_id == "llm_test_1"
+    assert result.session_id == "sess_test_1"
+    assert result.expires_at == NOW + timedelta(days=30)
+    assert not hasattr(result, "token_hash")
+    assert repo.last_seen_updates == [("sess_test_1", NOW)]
+
+
+def test_authenticate_session_token_rejects_empty_token_without_hashing():
+    repo = FakeAuthRepository()
+    service = build_service(repo)
+
+    result = service.authenticate_session_token("  ")
+
+    assert not result.ok
+    assert result.error_code == "empty_session_token"
+    assert repo.last_seen_updates == []
+
+
+def test_authenticate_session_token_rejects_missing_token_hash():
+    repo = FakeAuthRepository()
+    service = build_service(repo)
+
+    result = service.authenticate_session_token("missing-session-token")
+
+    assert not result.ok
+    assert result.error_code == "auth_session_not_found"
+    assert repo.last_seen_updates == []
+
+
+def test_authenticate_session_token_rejects_expired_token():
+    repo = FakeAuthRepository()
+    service = build_service(repo)
+    service.request_login_code(ALLOWED_EMAIL)
+    login_result = service.verify_login_code(ALLOWED_EMAIL, "123456")
+    later_service = build_service(repo, now=NOW + timedelta(days=31))
+
+    result = later_service.authenticate_session_token(login_result.session_token)
+
+    assert not result.ok
+    assert result.error_code == "auth_session_expired"
+    assert repo.last_seen_updates == []
+
+
+def test_authenticate_session_token_rejects_revoked_token():
+    repo = FakeAuthRepository()
+    service = build_service(repo)
+    service.request_login_code(ALLOWED_EMAIL)
+    login_result = service.verify_login_code(ALLOWED_EMAIL, "123456")
+    repo.revoked_session_hashes[hash_token(login_result.session_token)] = NOW + timedelta(minutes=1)
+
+    result = service.authenticate_session_token(login_result.session_token)
+
+    assert not result.ok
+    assert result.error_code == "auth_session_revoked"
+    assert repo.last_seen_updates == []
+
+
+def test_revoke_session_token_hashes_token_and_marks_valid_session_revoked():
+    repo = FakeAuthRepository()
+    service = build_service(repo)
+    service.request_login_code(ALLOWED_EMAIL)
+    login_result = service.verify_login_code(ALLOWED_EMAIL, "123456")
+
+    result = service.revoke_session_token(login_result.session_token)
+
+    assert result is True
+    assert repo.revoked_session_hashes == {hash_token("plain-session-token"): NOW}
+    assert "plain-session-token" not in repo.revoked_session_hashes
+
+
+def test_revoke_session_token_returns_false_for_empty_missing_expired_or_already_revoked_token():
+    repo = FakeAuthRepository()
+    service = build_service(repo)
+
+    assert service.revoke_session_token(" ") is False
+    assert service.revoke_session_token("missing-session-token") is False
+
+    service.request_login_code(ALLOWED_EMAIL)
+    login_result = service.verify_login_code(ALLOWED_EMAIL, "123456")
+    expired_service = build_service(repo, now=NOW + timedelta(days=31))
+    assert expired_service.revoke_session_token(login_result.session_token) is False
+
+    repo.revoked_session_hashes[hash_token(login_result.session_token)] = NOW + timedelta(minutes=1)
+    assert service.revoke_session_token(login_result.session_token) is False
 
 
 def test_verify_login_code_rejects_consumed_code():

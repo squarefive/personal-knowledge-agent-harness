@@ -36,6 +36,27 @@ class AuthSessionRecord:
 
 
 @dataclass(frozen=True)
+class AuthSessionWithUserRecord:
+    session_id: str
+    user_id: str
+    email: str
+    llm_provider_user_id: str
+    expires_at: datetime
+    revoked_at: datetime | None
+    last_seen_at: datetime | None
+
+
+@dataclass(frozen=True)
+class AuthenticatedSession:
+    ok: bool
+    user_id: str
+    email: str
+    llm_provider_user_id: str
+    session_id: str
+    expires_at: datetime
+
+
+@dataclass(frozen=True)
 class IssuedLoginCode:
     ok: bool
     email: str
