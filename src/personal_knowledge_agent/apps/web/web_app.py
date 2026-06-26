@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import queue
 import threading
 import uuid
@@ -9,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from fastapi import FastAPI, Query
+from fastapi import Cookie, FastAPI, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -34,6 +35,7 @@ DEFAULT_CARD_LIMIT = 10
 MIN_CARD_LIMIT = 1
 MAX_CARD_LIMIT = 50
 MERGE_TOOL_NAME = "merge_qa_cards"
+AUTH_COOKIE_NAME = "pka_session"
 
 
 class ChatAgent(Protocol):
@@ -48,9 +50,32 @@ class CardTools(Protocol):
     def read_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class AuthServiceDependency(Protocol):
+    def request_login_code(self, email: str) -> Any: ...
+
+    def verify_login_code(self, email: str, code: str) -> Any: ...
+
+    def authenticate_session_token(self, session_token: str) -> Any: ...
+
+    def revoke_session_token(self, session_token: str) -> bool: ...
+
+
+class EmailSenderDependency(Protocol):
+    def send_login_code(self, to_email: str, code: str, expires_minutes: int) -> None: ...
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+
+
+class AuthEmailRequest(BaseModel):
+    email: str
+
+
+class AuthVerifyCodeRequest(BaseModel):
+    email: str
+    code: str
 
 
 class RenameSessionRequest(BaseModel):
@@ -262,6 +287,8 @@ def create_web_app(
     config: AgentConfig | None = None,
     agent: ChatAgent | None = None,
     tools: CardTools | None = None,
+    auth_service: AuthServiceDependency | None = None,
+    email_sender: EmailSenderDependency | None = None,
     event_logger: AgentEventJsonlLogger | None = None,
 ) -> FastAPI:
     events: list[dict[str, Any]] = []
@@ -333,6 +360,67 @@ def create_web_app(
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         return {"ok": True}
+
+    @app.post("/api/auth/request-code")
+    def request_login_code(request: AuthEmailRequest) -> dict[str, Any]:
+        if auth_service is None or email_sender is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        try:
+            result = auth_service.request_login_code(request.email)
+            if not getattr(result, "ok", False):
+                return _auth_failure_payload(result)
+            expires_minutes = _expires_minutes(result.expires_at)
+            email_sender.send_login_code(result.email, result.plaintext_code, expires_minutes)
+            return {"ok": True, "email": result.email}
+        except Exception:
+            return _error("auth_request_error", "login code request failed")
+
+    @app.post("/api/auth/verify-code")
+    def verify_login_code(request: AuthVerifyCodeRequest, response: Response) -> dict[str, Any]:
+        if auth_service is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        try:
+            result = auth_service.verify_login_code(request.email, request.code)
+            if not getattr(result, "ok", False):
+                return _auth_failure_payload(result)
+            response.set_cookie(
+                AUTH_COOKIE_NAME,
+                result.session_token,
+                max_age=_cookie_max_age(result.expires_at),
+                httponly=True,
+                samesite="lax",
+                path="/",
+            )
+            return {"ok": True, "user": _verified_user_payload(result)}
+        except Exception:
+            return _error("auth_verify_error", "login code verification failed")
+
+    @app.get("/api/auth/me")
+    def read_current_user(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        if auth_service is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        if not pka_session:
+            return _error("not_authenticated", "authentication session is missing")
+        try:
+            result = auth_service.authenticate_session_token(pka_session)
+            if not getattr(result, "ok", False):
+                return _auth_failure_payload(result)
+            return {"ok": True, "user": _authenticated_user_payload(result)}
+        except Exception:
+            return _error("auth_me_error", "authentication lookup failed")
+
+    @app.post("/api/auth/logout")
+    def logout(response: Response, pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        if auth_service is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        try:
+            if pka_session:
+                auth_service.revoke_session_token(pka_session)
+            response.delete_cookie(AUTH_COOKIE_NAME, path="/", samesite="lax")
+            return {"ok": True}
+        except Exception:
+            response.delete_cookie(AUTH_COOKIE_NAME, path="/", samesite="lax")
+            return _error("auth_logout_error", "logout failed")
 
     @app.post("/api/approvals/{approval_id}")
     def resolve_approval(approval_id: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
@@ -463,6 +551,41 @@ def create_web_app(
 
 def _error(error_code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error_code": error_code, "message": message}
+
+
+def _auth_failure_payload(result: Any) -> dict[str, Any]:
+    return _error(str(result.error_code), str(result.message))
+
+
+def _verified_user_payload(result: Any) -> dict[str, Any]:
+    return {
+        "user_id": result.user_id,
+        "email": result.email,
+        "expires_at": result.expires_at.isoformat(),
+    }
+
+
+def _authenticated_user_payload(result: Any) -> dict[str, Any]:
+    return {
+        "user_id": result.user_id,
+        "email": result.email,
+        "session_id": result.session_id,
+        "expires_at": result.expires_at.isoformat(),
+    }
+
+
+def _expires_minutes(expires_at: datetime) -> int:
+    return max(1, math.ceil((_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds() / 60))
+
+
+def _cookie_max_age(expires_at: datetime) -> int:
+    return max(0, int((_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds()))
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _metadata_payload(metadata: SessionMetadata) -> dict[str, Any]:

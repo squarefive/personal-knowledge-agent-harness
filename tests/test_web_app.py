@@ -2,6 +2,8 @@ import json
 import queue
 import threading
 import time
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -132,6 +134,91 @@ class FakeEventLogger:
         return None
 
 
+class FakeEmailSender:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.sent_codes = []
+
+    def send_login_code(self, to_email, code, expires_minutes):
+        if self.fail:
+            raise RuntimeError("smtp unavailable")
+        self.sent_codes.append(
+            {
+                "to_email": to_email,
+                "code": code,
+                "expires_minutes": expires_minutes,
+            }
+        )
+
+
+class FakeAuthService:
+    allowed_email = "1033795760@qq.com"
+
+    def __init__(self, *, fail_request=False):
+        self.fail_request = fail_request
+        self.requested_emails = []
+        self.verified_codes = []
+        self.authenticated_tokens = []
+        self.revoked_tokens = []
+        self.last_seen_updates = []
+        self.expires_at = datetime.now(UTC) + timedelta(days=30)
+
+    def request_login_code(self, email):
+        normalized_email = email.strip().lower()
+        self.requested_emails.append(normalized_email)
+        if self.fail_request or normalized_email != self.allowed_email:
+            return SimpleNamespace(
+                ok=False,
+                error_code="email_not_allowed",
+                message="email is not allowed to log in",
+                email=normalized_email,
+            )
+        return SimpleNamespace(
+            ok=True,
+            email=normalized_email,
+            plaintext_code="123456",
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+
+    def verify_login_code(self, email, code):
+        normalized_email = email.strip().lower()
+        stripped_code = code.strip()
+        self.verified_codes.append((normalized_email, stripped_code))
+        if normalized_email != self.allowed_email or stripped_code != "123456":
+            return SimpleNamespace(
+                ok=False,
+                error_code="invalid_login_code",
+                message="login code is invalid",
+                email=normalized_email,
+            )
+        return SimpleNamespace(
+            ok=True,
+            email=normalized_email,
+            user_id="usr_test_1",
+            llm_provider_user_id="llm_test_1",
+            session_token="plain-session-token",
+            expires_at=self.expires_at,
+        )
+
+    def authenticate_session_token(self, session_token):
+        self.authenticated_tokens.append(session_token)
+        if session_token != "plain-session-token":
+            return SimpleNamespace(ok=False, error_code="auth_session_not_found", message="auth session not found")
+        self.last_seen_updates.append(("sess_test_1", datetime.now(UTC)))
+        return SimpleNamespace(
+            ok=True,
+            user_id="usr_test_1",
+            email=self.allowed_email,
+            llm_provider_user_id="llm_test_1",
+            session_id="sess_test_1",
+            expires_at=self.expires_at,
+        )
+
+    def revoke_session_token(self, session_token):
+        self.revoked_tokens.append(session_token)
+        return session_token == "plain-session-token"
+
+
 def make_client(agent=None, tools=None):
     app = create_web_app(agent=agent or FakeAgent(), tools=tools or FakeTools())
     return TestClient(app)
@@ -190,6 +277,129 @@ def approval_request(tool_name="delete_qa_card", arguments=None):
         arguments=arguments or {"card_id": "qa_1"},
         reason="danger",
     )
+
+
+def test_auth_request_code_sends_email_without_returning_plaintext_code():
+    auth_service = FakeAuthService()
+    email_sender = FakeEmailSender()
+    app = create_web_app(agent=FakeAgent(), tools=FakeTools(), auth_service=auth_service, email_sender=email_sender)
+    client = TestClient(app)
+
+    response = client.post("/api/auth/request-code", json={"email": "  1033795760@QQ.COM  "})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "email": "1033795760@qq.com"}
+    assert email_sender.sent_codes == [
+        {
+            "to_email": "1033795760@qq.com",
+            "code": "123456",
+            "expires_minutes": 10,
+        }
+    ]
+    assert "123456" not in response.text
+
+
+def test_auth_request_code_does_not_send_email_when_auth_rejects():
+    auth_service = FakeAuthService()
+    email_sender = FakeEmailSender()
+    app = create_web_app(agent=FakeAgent(), tools=FakeTools(), auth_service=auth_service, email_sender=email_sender)
+    client = TestClient(app)
+
+    response = client.post("/api/auth/request-code", json={"email": "other@example.com"})
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert response.json()["error_code"] == "email_not_allowed"
+    assert email_sender.sent_codes == []
+
+
+def test_auth_verify_code_sets_http_only_cookie_without_returning_token():
+    auth_service = FakeAuthService()
+    app = create_web_app(
+        agent=FakeAgent(),
+        tools=FakeTools(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/auth/verify-code",
+        json={"email": "1033795760@qq.com", "code": "123456"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["user"]["email"] == "1033795760@qq.com"
+    assert "session_token" not in body
+    assert "llm_provider_user_id" not in body["user"]
+    assert "plain-session-token" not in response.text
+    cookie_header = response.headers["set-cookie"]
+    assert "pka_session=plain-session-token" in cookie_header
+    assert "HttpOnly" in cookie_header
+    assert "SameSite=lax" in cookie_header
+    assert "Path=/" in cookie_header
+    assert "Max-Age=" in cookie_header
+
+
+def test_auth_me_uses_cookie_and_returns_user_with_last_seen_update():
+    auth_service = FakeAuthService()
+    app = create_web_app(
+        agent=FakeAgent(),
+        tools=FakeTools(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["user"]["email"] == "1033795760@qq.com"
+    assert "llm_provider_user_id" not in response.json()["user"]
+    assert auth_service.authenticated_tokens == ["plain-session-token"]
+    assert auth_service.last_seen_updates[0][0] == "sess_test_1"
+
+
+def test_auth_logout_revokes_cookie_token_and_clears_cookie():
+    auth_service = FakeAuthService()
+    app = create_web_app(
+        agent=FakeAgent(),
+        tools=FakeTools(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+
+    response = client.post("/api/auth/logout")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert auth_service.revoked_tokens == ["plain-session-token"]
+    cookie_header = response.headers["set-cookie"]
+    assert "pka_session=" in cookie_header
+    assert "Max-Age=0" in cookie_header
+    assert "Path=/" in cookie_header
+
+
+def test_auth_endpoints_return_configuration_error_without_auth_service():
+    client = make_client()
+
+    request_response = client.post("/api/auth/request-code", json={"email": "1033795760@qq.com"})
+    verify_response = client.post("/api/auth/verify-code", json={"email": "1033795760@qq.com", "code": "123456"})
+    me_response = client.get("/api/auth/me")
+    logout_response = client.post("/api/auth/logout")
+    cards_response = client.get("/api/cards/recent")
+
+    assert request_response.json()["error_code"] == "auth_not_configured"
+    assert verify_response.json()["error_code"] == "auth_not_configured"
+    assert me_response.json()["error_code"] == "auth_not_configured"
+    assert logout_response.json()["error_code"] == "auth_not_configured"
+    assert cards_response.json()["ok"] is True
 
 
 def test_chat_stream_returns_agent_answer():
