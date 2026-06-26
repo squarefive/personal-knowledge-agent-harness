@@ -51,6 +51,23 @@ class BlockingAgent:
         return f"reply: {user_input}"
 
 
+class ControlledBlockingAgent(BlockingAgent):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def run(self, user_input):
+        with self.lock:
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        self.started.set()
+        self.release.wait(timeout=3)
+        with self.lock:
+            self.active -= 1
+        return f"reply: {user_input}"
+
+
 class FakeTools:
     def list_recent_cards(self, arguments):
         return {
@@ -531,25 +548,70 @@ def test_web_static_context_status_ui_is_lightweight():
     assert "完整 session summary" not in index_response.text
 
 
-def test_chat_serializes_agent_access():
+def test_chat_rejects_second_request_for_same_session_without_blocking_first():
+    agent = ControlledBlockingAgent()
+    client = make_client(agent=agent)
+    first_result = {}
+
+    def send_first_message():
+        first_result["response"] = client.post(
+            "/api/chat/stream",
+            json={"session_id": "chat_1", "message": "one"},
+        )
+
+    first_thread = threading.Thread(target=send_first_message)
+    first_thread.start()
+    assert agent.started.wait(timeout=3)
+
+    second_response = client.post(
+        "/api/chat/stream",
+        json={"session_id": "chat_1", "message": "two"},
+    )
+    agent.release.set()
+    first_thread.join(timeout=3)
+    assert not first_thread.is_alive()
+
+    assert second_response.status_code == 200
+    second_events = read_sse_events(second_response)
+    assert second_events[-1]["event_type"] == "error"
+    assert second_events[-1]["error_code"] == "session_busy"
+    assert second_events[-1]["message"] == "current session is already running"
+
+    first_response = first_result["response"]
+    assert first_response.status_code == 200
+    first_events = read_sse_events(first_response)
+    assert first_events[-1]["event_type"] == "final_answer_generated"
+    assert first_events[-1]["answer"] == "reply: one"
+    assert agent.max_active == 1
+
+
+def test_chat_allows_different_sessions_to_run_concurrently():
     agent = BlockingAgent()
     client = make_client(agent=agent)
+    results = []
 
-    def send_message(text):
-        response = client.post("/api/chat/stream", json={"message": text})
-        assert response.status_code == 200
-        assert read_sse_events(response)[-1]["event_type"] == "final_answer_generated"
+    def send_message(session_id, text):
+        response = client.post(
+            "/api/chat/stream",
+            json={"session_id": session_id, "message": text},
+        )
+        results.append(response)
 
     threads = [
-        threading.Thread(target=send_message, args=("one",)),
-        threading.Thread(target=send_message, args=("two",)),
+        threading.Thread(target=send_message, args=("chat_1", "one")),
+        threading.Thread(target=send_message, args=("chat_2", "two")),
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=3)
+        assert not thread.is_alive()
 
-    assert agent.max_active == 1
+    assert len(results) == 2
+    for response in results:
+        assert response.status_code == 200
+        assert read_sse_events(response)[-1]["event_type"] == "final_answer_generated"
+    assert agent.max_active > 1
 
 
 def test_recent_cards_returns_tool_result():

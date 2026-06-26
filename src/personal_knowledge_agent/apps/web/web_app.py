@@ -385,7 +385,10 @@ def create_web_app(
                 return
             try:
                 runner = get_runner(session_id)
-                with runner.lock:
+                if not runner.lock.acquire(blocking=False):
+                    event_queue.put(_event_error("session_busy", "current session is already running"))
+                    return
+                try:
                     with runner.active_event_queue_lock:
                         runner.active_event_queue = event_queue
                     try:
@@ -404,6 +407,8 @@ def create_web_app(
                     finally:
                         with runner.active_event_queue_lock:
                             runner.active_event_queue = None
+                finally:
+                    runner.lock.release()
             except Exception as exc:
                 event_queue.put(_event_error("agent_error", f"Agent run failed: {exc}"))
             finally:
