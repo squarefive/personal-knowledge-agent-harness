@@ -1,12 +1,12 @@
 ---
 title: "Personal Knowledge Agent Harness 代码地图"
-last_updated: "2026-06-26"
+last_updated: "2026-06-27"
 ---
 
 # Personal Knowledge Agent Harness 代码地图
 
 > 本文档用于快速了解代码目录和代码文件职责。
-> 它只描述当前代码结构，不定义 Agent 能力边界，不替代 Agent 开发上下文文档。
+> 它只描述当前代码结构，不定义 Agent 能力边界，不替代 `docs/agents/cloud-qa-knowledge-agent.md`。
 
 ## 目录说明
 
@@ -30,6 +30,10 @@ last_updated: "2026-06-26"
 | `src/personal_knowledge_agent/apps/cli/` | CLI app 入口和事件渲染。 |
 | `src/personal_knowledge_agent/apps/web/` | 本地 Web app、Web 入口和静态资源。 |
 | `docs/` | 项目文档目录。 |
+| `docs/agents/` | Agent 稳定设计边界文档目录；当前边界文档为 `cloud-qa-knowledge-agent.md`。 |
+| `docs/architecture/` | 代码地图等架构说明文档目录。 |
+| `docs/guidelines/` | AI Coding 协作偏好和行为规约目录。 |
+| `docs/templates/` | Agent 开发上下文和代码地图模板目录。 |
 | `scripts/` | 本地维护和格式检查脚本。 |
 | `tests/` | 自动化测试。 |
 
@@ -221,6 +225,21 @@ last_updated: "2026-06-26"
 |---|---|
 | `__init__.py` | 标记 Web 启动包。 |
 | `__main__.py` | 转发到 `apps/web/web_main.py`。 |
+
+### Docs
+
+模块目录：`docs/`
+
+模块作用：保存项目协作规约、Agent 稳定设计边界、代码地图和模板。
+
+| 文件 | 作用 |
+|---|---|
+| `agents/cloud-qa-knowledge-agent.md` | 云端个人 Q&A 知识库 Agent 的稳定设计边界和验收依据。 |
+| `architecture/codebase-map.md` | 当前代码目录和文件职责地图。 |
+| `guidelines/collaboration-preferences.md` | 用户协作偏好、计划、分支和提交规则。 |
+| `guidelines/ai-coding-behavior.md` | AI Coding 调研、修改和验证行为规约。 |
+| `templates/agent-development-context.template.md` | Agent 开发上下文文档模板。 |
+| `templates/codebase-map.template.md` | 代码地图文档模板。 |
 
 ### Scripts
 

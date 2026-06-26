@@ -51,7 +51,7 @@ def test_read_memory_document_by_index_entry(tmp_path):
                 'source_type: "reference"',
                 "---",
                 "",
-                "Agent 设计文档位于 docs/agents/local-qa-knowledge-agent.md。",
+                "Agent 设计文档位于 docs/agents/cloud-qa-knowledge-agent.md。",
             ]
         ),
         encoding="utf-8",
