@@ -26,6 +26,7 @@ last_updated: "2026-06-27"
 | `src/personal_knowledge_agent/todo_data_access/` | Todo 待办项的 SQLite 数据访问。 |
 | `src/personal_knowledge_agent/tool_runtime/` | 通用 tool dispatcher。 |
 | `src/personal_knowledge_agent/llm_clients/` | LLM provider client。 |
+| `src/personal_knowledge_agent/security/` | secrets 读取、token hash 和日志敏感键脱敏工具。 |
 | `src/personal_knowledge_agent/agent_observability/` | Agent 运行事件日志等可观测性适配。 |
 | `src/personal_knowledge_agent/apps/cli/` | CLI app 入口和事件渲染。 |
 | `src/personal_knowledge_agent/apps/web/` | 本地 Web app、Web 入口和静态资源。 |
@@ -188,6 +189,19 @@ last_updated: "2026-06-27"
 | `deepseek_chat_client.py` | DeepSeek streaming chat 薄客户端和响应转换。 |
 | `llm_models.py` | 定义 LLMResponse 数据结构。 |
 
+### Security
+
+模块目录：`src/personal_knowledge_agent/security/`
+
+模块作用：提供云端配置阶段需要的最小安全辅助函数，不实现登录流程或日志系统。
+
+| 文件 | 作用 |
+|---|---|
+| `__init__.py` | 导出 security 公共 helper。 |
+| `secrets.py` | 从环境变量或优先级更高的 `*_FILE` 文件读取 secret。 |
+| `token_hashing.py` | 生成随机 token、6 位验证码，并提供 token hash 与 constant-time 校验。 |
+| `log_redaction.py` | 对 mapping 中常见敏感键执行最小脱敏。 |
+
 ### Agent Observability
 
 模块目录：`src/personal_knowledge_agent/agent_observability/`
@@ -270,6 +284,8 @@ last_updated: "2026-06-27"
 | `test_sqlite_store.py` | 覆盖 Q&A card repository。 |
 | `test_todo_store.py` | 覆盖 todo repository。 |
 | `test_qa_semantic_index.py` | 覆盖 Q&A semantic index。 |
+| `test_config.py` | 覆盖运行配置和 secret 文件读取。 |
+| `test_security.py` | 覆盖 secret 读取、token hash 和敏感键脱敏。 |
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |
 | `test_web_app.py` | 覆盖 Web API、SSE 聊天、session 隔离和卡片接口。 |
