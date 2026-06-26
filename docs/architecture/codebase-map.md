@@ -188,6 +188,7 @@ last_updated: "2026-06-27"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 PostgreSQL 基础设施公共入口。 |
+| `auth_repository.py` | 实现邮箱验证码登录 AuthRepository Protocol 的 PostgreSQL 仓储。 |
 | `postgres_pool.py` | 从 `database_url` 创建连接池并关闭连接池。 |
 | `schema.py` | 执行 pgvector 扩展和最小业务表的幂等 schema 初始化。 |
 
@@ -326,6 +327,7 @@ last_updated: "2026-06-27"
 | `test_security.py` | 覆盖 secret 读取、token hash 和敏感键脱敏。 |
 | `test_auth_service.py` | 覆盖邮箱验证码登录核心服务。 |
 | `test_mailer.py` | 覆盖 SMTP 邮件发送 adapter。 |
+| `test_postgres_auth_repository.py` | 覆盖 PostgreSQL 认证仓储 SQL 参数化、字段映射和 hash-only 写入。 |
 | `test_postgres_schema.py` | 覆盖 PostgreSQL schema 初始化 SQL 和幂等执行。 |
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |

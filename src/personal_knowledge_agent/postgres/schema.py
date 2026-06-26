@@ -20,11 +20,12 @@ POSTGRES_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     """
     CREATE TABLE IF NOT EXISTS email_login_codes (
-      login_code_id BIGSERIAL PRIMARY KEY,
+      login_code_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
       email TEXT NOT NULL,
       code_hash TEXT NOT NULL,
       expires_at TIMESTAMPTZ NOT NULL,
+      purpose TEXT NOT NULL,
       consumed BOOLEAN NOT NULL DEFAULT false,
       consumed_at TIMESTAMPTZ,
       attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
@@ -117,6 +118,7 @@ POSTGRES_SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_email_login_codes_user_id ON email_login_codes(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_email_login_codes_email_purpose_created_at ON email_login_codes(email, purpose, created_at DESC, login_code_id DESC)",
     "CREATE INDEX IF NOT EXISTS idx_email_login_codes_expires_at ON email_login_codes(expires_at)",
     "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)",
     "CREATE INDEX IF NOT EXISTS idx_qa_cards_user_id_created_at ON qa_cards(user_id, created_at DESC)",

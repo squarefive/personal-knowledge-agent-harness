@@ -39,8 +39,10 @@ def test_initialize_postgres_schema_executes_expected_ddl() -> None:
 
     assert "email TEXT NOT NULL UNIQUE" in sql
     assert "llm_provider_user_id TEXT NOT NULL UNIQUE" in sql
+    assert "login_code_id TEXT PRIMARY KEY" in sql
     assert "code_hash TEXT NOT NULL" in sql
     assert "expires_at TIMESTAMPTZ NOT NULL" in sql
+    assert "purpose TEXT NOT NULL" in sql
     assert "consumed BOOLEAN NOT NULL DEFAULT false" in sql
     assert "attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)" in sql
     assert "token_hash TEXT NOT NULL UNIQUE" in sql
