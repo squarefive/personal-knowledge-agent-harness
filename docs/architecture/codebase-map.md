@@ -24,9 +24,11 @@ last_updated: "2026-06-27"
 | `src/personal_knowledge_agent/agent_tools/todo_tools/` | Todo 待办工具 handler。 |
 | `src/personal_knowledge_agent/qa_data_access/` | Q&A card 的 SQLite 和 Qdrant 数据访问。 |
 | `src/personal_knowledge_agent/todo_data_access/` | Todo 待办项的 SQLite 数据访问。 |
+| `src/personal_knowledge_agent/auth/` | 邮箱验证码登录的认证核心服务和仓储协议。 |
 | `src/personal_knowledge_agent/postgres/` | PostgreSQL 连接池和基础 schema 初始化。 |
 | `src/personal_knowledge_agent/tool_runtime/` | 通用 tool dispatcher。 |
 | `src/personal_knowledge_agent/llm_clients/` | LLM provider client。 |
+| `src/personal_knowledge_agent/mail/` | SMTP 邮件发送 adapter。 |
 | `src/personal_knowledge_agent/security/` | secrets 读取、token hash 和日志敏感键脱敏工具。 |
 | `src/personal_knowledge_agent/agent_observability/` | Agent 运行事件日志等可观测性适配。 |
 | `src/personal_knowledge_agent/apps/cli/` | CLI app 入口和事件渲染。 |
@@ -165,6 +167,18 @@ last_updated: "2026-06-27"
 | `todo_models.py` | 定义 todo 待办项数据结构。 |
 | `todo_repository.py` | 初始化和读写 SQLite `todo_items` 表。 |
 
+### Auth
+
+模块目录：`src/personal_knowledge_agent/auth/`
+
+模块作用：提供不依赖 Web、SMTP 或真实 PostgreSQL 的邮箱验证码登录核心服务。
+
+| 文件 | 作用 |
+|---|---|
+| `__init__.py` | 导出认证服务公共类型。 |
+| `auth_models.py` | 定义认证用户、验证码、登录态和认证结果数据结构。 |
+| `auth_service.py` | 定义认证仓储协议和验证码登录核心流程。 |
+
 ### PostgreSQL
 
 模块目录：`src/personal_knowledge_agent/postgres/`
@@ -201,6 +215,17 @@ last_updated: "2026-06-27"
 | `__init__.py` | 导出 LLM client。 |
 | `deepseek_chat_client.py` | DeepSeek streaming chat 薄客户端和响应转换。 |
 | `llm_models.py` | 定义 LLMResponse 数据结构。 |
+
+### Mail
+
+模块目录：`src/personal_knowledge_agent/mail/`
+
+模块作用：提供 QQ SMTP 等邮件发送能力，不承载认证流程或 Web 路由。
+
+| 文件 | 作用 |
+|---|---|
+| `__init__.py` | 导出 SMTP 邮件发送公共类型。 |
+| `smtp_email_sender.py` | 构造并发送邮箱验证码邮件，支持 SSL 和 STARTTLS。 |
 
 ### Security
 
@@ -299,6 +324,8 @@ last_updated: "2026-06-27"
 | `test_qa_semantic_index.py` | 覆盖 Q&A semantic index。 |
 | `test_config.py` | 覆盖运行配置和 secret 文件读取。 |
 | `test_security.py` | 覆盖 secret 读取、token hash 和敏感键脱敏。 |
+| `test_auth_service.py` | 覆盖邮箱验证码登录核心服务。 |
+| `test_mailer.py` | 覆盖 SMTP 邮件发送 adapter。 |
 | `test_postgres_schema.py` | 覆盖 PostgreSQL schema 初始化 SQL 和幂等执行。 |
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |
