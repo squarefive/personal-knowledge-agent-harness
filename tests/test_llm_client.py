@@ -145,6 +145,58 @@ def test_deepseek_client_streams_text_deltas(monkeypatch):
     assert response.tool_calls == []
 
 
+def test_deepseek_client_includes_provider_user_id_when_configured(monkeypatch):
+    def fake_urlopen(req, timeout):
+        body = json.loads(req.data.decode("utf-8"))
+        assert body["user_id"] == "pka_user_abc123"
+        return FakeStreamResponse([{"choices": [{"delta": {"content": "ok"}}]}])
+
+    monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
+
+    response = DeepSeekChatClient(api_key="key", llm_provider_user_id="pka_user_abc123").chat(
+        messages=[],
+        tools=[],
+        system_prompt="system",
+    )
+
+    assert response.text == "ok"
+
+
+def test_deepseek_client_omits_provider_user_id_by_default(monkeypatch):
+    def fake_urlopen(req, timeout):
+        body = json.loads(req.data.decode("utf-8"))
+        assert "user_id" not in body
+        return FakeStreamResponse([{"choices": [{"delta": {"content": "ok"}}]}])
+
+    monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
+
+    response = DeepSeekChatClient(api_key="key").chat(
+        messages=[],
+        tools=[],
+        system_prompt="system",
+    )
+
+    assert response.text == "ok"
+
+
+@pytest.mark.parametrize("provider_user_id", ["", "   "])
+def test_deepseek_client_omits_blank_provider_user_id(monkeypatch, provider_user_id):
+    def fake_urlopen(req, timeout):
+        body = json.loads(req.data.decode("utf-8"))
+        assert "user_id" not in body
+        return FakeStreamResponse([{"choices": [{"delta": {"content": "ok"}}]}])
+
+    monkeypatch.setattr(llm_client.request, "urlopen", fake_urlopen)
+
+    response = DeepSeekChatClient(api_key="key", llm_provider_user_id=provider_user_id).chat(
+        messages=[],
+        tools=[],
+        system_prompt="system",
+    )
+
+    assert response.text == "ok"
+
+
 def test_deepseek_client_parses_stream_usage(monkeypatch):
     def fake_urlopen(req, timeout):
         body = json.loads(req.data.decode("utf-8"))

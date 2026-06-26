@@ -36,6 +36,7 @@ class DeepSeekChatClient:
         timeout_seconds: int = 60,
         max_retries: int = 2,
         retry_backoff_seconds: tuple[float, ...] = (0.5, 1.0),
+        llm_provider_user_id: str | None = None,
     ):
         self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
         if not self.api_key:
@@ -45,6 +46,8 @@ class DeepSeekChatClient:
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.retry_backoff_seconds = retry_backoff_seconds
+        normalized_provider_user_id = llm_provider_user_id.strip() if llm_provider_user_id else None
+        self.llm_provider_user_id = normalized_provider_user_id or None
 
     def chat(
         self,
@@ -63,6 +66,8 @@ class DeepSeekChatClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if self.llm_provider_user_id:
+            payload["user_id"] = self.llm_provider_user_id
         text_parts: list[str] = []
         tool_accumulator = _ToolCallAccumulator()
         usage: LLMUsage | None = None
