@@ -2,12 +2,14 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/app/src" \
+    PIP_DEFAULT_TIMEOUT=120 \
+    UV_HTTP_TIMEOUT=120 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir uv
+RUN pip install --no-cache-dir --timeout 120 --retries 10 uv
 
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
