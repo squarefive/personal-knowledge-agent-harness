@@ -1635,6 +1635,11 @@ h3 {
   border-radius: 0 8px 8px 0;
 }
 
+.session-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+}
+
 .session-row.is-active,
 .card-row.is-selected {
   border-left-color: var(--accent);
@@ -1688,6 +1693,20 @@ h3 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-title {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 680;
+  line-height: 1.4;
+}
+
+.session-time {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: right;
 }
 
 .row-time,

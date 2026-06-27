@@ -434,26 +434,15 @@ function renderSessions(sessions) {
     rowIcon.className = "row-icon";
     rowIcon.append(icon("message"));
 
-    const content = document.createElement("span");
-    content.className = "row-content";
-
-    const titleLine = document.createElement("span");
-    titleLine.className = "row-title-line";
-
-    const title = document.createElement("strong");
+    const title = document.createElement("span");
+    title.className = "session-title";
     title.textContent = session.title || "新会话";
 
-    const meta = document.createElement("span");
-    meta.className = "row-time";
-    meta.textContent = formatSessionMeta(session);
+    const time = document.createElement("span");
+    time.className = "session-time";
+    time.textContent = formatRelativeSessionTime(session);
 
-    const count = document.createElement("span");
-    count.className = "row-subtitle";
-    count.textContent = session.last_user_message ? "最近会话" : "准备记录";
-
-    titleLine.append(title, meta);
-    content.append(titleLine, count);
-    button.append(rowIcon, content);
+    button.append(rowIcon, title, time);
     elements.sessionsList.append(button);
   }
 }
@@ -1279,11 +1268,31 @@ function formatTimestamp(value, options = {}) {
   return `${formatter.format(date)}${suffix}`;
 }
 
-function formatSessionMeta(session) {
-  if (session.last_user_message) {
-    return session.last_user_message;
-  }
-  return formatTimestamp(session.updated_at || session.created_at) || session.session_id;
+function formatRelativeSessionTime(session) {
+  const value = session.updated_at || session.created_at;
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const diffMs = Math.max(0, Date.now() - date.getTime());
+  const diffMinutes = Math.floor(diffMs / 60000);
+
+  if (diffMinutes < 1) return "刚刚";
+  if (diffMinutes < 60) return `${diffMinutes} 分`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours} 时`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays} 天`;
+
+  const diffWeeks = Math.floor(diffDays / 7);
+  if (diffWeeks < 5) return `${diffWeeks} 周`;
+
+  if (diffDays < 365) return `${Math.min(11, Math.floor(diffDays / 30))} 月`;
+
+  return `${Math.floor(diffDays / 365)} 年`;
 }
 
 function getStoredBoolean(key, fallback) {
