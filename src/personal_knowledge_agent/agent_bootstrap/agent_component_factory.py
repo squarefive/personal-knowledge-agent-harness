@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from ..agent_context.agent_profile_memory import (
     AgentMemoryCandidateExtractor,
@@ -28,6 +28,14 @@ from ..tool_runtime import ApprovalRequest, ToolDispatcher
 from .agent_runtime_config import AgentConfig
 
 
+class QACardStore(Protocol):
+    pass
+
+
+class TodoStore(Protocol):
+    pass
+
+
 @dataclass(frozen=True)
 class AgentComponents:
     agent: AgentLoopRunner
@@ -40,13 +48,17 @@ def create_agent_components(
     event_sink: Callable[[AgentEvent], None] | None = None,
     approval_callback: Callable[[ApprovalRequest], bool] | None = None,
     session_id: str = "default",
+    qa_store: QACardStore | None = None,
+    todo_store: TodoStore | None = None,
+    llm_provider_user_id: str | None = None,
 ) -> AgentComponents:
-    store = QACardRepository(config.knowledge_db_path)
-    todo_store = TodoRepository(config.knowledge_db_path)
+    store = qa_store or QACardRepository(config.knowledge_db_path)
+    resolved_todo_store = todo_store or TodoRepository(config.knowledge_db_path)
     workspace_root = Path.cwd()
     llm = DeepSeekChatClient(
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
+        llm_provider_user_id=llm_provider_user_id,
     )
     transcript = ConversationTranscriptRepository(workspace_root, session_id=session_id)
     metadata_store = ConversationSessionMetadataRepository(
@@ -71,7 +83,7 @@ def create_agent_components(
         collection_name=config.qdrant_collection,
     )
     tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
-    todo_tools = TodoToolHandlers(todo_store)
+    todo_tools = TodoToolHandlers(resolved_todo_store)
     memory_tools = AgentMemoryToolHandlers(
         memory_index_repository=memory_index_store,
         memory_document_repository=memory_store,
