@@ -2,7 +2,9 @@ FROM python:3.12-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/app/src" \
+    PIP_INDEX_URL="https://mirrors.cloud.tencent.com/pypi/simple" \
     PIP_DEFAULT_TIMEOUT=120 \
+    UV_DEFAULT_INDEX="https://mirrors.cloud.tencent.com/pypi/simple" \
     UV_HTTP_TIMEOUT=120 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH"
