@@ -1,6 +1,6 @@
 ---
 title: "Personal Knowledge Agent Harness 代码地图"
-last_updated: "2026-06-27"
+last_updated: "2026-06-28"
 ---
 
 # Personal Knowledge Agent Harness 代码地图
@@ -283,9 +283,9 @@ last_updated: "2026-06-27"
 | `web/web_app.py` | 创建 FastAPI app，提供流式聊天、session 管理和卡片浏览 API。 |
 | `web/cloud_dependencies.py` | 装配 Web 云端依赖，包括 PostgreSQL pool、AuthService、SMTP 邮件发送、用户绑定工具 factory 和会话仓储 facade。 |
 | `web/web_main.py` | Web Runtime 启动入口。 |
-| `web/static/index.html` | Web UI 页面结构。 |
+| `web/static/index.html` | Web UI 页面结构，包括验证码登录门和登录后的工作台壳。 |
 | `web/static/styles.css` | Web UI 样式。 |
-| `web/static/app.js` | 浏览器端聊天、session 和卡片浏览逻辑。 |
+| `web/static/app.js` | 浏览器端认证门、聊天、session 和卡片浏览逻辑。 |
 
 ### Public Web Launcher
 

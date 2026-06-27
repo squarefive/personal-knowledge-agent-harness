@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Personal Knowledge Agent</title>
     <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="%23f7f5ef"/><path d="M18 18l14-7 14 7v19L32 45 18 37z" fill="none" stroke="%232f5d46" stroke-width="4" stroke-linejoin="round"/><path d="M18 19l14 8 14-8M32 27v18" stroke="%232f5d46" stroke-width="4" stroke-linecap="round"/></svg>' />
-    <link rel="stylesheet" href="/static/styles.css?v=workbench-4" />
+    <link rel="stylesheet" href="/static/styles.css?v=auth-1" />
   </head>
   <body>
     <svg class="icon-sprite" aria-hidden="true">
@@ -26,17 +26,71 @@
       <symbol id="icon-copy" viewBox="0 0 24 24"><path d="M8 8h11v11H8z"/><path d="M5 16H4V5h11v1"/></symbol>
       <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></symbol>
       <symbol id="icon-close" viewBox="0 0 24 24"><path d="M6 6l12 12"/><path d="M18 6 6 18"/></symbol>
+      <symbol id="icon-log-out" viewBox="0 0 24 24"><path d="M10 5H6v14h4"/><path d="M14 8l4 4-4 4"/><path d="M8 12h10"/></symbol>
       <symbol id="icon-file" viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v5h5"/></symbol>
       <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 5h5v5"/><path d="m19 5-8 8"/><path d="M19 14v5H5V5h5"/></symbol>
       <symbol id="icon-tray" viewBox="0 0 24 24"><path d="M5 14h4l2 3h2l2-3h4"/><path d="M5 14v5h14v-5"/><path d="M8 10l4-4 4 4"/><path d="M12 6v8"/></symbol>
     </svg>
-    <main id="appShell" class="app-shell">
+    <section id="authGate" class="auth-gate" aria-label="登录个人知识库">
+      <div class="auth-preview" aria-hidden="true">
+        <div class="auth-preview-column auth-preview-left">
+          <span class="auth-skeleton auth-skeleton-title"></span>
+          <span class="auth-skeleton auth-skeleton-button"></span>
+          <span class="auth-skeleton auth-skeleton-line"></span>
+          <span class="auth-skeleton auth-skeleton-line short"></span>
+          <span class="auth-skeleton auth-skeleton-line"></span>
+          <span class="auth-skeleton auth-skeleton-line short"></span>
+        </div>
+        <div class="auth-preview-main">
+          <span class="auth-skeleton auth-skeleton-title wide"></span>
+          <span class="auth-skeleton auth-skeleton-chat"></span>
+          <span class="auth-skeleton auth-skeleton-composer"></span>
+        </div>
+        <div class="auth-preview-column auth-preview-right">
+          <span class="auth-skeleton auth-skeleton-title"></span>
+          <span class="auth-skeleton auth-skeleton-card"></span>
+          <span class="auth-skeleton auth-skeleton-card"></span>
+          <span class="auth-skeleton auth-skeleton-card"></span>
+        </div>
+      </div>
+      <form id="authForm" class="auth-card" autocomplete="on">
+        <div class="auth-heading">
+          <span class="auth-mark" aria-hidden="true"><svg class="icon"><use href="#icon-box"></use></svg></span>
+          <div>
+            <h1>登录个人知识库</h1>
+            <p>输入邮箱验证码继续</p>
+          </div>
+        </div>
+        <label class="auth-field">
+          <span>邮箱</span>
+          <input id="authEmailInput" name="email" type="email" value="1033795760@qq.com" autocomplete="email" />
+        </label>
+        <button id="requestCodeButton" class="auth-secondary-button" type="button">发送验证码</button>
+        <label id="authCodeGroup" class="auth-field" hidden>
+          <span>验证码</span>
+          <input
+            id="authCodeInput"
+            name="code"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
+            placeholder="输入 6 位验证码"
+          />
+        </label>
+        <p id="authStatus" class="auth-status" role="status" aria-live="polite">正在检查登录状态。</p>
+        <button id="authSubmitButton" class="auth-primary-button" type="submit" disabled>登录</button>
+        <p class="auth-footnote">仅允许已授权邮箱访问</p>
+      </form>
+    </section>
+
+    <main id="appShell" class="app-shell" hidden>
       <aside class="sessions-pane" aria-label="会话">
         <header class="sessions-header">
           <div class="brand-lockup">
             <span class="brand-mark" aria-hidden="true"><svg class="icon"><use href="#icon-box"></use></svg></span>
             <div>
-              <h2>本地知识库</h2>
+              <h2>个人知识库</h2>
               <p id="sessionStatus">加载中</p>
             </div>
           </div>
@@ -58,12 +112,11 @@
         </section>
         <div id="sessionsList" class="sessions-list"></div>
         <footer class="sessions-footer">
-          <button class="footer-action" type="button">
-            <svg class="icon"><use href="#icon-download"></use></svg>
-            <span>保存记录</span>
-          </button>
-          <button class="plain-icon-button" type="button" aria-label="设置" title="设置">
-            <svg class="icon"><use href="#icon-settings"></use></svg>
+          <div class="signed-in-user">
+            <span id="currentUserEmail">已登录</span>
+          </div>
+          <button id="logoutButton" class="plain-icon-button" type="button" aria-label="退出登录" title="退出登录">
+            <svg class="icon"><use href="#icon-log-out"></use></svg>
           </button>
         </footer>
       </aside>
@@ -77,7 +130,7 @@
           </div>
           <div class="pane-title">
             <h1 id="activeSessionTitle">检索结果</h1>
-            <p id="statusText">本地知识库问答助手</p>
+            <p id="statusText">个人知识库问答助手</p>
           </div>
           <div class="pane-actions pane-actions-right">
             <div class="context-meter">
@@ -96,7 +149,7 @@
         <div id="messages" class="messages" aria-live="polite">
           <section class="empty-workspace">
             <svg class="empty-icon" aria-hidden="true"><use href="#icon-tray"></use></svg>
-            <h2>本地知识库问答助手</h2>
+            <h2>个人知识库问答助手</h2>
             <p>从右侧选择知识卡片查看详情，或在下方提问开始对话。</p>
           </section>
         </div>
@@ -138,7 +191,7 @@
         </header>
 
         <form id="searchForm" class="search-form">
-          <input id="searchInput" name="q" type="search" placeholder="搜索本地 Q&A..." />
+          <input id="searchInput" name="q" type="search" placeholder="搜索 Q&A..." />
           <button type="submit">搜索</button>
         </form>
 
@@ -159,6 +212,6 @@
       </aside>
     </main>
 
-    <script src="/static/app.js?v=workbench-4" defer></script>
+    <script src="/static/app.js?v=auth-1" defer></script>
   </body>
 </html>

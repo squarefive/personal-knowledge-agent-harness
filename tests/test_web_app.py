@@ -1260,8 +1260,25 @@ def test_web_static_context_status_ui_is_lightweight():
 
     assert index_response.status_code == 200
     assert app_response.status_code == 200
+    assert 'id="authGate"' in index_response.text
+    assert 'id="authForm"' in index_response.text
+    assert "登录个人知识库" in index_response.text
+    assert "输入邮箱验证码继续" in index_response.text
+    assert "1033795760@qq.com" in index_response.text
+    assert "仅允许已授权邮箱访问" in index_response.text
+    assert 'id="appShell" class="app-shell" hidden' in index_response.text
+    assert 'id="logoutButton"' in index_response.text
+    assert "本地知识库" not in index_response.text
     assert 'id="contextStatus"' in index_response.text
     assert "Context 0%" in index_response.text
+    assert '"/api/auth/me"' in app_response.text
+    assert '"/api/auth/request-code"' in app_response.text
+    assert '"/api/auth/verify-code"' in app_response.text
+    assert '"/api/auth/logout"' in app_response.text
+    assert 'error_code === "not_authenticated"' in app_response.text
+    assert "bootApp().catch" in app_response.text
+    assert "initializeApp().catch" not in app_response.text
+    assert "loadRecentCards().catch" not in app_response.text
     assert "runtime_context_compaction_started" in app_response.text
     assert "上下文超限，正在压缩上下文" in app_response.text
     assert "<br\\s*\\/?>" in app_response.text
