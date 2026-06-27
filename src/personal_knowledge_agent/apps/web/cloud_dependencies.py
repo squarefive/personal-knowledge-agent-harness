@@ -11,6 +11,7 @@ from ...agent_tools.todo_tools import TodoToolHandlers
 from ...auth import AuthService, AuthSessionRecord, AuthSessionWithUserRecord, AuthUser, LoginCodeRecord
 from ...mail import SmtpEmailConfig, SmtpEmailSender
 from ...postgres import (
+    PostgresAgentMemoryRepository,
     PostgresAuthRepository,
     PostgresConversationSessionRepository,
     PostgresQACardRepository,
@@ -24,6 +25,8 @@ from ...postgres import (
 class CloudUserTools:
     tools: QAKnowledgeToolHandlers
     todo_tools: TodoToolHandlers
+    memory_index_store: PostgresAgentMemoryRepository
+    memory_store: PostgresAgentMemoryRepository
 
 
 class CloudUserToolFactory:
@@ -49,9 +52,12 @@ class CloudUserToolFactory:
     def _build_tools(self, connection: Any, user_id: str) -> CloudUserTools:
         qa_store = PostgresQACardRepository(connection, user_id)
         todo_store = PostgresTodoRepository(connection, user_id)
+        memory_store = PostgresAgentMemoryRepository(connection, user_id)
         return CloudUserTools(
             tools=QAKnowledgeToolHandlers(qa_store, semantic_index=None),
             todo_tools=TodoToolHandlers(todo_store),
+            memory_index_store=memory_store,
+            memory_store=memory_store,
         )
 
 

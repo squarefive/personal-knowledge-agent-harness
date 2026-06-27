@@ -66,6 +66,18 @@ class FakeRuntimeContextCompactor:
         return RuntimeCompactionResult(messages=messages, session_summary="summary", mode="test")
 
 
+class FakeMemoryStore:
+    def __init__(self):
+        self.loaded = False
+
+    def load(self):
+        self.loaded = True
+        return type("MemoryIndex", (), {"entries": []})()
+
+    def read_by_entry(self, entry):
+        raise AssertionError("read_by_entry should not be called during component creation")
+
+
 def test_create_agent_components_returns_agent_and_tools(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = AgentConfig(
@@ -213,3 +225,30 @@ def test_create_agent_components_uses_injected_session_runtime_without_local_ses
     assert components.agent.context_compactor is context_compactor
     assert components.agent.runtime_context_compactor is runtime_compactor
     assert not (tmp_path / ".sessions").exists()
+
+
+def test_create_agent_components_uses_injected_memory_stores_without_local_memory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import personal_knowledge_agent.agent_bootstrap.agent_component_factory as factory_module
+
+    def fail_local_memory_repository(*args, **kwargs):
+        raise AssertionError("local .memory repository should not be constructed")
+
+    monkeypatch.setattr(factory_module, "AgentMemoryIndexRepository", fail_local_memory_repository)
+    monkeypatch.setattr(factory_module, "AgentMemoryDocumentRepository", fail_local_memory_repository)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    memory_store = FakeMemoryStore()
+
+    components = create_agent_components(
+        config,
+        memory_index_store=memory_store,
+        memory_store=memory_store,
+    )
+
+    assert components.agent.memory_index_store is memory_store
+    assert components.agent.memory_store is memory_store
+    assert not (tmp_path / ".memory").exists()

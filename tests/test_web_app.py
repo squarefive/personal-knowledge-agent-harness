@@ -236,6 +236,21 @@ class FakeTodoTools:
         self.store = SimpleNamespace(user_id=user_id)
 
 
+class FakeMemoryStore:
+    def __init__(self, user_id):
+        self.user_id = user_id
+
+
+def fake_cloud_user_tools(user_id):
+    memory_store = FakeMemoryStore(user_id)
+    return CloudUserTools(
+        tools=FakeTools(user_id=user_id),
+        todo_tools=FakeTodoTools(user_id),
+        memory_index_store=memory_store,
+        memory_store=memory_store,
+    )
+
+
 class FakeCloudUserToolFactory:
     def __init__(self):
         self.opened_user_ids = []
@@ -248,7 +263,7 @@ class FakeCloudUserToolFactory:
         class ToolContext:
             def __enter__(self):
                 factory.opened_user_ids.append(user_id)
-                return CloudUserTools(tools=FakeTools(user_id=user_id), todo_tools=FakeTodoTools(user_id))
+                return fake_cloud_user_tools(user_id)
 
             def __exit__(self, exc_type, exc, traceback):
                 return False
@@ -258,7 +273,7 @@ class FakeCloudUserToolFactory:
     def create_persistent_tools(self, user_id):
         self.persistent_user_ids.append(user_id)
         connection = SimpleNamespace(user_id=user_id)
-        return CloudUserTools(tools=FakeTools(user_id=user_id), todo_tools=FakeTodoTools(user_id)), connection
+        return fake_cloud_user_tools(user_id), connection
 
     def close_persistent_tools(self, connection):
         self.closed_connections.append(connection)
@@ -702,6 +717,8 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
         context_compactor=None,
         runtime_context_compactor=None,
         runtime_context_compactor_factory=None,
+        memory_index_store=None,
+        memory_store=None,
     ):
         created_components.append(
             {
@@ -714,6 +731,8 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
                 "metadata_store": type(metadata_store).__name__,
                 "context_compactor": type(context_compactor).__name__,
                 "has_runtime_context_compactor_factory": runtime_context_compactor_factory is not None,
+                "memory_index_user_id": memory_index_store.user_id,
+                "memory_store_user_id": memory_store.user_id,
             }
         )
         agent = FakeAgent(answer_prefix=f"reply-{qa_store.user_id}")
@@ -755,6 +774,8 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
             "metadata_store": "PostgresSessionMetadataAdapter",
             "context_compactor": "InMemoryToolResultCompactor",
             "has_runtime_context_compactor_factory": True,
+            "memory_index_user_id": "usr_a",
+            "memory_store_user_id": "usr_a",
         },
         {
             "session_id": "shared",
@@ -766,6 +787,8 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
             "metadata_store": "PostgresSessionMetadataAdapter",
             "context_compactor": "InMemoryToolResultCompactor",
             "has_runtime_context_compactor_factory": True,
+            "memory_index_user_id": "usr_b",
+            "memory_store_user_id": "usr_b",
         },
     ]
     assert tool_factory.persistent_user_ids == ["usr_a", "usr_b"]

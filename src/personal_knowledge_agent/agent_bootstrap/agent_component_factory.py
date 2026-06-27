@@ -62,6 +62,8 @@ def create_agent_components(
     context_compactor: Any | None = None,
     runtime_context_compactor: Any | None = None,
     runtime_context_compactor_factory: Callable[[ConversationSessionSummarizer], Any] | None = None,
+    memory_index_store: Any | None = None,
+    memory_store: Any | None = None,
 ) -> AgentComponents:
     store = qa_store or QACardRepository(config.knowledge_db_path)
     resolved_todo_store = todo_store or TodoRepository(config.knowledge_db_path)
@@ -84,8 +86,8 @@ def create_agent_components(
         summarizer=summarizer,
     ).restore()
     metadata = resolved_metadata_store.load_or_create()
-    memory_index_store = AgentMemoryIndexRepository(workspace_root)
-    memory_store = AgentMemoryDocumentRepository(workspace_root)
+    resolved_memory_index_store = memory_index_store or AgentMemoryIndexRepository(workspace_root)
+    resolved_memory_store = memory_store or AgentMemoryDocumentRepository(workspace_root)
     resolved_semantic_index = semantic_index
     if resolved_semantic_index is None and enable_semantic_index:
         resolved_semantic_index = QACardSemanticIndex(
@@ -99,8 +101,8 @@ def create_agent_components(
     tools = QAKnowledgeToolHandlers(store, semantic_index=resolved_semantic_index)
     todo_tools = TodoToolHandlers(resolved_todo_store)
     memory_tools = AgentMemoryToolHandlers(
-        memory_index_repository=memory_index_store,
-        memory_document_repository=memory_store,
+        memory_index_repository=resolved_memory_index_store,
+        memory_document_repository=resolved_memory_store,
     )
     dispatcher = ToolDispatcher(tools, memory_tools, todo_tools=todo_tools)
     resolved_runtime_context_compactor = runtime_context_compactor
@@ -115,8 +117,8 @@ def create_agent_components(
     agent = AgentLoopRunner(
         llm=llm,
         dispatcher=dispatcher,
-        memory_index_store=memory_index_store,
-        memory_store=memory_store,
+        memory_index_store=resolved_memory_index_store,
+        memory_store=resolved_memory_store,
         messages=restore_result.messages,
         transcript=resolved_transcript,
         metadata_store=resolved_metadata_store,

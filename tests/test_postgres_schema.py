@@ -54,6 +54,8 @@ def test_initialize_postgres_schema_executes_expected_ddl() -> None:
     assert "PRIMARY KEY (user_id, session_id)" in sql
     assert "FOREIGN KEY (user_id, session_id)" in sql
     assert "REFERENCES conversation_sessions(user_id, session_id)" in sql
+    assert "PRIMARY KEY (user_id, memory_id)" in sql
+    assert "idx_agent_user_memories_user_id_updated_at" in sql
 
 
 def test_initialize_postgres_schema_is_idempotent_sql() -> None:
@@ -101,3 +103,18 @@ def test_conversation_sessions_use_user_scoped_session_id_key() -> None:
     assert "PRIMARY KEY (user_id, session_id)" in session_sql
     assert "REFERENCES conversation_sessions(user_id, session_id)" in message_sql
     assert "UNIQUE (user_id, session_id, sequence_no)" in message_sql
+
+
+def test_agent_user_memories_use_user_scoped_memory_id_key() -> None:
+    sql_by_table = {
+        statement.split("CREATE TABLE IF NOT EXISTS ", 1)[1].split(" ", 1)[0]: " ".join(statement.split())
+        for statement in POSTGRES_SCHEMA_STATEMENTS
+        if "CREATE TABLE IF NOT EXISTS" in statement
+    }
+
+    memory_sql = sql_by_table["agent_user_memories"]
+    all_sql = "\n".join(" ".join(statement.split()) for statement in POSTGRES_SCHEMA_STATEMENTS)
+    assert "memory_id TEXT PRIMARY KEY" not in memory_sql
+    assert "memory_id TEXT NOT NULL" in memory_sql
+    assert "PRIMARY KEY (user_id, memory_id)" in memory_sql
+    assert "CREATE INDEX IF NOT EXISTS idx_agent_user_memories_user_id_updated_at ON agent_user_memories(user_id, updated_at DESC)" in all_sql

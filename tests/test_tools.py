@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from personal_knowledge_agent.agent_context.agent_profile_memory import (
@@ -1143,6 +1145,8 @@ def test_memory_tools_list_and_read_memory(tmp_path):
     assert index["entries"][0]["name"] == "project-boundary"
     assert memory["ok"] is True
     assert memory["memory"]["content"] == "Q&A 和 Agent memory 分开。"
+    assert "user_id" not in json.dumps(index, ensure_ascii=False)
+    assert "user_id" not in json.dumps(memory, ensure_ascii=False)
 
 def test_tool_dispatcher_handles_memory_tools(tmp_path):
     qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))

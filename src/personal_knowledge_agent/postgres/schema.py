@@ -108,13 +108,14 @@ POSTGRES_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     """
     CREATE TABLE IF NOT EXISTS agent_user_memories (
-      memory_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+      memory_id TEXT NOT NULL,
       title TEXT NOT NULL,
       summary TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, memory_id)
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_email_login_codes_user_id ON email_login_codes(user_id)",
@@ -125,7 +126,7 @@ POSTGRES_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_todo_items_user_id_updated_at ON todo_items(user_id, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_conversation_sessions_user_id_updated_at ON conversation_sessions(user_id, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_conversation_messages_user_session ON conversation_messages(user_id, session_id, sequence_no)",
-    "CREATE INDEX IF NOT EXISTS idx_agent_user_memories_user_id ON agent_user_memories(user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_agent_user_memories_user_id_updated_at ON agent_user_memories(user_id, updated_at DESC)",
 )
 
 

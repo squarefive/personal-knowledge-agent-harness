@@ -407,6 +407,8 @@ def create_web_app(
                                 model=resolved_config.deepseek_model,
                             ),
                             "context_compactor": InMemoryToolResultCompactor(),
+                            "memory_index_store": cloud_tools.memory_index_store,
+                            "memory_store": cloud_tools.memory_store,
                             "runtime_context_compactor_factory": (
                                 lambda summarizer, repository=session_repository: PostgresRuntimeContextCompactor(
                                     repository,

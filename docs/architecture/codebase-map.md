@@ -189,6 +189,7 @@ last_updated: "2026-06-27"
 |---|---|
 | `__init__.py` | 导出 PostgreSQL 基础设施公共入口。 |
 | `auth_repository.py` | 实现邮箱验证码登录 AuthRepository Protocol 的 PostgreSQL 仓储。 |
+| `memory_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL user-preference memory 读取仓储。 |
 | `postgres_pool.py` | 从 `database_url` 创建连接池并关闭连接池。 |
 | `qa_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL Q&A card 数据访问。 |
 | `schema.py` | 执行 pgvector 扩展和最小业务表的幂等 schema 初始化。 |
