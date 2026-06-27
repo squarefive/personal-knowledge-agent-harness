@@ -20,6 +20,8 @@ sudo install -m 600 -o root -g root /dev/null deploy/secrets/dashscope_api_key
 
 Do not commit real secret files. `deploy/.gitignore` ignores `secrets/`, backups, local env files, and override compose files.
 
+The app service runs as root inside the container so Docker Compose file-backed secrets can remain root-only on the host and readable at runtime. The database still has no public port; only nginx exposes HTTP port 80.
+
 Expected secret contents:
 
 - `database_url`: PostgreSQL URL for the internal Compose database, for example `postgresql://pka:<password>@postgres:5432/pka`.
