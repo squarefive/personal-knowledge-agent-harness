@@ -11,6 +11,7 @@ from personal_knowledge_agent.agent_bootstrap import AgentConfig
 from personal_knowledge_agent.agent_runtime import AgentEvent
 from personal_knowledge_agent.tool_runtime import ApprovalRequest
 from personal_knowledge_agent.apps.web import create_web_app
+from personal_knowledge_agent.apps.web.cloud_dependencies import CloudUserTools
 from personal_knowledge_agent.apps.web.web_app import WebApprovalManager
 
 
@@ -26,15 +27,16 @@ MERGE_ARGUMENTS = {
 
 
 class FakeAgent:
-    def __init__(self, fail=False):
+    def __init__(self, fail=False, answer_prefix="reply"):
         self.fail = fail
+        self.answer_prefix = answer_prefix
         self.inputs = []
 
     def run(self, user_input):
         self.inputs.append(user_input)
         if self.fail:
             raise RuntimeError("temporary failure")
-        return f"reply: {user_input}"
+        return f"{self.answer_prefix}: {user_input}"
 
 
 class BlockingAgent:
@@ -71,12 +73,17 @@ class ControlledBlockingAgent(BlockingAgent):
 
 
 class FakeTools:
+    def __init__(self, user_id=None):
+        self.user_id = user_id
+        self.store = SimpleNamespace(user_id=user_id)
+
     def list_recent_cards(self, arguments):
         return {
             "ok": True,
             "cards": [
                 {
                     "card_id": "qa_1",
+                    "user_id": self.user_id,
                     "question": "问题一",
                     "summary": "摘要一",
                     "keywords": ["本地"],
@@ -93,6 +100,7 @@ class FakeTools:
             "cards": [
                 {
                     "card_id": "qa_1",
+                    "user_id": self.user_id,
                     "question": arguments["query"],
                     "summary": "摘要一",
                     "answer_snippet": "答案片段",
@@ -111,6 +119,7 @@ class FakeTools:
             "ok": True,
             "card": {
                 "card_id": arguments["card_id"],
+                "user_id": self.user_id,
                 "question": "问题一",
                 "answer": "答案一",
                 "summary": "摘要一",
@@ -154,8 +163,10 @@ class FakeEmailSender:
 class FakeAuthService:
     allowed_email = "1033795760@qq.com"
 
-    def __init__(self, *, fail_request=False):
+    def __init__(self, *, fail_request=False, user_id="usr_test_1", llm_provider_user_id="llm_test_1"):
         self.fail_request = fail_request
+        self.user_id = user_id
+        self.llm_provider_user_id = llm_provider_user_id
         self.requested_emails = []
         self.verified_codes = []
         self.authenticated_tokens = []
@@ -194,8 +205,8 @@ class FakeAuthService:
         return SimpleNamespace(
             ok=True,
             email=normalized_email,
-            user_id="usr_test_1",
-            llm_provider_user_id="llm_test_1",
+            user_id=self.user_id,
+            llm_provider_user_id=self.llm_provider_user_id,
             session_token="plain-session-token",
             expires_at=self.expires_at,
         )
@@ -207,9 +218,9 @@ class FakeAuthService:
         self.last_seen_updates.append(("sess_test_1", datetime.now(UTC)))
         return SimpleNamespace(
             ok=True,
-            user_id="usr_test_1",
+            user_id=self.user_id,
             email=self.allowed_email,
-            llm_provider_user_id="llm_test_1",
+            llm_provider_user_id=self.llm_provider_user_id,
             session_id="sess_test_1",
             expires_at=self.expires_at,
         )
@@ -217,6 +228,119 @@ class FakeAuthService:
     def revoke_session_token(self, session_token):
         self.revoked_tokens.append(session_token)
         return session_token == "plain-session-token"
+
+
+class FakeTodoTools:
+    def __init__(self, user_id):
+        self.store = SimpleNamespace(user_id=user_id)
+
+
+class FakeCloudUserToolFactory:
+    def __init__(self):
+        self.opened_user_ids = []
+        self.persistent_user_ids = []
+        self.closed_connections = []
+
+    def open_tools(self, user_id):
+        factory = self
+
+        class ToolContext:
+            def __enter__(self):
+                factory.opened_user_ids.append(user_id)
+                return CloudUserTools(tools=FakeTools(user_id=user_id), todo_tools=FakeTodoTools(user_id))
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        return ToolContext()
+
+    def create_persistent_tools(self, user_id):
+        self.persistent_user_ids.append(user_id)
+        connection = SimpleNamespace(user_id=user_id)
+        return CloudUserTools(tools=FakeTools(user_id=user_id), todo_tools=FakeTodoTools(user_id)), connection
+
+    def close_persistent_tools(self, connection):
+        self.closed_connections.append(connection)
+
+
+class FakeCloudSessionRepository:
+    def __init__(self):
+        self.created_user_ids = []
+        self.listed_user_ids = []
+        self.renamed_calls = []
+        self.loaded_calls = []
+        self.sessions = {}
+        self.messages = {}
+
+    def create_session(self, user_id, *, session_id, title=None):
+        self.created_user_ids.append(user_id)
+        record = SimpleNamespace(
+            session_id=session_id,
+            title=title,
+            summary=None,
+            status="idle",
+            current_run_id=None,
+            created_at="2026-06-27T01:00:00+00:00",
+            updated_at="2026-06-27T01:00:00+00:00",
+        )
+        self.sessions[(user_id, session_id)] = record
+        return record
+
+    def list_sessions(self, user_id):
+        self.listed_user_ids.append(user_id)
+        return [record for (record_user_id, _), record in self.sessions.items() if record_user_id == user_id]
+
+    def rename_session(self, user_id, session_id, title):
+        self.renamed_calls.append((user_id, session_id, title))
+        record = self.sessions.get((user_id, session_id))
+        if record is None:
+            return None
+        updated = SimpleNamespace(
+            session_id=record.session_id,
+            title=title,
+            summary=record.summary,
+            status=record.status,
+            current_run_id=record.current_run_id,
+            created_at=record.created_at,
+            updated_at="2026-06-27T01:01:00+00:00",
+        )
+        self.sessions[(user_id, session_id)] = updated
+        return updated
+
+    def load_messages(self, user_id, session_id):
+        self.loaded_calls.append((user_id, session_id))
+        return self.messages.get(
+            (user_id, session_id),
+            [
+                {"role": "user", "content": "hello", "created_at": "2026-06-27T01:02:00+00:00"},
+                {"role": "assistant", "content": "world", "created_at": "2026-06-27T01:03:00+00:00"},
+                {"role": "tool", "content": "hidden"},
+            ],
+        )
+
+
+class MultiUserAuthService(FakeAuthService):
+    def authenticate_session_token(self, session_token):
+        self.authenticated_tokens.append(session_token)
+        if session_token == "token-a":
+            return SimpleNamespace(
+                ok=True,
+                user_id="usr_a",
+                email=self.allowed_email,
+                llm_provider_user_id="llm_a",
+                session_id="sess_a",
+                expires_at=self.expires_at,
+            )
+        if session_token == "token-b":
+            return SimpleNamespace(
+                ok=True,
+                user_id="usr_b",
+                email=self.allowed_email,
+                llm_provider_user_id="llm_b",
+                session_id="sess_b",
+                expires_at=self.expires_at,
+            )
+        return SimpleNamespace(ok=False, error_code="auth_session_not_found", message="auth session not found")
 
 
 def make_client(agent=None, tools=None):
@@ -488,6 +612,145 @@ def test_authenticated_business_apis_keep_existing_chat_cards_and_sessions_behav
     assert messages_response.json()["messages"] == []
     assert agent.inputs == ["你好"]
     assert auth_service.authenticated_tokens == ["plain-session-token"] * 8
+
+
+def test_authenticated_card_apis_use_current_user_bound_tools():
+    auth_service = FakeAuthService(user_id="usr_cards", llm_provider_user_id="llm_cards")
+    tool_factory = FakeCloudUserToolFactory()
+    app = create_web_app(
+        agent=FakeAgent(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+        user_tool_factory=tool_factory,
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+
+    recent_response = client.get("/api/cards/recent")
+    search_response = client.get("/api/cards/search?q=本地")
+    card_response = client.get("/api/cards/qa_1")
+
+    assert recent_response.json()["cards"][0]["user_id"] == "usr_cards"
+    assert search_response.json()["cards"][0]["user_id"] == "usr_cards"
+    assert card_response.json()["card"]["user_id"] == "usr_cards"
+    assert tool_factory.opened_user_ids == ["usr_cards", "usr_cards", "usr_cards"]
+
+
+def test_authenticated_session_apis_use_cloud_repository_and_do_not_touch_local_sessions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    auth_service = FakeAuthService(user_id="usr_sessions", llm_provider_user_id="llm_sessions")
+    session_repository = FakeCloudSessionRepository()
+    app = create_web_app(
+        agent=FakeAgent(),
+        tools=FakeTools(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+        cloud_session_repository=session_repository,
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+
+    created_response = client.post("/api/sessions")
+    session_id = created_response.json()["session"]["session_id"]
+    listed_response = client.get("/api/sessions")
+    renamed_response = client.patch(f"/api/sessions/{session_id}", json={"title": "云端标题"})
+    messages_response = client.get(f"/api/sessions/{session_id}/messages")
+
+    assert created_response.json()["ok"] is True
+    assert listed_response.json()["sessions"][0]["session_id"] == session_id
+    assert renamed_response.json()["session"]["title"] == "云端标题"
+    assert messages_response.json()["messages"] == [
+        {
+            "role": "user",
+            "content": "hello",
+            "created_at": "2026-06-27T01:02:00+00:00",
+            "event_id": 1,
+        },
+        {
+            "role": "assistant",
+            "content": "world",
+            "created_at": "2026-06-27T01:03:00+00:00",
+            "event_id": 2,
+        },
+    ]
+    assert session_repository.created_user_ids == ["usr_sessions"]
+    assert session_repository.listed_user_ids == ["usr_sessions"]
+    assert session_repository.renamed_calls == [("usr_sessions", session_id, "云端标题")]
+    assert session_repository.loaded_calls == [("usr_sessions", session_id)]
+    assert not (tmp_path / ".sessions").exists()
+
+
+def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_path, monkeypatch):
+    import personal_knowledge_agent.apps.web.web_app as app_module
+
+    monkeypatch.chdir(tmp_path)
+    created_components = []
+
+    def fake_create_agent_components(
+        config,
+        event_sink=None,
+        approval_callback=None,
+        session_id="default",
+        qa_store=None,
+        todo_store=None,
+        llm_provider_user_id=None,
+        semantic_index=None,
+        enable_semantic_index=True,
+    ):
+        created_components.append(
+            {
+                "session_id": session_id,
+                "qa_user_id": qa_store.user_id,
+                "todo_user_id": todo_store.user_id,
+                "llm_provider_user_id": llm_provider_user_id,
+                "enable_semantic_index": enable_semantic_index,
+            }
+        )
+        agent = FakeAgent(answer_prefix=f"reply-{qa_store.user_id}")
+        return type("Components", (), {"agent": agent, "tools": FakeTools(user_id=qa_store.user_id)})()
+
+    monkeypatch.setattr(app_module, "create_agent_components", fake_create_agent_components)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    tool_factory = FakeCloudUserToolFactory()
+    app = create_web_app(
+        config=config,
+        auth_service=MultiUserAuthService(),
+        email_sender=FakeEmailSender(),
+        user_tool_factory=tool_factory,
+    )
+    client = TestClient(app)
+
+    client.cookies.set("pka_session", "token-a")
+    first_response = client.post("/api/chat/stream", json={"session_id": "shared", "message": "hello"})
+    client.cookies.set("pka_session", "token-b")
+    second_response = client.post("/api/chat/stream", json={"session_id": "shared", "message": "hello"})
+    client.cookies.set("pka_session", "token-a")
+    third_response = client.post("/api/chat/stream", json={"session_id": "shared", "message": "again"})
+
+    assert read_sse_events(first_response)[-1]["answer"] == "reply-usr_a: hello"
+    assert read_sse_events(second_response)[-1]["answer"] == "reply-usr_b: hello"
+    assert read_sse_events(third_response)[-1]["answer"] == "reply-usr_a: again"
+    assert created_components == [
+        {
+            "session_id": "shared",
+            "qa_user_id": "usr_a",
+            "todo_user_id": "usr_a",
+            "llm_provider_user_id": "llm_a",
+            "enable_semantic_index": False,
+        },
+        {
+            "session_id": "shared",
+            "qa_user_id": "usr_b",
+            "todo_user_id": "usr_b",
+            "llm_provider_user_id": "llm_b",
+            "enable_semantic_index": False,
+        },
+    ]
+    assert tool_factory.persistent_user_ids == ["usr_a", "usr_b"]
 
 
 def test_chat_route_is_removed():

@@ -266,6 +266,7 @@ last_updated: "2026-06-27"
 | `cli/cli_main.py` | CLI 持续交互入口和 `pka web` 子命令分发。 |
 | `cli/cli_event_renderer.py` | CLI 事件渲染和长文本截断。 |
 | `web/web_app.py` | 创建 FastAPI app，提供流式聊天、session 管理和卡片浏览 API。 |
+| `web/cloud_dependencies.py` | 装配 Web 云端依赖，包括 PostgreSQL pool、AuthService、SMTP 邮件发送、用户绑定工具 factory 和会话仓储 facade。 |
 | `web/web_main.py` | Web Runtime 启动入口。 |
 | `web/static/index.html` | Web UI 页面结构。 |
 | `web/static/styles.css` | Web UI 样式。 |
@@ -340,5 +341,6 @@ last_updated: "2026-06-27"
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |
 | `test_web_app.py` | 覆盖 Web API、SSE 聊天、session 隔离和卡片接口。 |
+| `test_web_cloud_dependencies.py` | 覆盖 Web 云端依赖装配和 pool 生命周期。 |
 | `test_cli.py` | 覆盖 CLI 输入循环、退出、错误处理和审批交互。 |
 | `test_*.py` | 其他测试覆盖配置、日志、session、memory、source evidence 和 LLM client。 |

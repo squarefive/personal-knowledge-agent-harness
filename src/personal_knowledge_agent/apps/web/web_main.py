@@ -7,7 +7,9 @@ import webbrowser
 
 import uvicorn
 
+from ...agent_bootstrap import load_config
 from ...agent_observability import AgentEventJsonlLogger
+from .cloud_dependencies import close_web_cloud_dependencies, create_web_cloud_dependencies
 from .web_app import create_web_app
 
 
@@ -19,9 +21,27 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     event_logger = AgentEventJsonlLogger()
+    cloud_dependencies = None
     try:
-        app = create_web_app(event_logger=event_logger)
+        config = load_config()
+        cloud_dependencies = create_web_cloud_dependencies(config)
+        app = create_web_app(
+            config=config,
+            auth_service=cloud_dependencies.auth_service if cloud_dependencies is not None else None,
+            email_sender=cloud_dependencies.email_sender if cloud_dependencies is not None else None,
+            user_tool_factory=cloud_dependencies.user_tool_factory if cloud_dependencies is not None else None,
+            cloud_session_repository=(
+                cloud_dependencies.session_repository if cloud_dependencies is not None else None
+            ),
+            event_logger=event_logger,
+        )
+
+        @app.on_event("shutdown")
+        def close_cloud_dependencies() -> None:
+            close_web_cloud_dependencies(cloud_dependencies)
     except Exception as exc:
+        close_web_cloud_dependencies(cloud_dependencies)
+        event_logger.close()
         print(f"Web 启动失败：{exc}", file=sys.stderr)
         return 1
 

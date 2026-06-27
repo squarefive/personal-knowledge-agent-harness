@@ -93,6 +93,19 @@ def test_create_agent_components_uses_injected_qa_and_todo_stores(tmp_path, monk
     assert components.todo_tools.store is todo_store
 
 
+def test_create_agent_components_can_disable_semantic_index(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+
+    components = create_agent_components(config, enable_semantic_index=False)
+
+    assert components.tools.semantic_index is None
+
+
 def test_create_agent_components_passes_llm_provider_user_id(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = AgentConfig(

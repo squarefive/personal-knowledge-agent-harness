@@ -36,6 +36,10 @@ class TodoStore(Protocol):
     pass
 
 
+class SemanticIndex(Protocol):
+    pass
+
+
 @dataclass(frozen=True)
 class AgentComponents:
     agent: AgentLoopRunner
@@ -51,6 +55,8 @@ def create_agent_components(
     qa_store: QACardStore | None = None,
     todo_store: TodoStore | None = None,
     llm_provider_user_id: str | None = None,
+    semantic_index: SemanticIndex | None = None,
+    enable_semantic_index: bool = True,
 ) -> AgentComponents:
     store = qa_store or QACardRepository(config.knowledge_db_path)
     resolved_todo_store = todo_store or TodoRepository(config.knowledge_db_path)
@@ -74,15 +80,17 @@ def create_agent_components(
     metadata = metadata_store.load_or_create()
     memory_index_store = AgentMemoryIndexRepository(workspace_root)
     memory_store = AgentMemoryDocumentRepository(workspace_root)
-    semantic_index = QACardSemanticIndex(
-        dashscope_api_key=config.dashscope_api_key,
-        embedding_base_url=config.qwen_embedding_base_url,
-        embedding_model=config.qwen_embedding_model,
-        embedding_dimensions=config.qwen_embedding_dimensions,
-        qdrant_path=config.qdrant_path,
-        collection_name=config.qdrant_collection,
-    )
-    tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
+    resolved_semantic_index = semantic_index
+    if resolved_semantic_index is None and enable_semantic_index:
+        resolved_semantic_index = QACardSemanticIndex(
+            dashscope_api_key=config.dashscope_api_key,
+            embedding_base_url=config.qwen_embedding_base_url,
+            embedding_model=config.qwen_embedding_model,
+            embedding_dimensions=config.qwen_embedding_dimensions,
+            qdrant_path=config.qdrant_path,
+            collection_name=config.qdrant_collection,
+        )
+    tools = QAKnowledgeToolHandlers(store, semantic_index=resolved_semantic_index)
     todo_tools = TodoToolHandlers(resolved_todo_store)
     memory_tools = AgentMemoryToolHandlers(
         memory_index_repository=memory_index_store,
