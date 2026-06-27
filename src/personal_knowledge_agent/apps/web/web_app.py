@@ -24,6 +24,13 @@ from ...agent_context.conversation_sessions import (
 )
 from ...agent_observability import AgentEventJsonlLogger
 from ...agent_runtime import AgentEvent, new_run_id
+from ...postgres import (
+    InMemoryToolResultCompactor,
+    PostgresConversationSessionRepository,
+    PostgresConversationTranscriptAdapter,
+    PostgresRuntimeContextCompactor,
+    PostgresSessionMetadataAdapter,
+)
 from ...tool_runtime import ApprovalRequest, default_approval_callback
 from .cloud_dependencies import CloudUserToolFactory
 
@@ -380,12 +387,33 @@ def create_web_app(
                     "session_id": safe_session_id,
                 }
                 if cloud_tools is not None and auth_session is not None:
+                    session_repository = PostgresConversationSessionRepository(
+                        persistent_connection,
+                        auth_session.user_id,
+                    )
                     component_kwargs.update(
                         {
                             "qa_store": cloud_tools.tools.store,
                             "todo_store": cloud_tools.todo_tools.store,
                             "llm_provider_user_id": auth_session.llm_provider_user_id,
                             "enable_semantic_index": False,
+                            "transcript": PostgresConversationTranscriptAdapter(
+                                session_repository,
+                                safe_session_id,
+                            ),
+                            "metadata_store": PostgresSessionMetadataAdapter(
+                                session_repository,
+                                safe_session_id,
+                                model=resolved_config.deepseek_model,
+                            ),
+                            "context_compactor": InMemoryToolResultCompactor(),
+                            "runtime_context_compactor_factory": (
+                                lambda summarizer, repository=session_repository: PostgresRuntimeContextCompactor(
+                                    repository,
+                                    safe_session_id,
+                                    summarizer=summarizer,
+                                )
+                            ),
                         }
                     )
                 components = create_agent_components(resolved_config, **component_kwargs)

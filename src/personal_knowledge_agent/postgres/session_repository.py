@@ -194,6 +194,21 @@ class PostgresConversationSessionRepository:
             )
         return [_message_from_value(_row_value(row, 0, "message")) for row in _fetchall(cursor)]
 
+    def count_messages(self, session_id: str) -> int:
+        clean_session_id = _require_text("session_id", session_id)
+        cursor = self._connection.execute(
+            """
+            SELECT COUNT(*)
+            FROM conversation_messages
+            WHERE user_id = %s AND session_id = %s
+            """,
+            (self._user_id, clean_session_id),
+        )
+        row = _fetchone(cursor)
+        if row is None:
+            return 0
+        return int(_row_value(row, 0, "count"))
+
     def update_summary(self, session_id: str, summary: str | None) -> bool:
         clean_session_id = _require_text("session_id", session_id)
         clean_summary = _optional_text("summary", summary)

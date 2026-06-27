@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 
 from personal_knowledge_agent.agent_bootstrap import AgentConfig
 from personal_knowledge_agent.agent_runtime import AgentEvent
+from personal_knowledge_agent.llm_clients import LLMResponse
 from personal_knowledge_agent.tool_runtime import ApprovalRequest
 from personal_knowledge_agent.apps.web import create_web_app
-from personal_knowledge_agent.apps.web.cloud_dependencies import CloudUserTools
+from personal_knowledge_agent.apps.web.cloud_dependencies import CloudUserToolFactory, CloudUserTools
 from personal_knowledge_agent.apps.web.web_app import WebApprovalManager
 
 
@@ -696,6 +697,11 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
         llm_provider_user_id=None,
         semantic_index=None,
         enable_semantic_index=True,
+        transcript=None,
+        metadata_store=None,
+        context_compactor=None,
+        runtime_context_compactor=None,
+        runtime_context_compactor_factory=None,
     ):
         created_components.append(
             {
@@ -704,6 +710,10 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
                 "todo_user_id": todo_store.user_id,
                 "llm_provider_user_id": llm_provider_user_id,
                 "enable_semantic_index": enable_semantic_index,
+                "transcript": type(transcript).__name__,
+                "metadata_store": type(metadata_store).__name__,
+                "context_compactor": type(context_compactor).__name__,
+                "has_runtime_context_compactor_factory": runtime_context_compactor_factory is not None,
             }
         )
         agent = FakeAgent(answer_prefix=f"reply-{qa_store.user_id}")
@@ -741,6 +751,10 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
             "todo_user_id": "usr_a",
             "llm_provider_user_id": "llm_a",
             "enable_semantic_index": False,
+            "transcript": "PostgresConversationTranscriptAdapter",
+            "metadata_store": "PostgresSessionMetadataAdapter",
+            "context_compactor": "InMemoryToolResultCompactor",
+            "has_runtime_context_compactor_factory": True,
         },
         {
             "session_id": "shared",
@@ -748,9 +762,147 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
             "todo_user_id": "usr_b",
             "llm_provider_user_id": "llm_b",
             "enable_semantic_index": False,
+            "transcript": "PostgresConversationTranscriptAdapter",
+            "metadata_store": "PostgresSessionMetadataAdapter",
+            "context_compactor": "InMemoryToolResultCompactor",
+            "has_runtime_context_compactor_factory": True,
         },
     ]
     assert tool_factory.persistent_user_ids == ["usr_a", "usr_b"]
+
+
+def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_local_sessions(tmp_path, monkeypatch):
+    import personal_knowledge_agent.agent_bootstrap.agent_component_factory as factory_module
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            self.llm_provider_user_id = kwargs.get("llm_provider_user_id")
+
+        def chat(self, *, messages, tools, system_prompt, on_text_delta=None):
+            return LLMResponse(text="云端回复")
+
+    class FakeCursor:
+        def __init__(self, row=None, rows=None, rowcount=1):
+            self._row = row
+            self._rows = rows or []
+            self.rowcount = rowcount
+
+        def fetchone(self):
+            return self._row
+
+        def fetchall(self):
+            return self._rows
+
+    class FakeConnection:
+        def __init__(self):
+            self.executed = []
+            self.messages = []
+            self.sessions = {}
+            self.commits = 0
+
+        def execute(self, query, params=()):
+            sql = " ".join(query.split())
+            self.executed.append((sql, params))
+            if "SELECT session_id, title, summary, status, current_run_id, created_at, updated_at" in sql:
+                record = self.sessions.get((params[0], params[1]))
+                return FakeCursor(row=record)
+            if "INSERT INTO conversation_sessions" in sql:
+                row = (
+                    params[0],
+                    params[2],
+                    None,
+                    "idle",
+                    None,
+                    datetime(2026, 6, 27, 1, 0, tzinfo=UTC),
+                    datetime(2026, 6, 27, 1, 0, tzinfo=UTC),
+                )
+                self.sessions[(params[1], params[0])] = row
+                return FakeCursor(row=row)
+            if "SELECT message FROM conversation_messages" in sql:
+                user_id, session_id = params[:2]
+                rows = [
+                    (message,)
+                    for row_user, row_session, message in self.messages
+                    if (row_user, row_session) == (user_id, session_id)
+                ]
+                return FakeCursor(rows=rows)
+            if "SELECT COUNT(*) FROM conversation_messages" in sql:
+                user_id, session_id = params
+                count = sum(
+                    1
+                    for row_user, row_session, _message in self.messages
+                    if (row_user, row_session) == (user_id, session_id)
+                )
+                return FakeCursor(row=(count,))
+            if "SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM conversation_messages" in sql:
+                user_id, session_id = params
+                count = sum(
+                    1
+                    for row_user, row_session, _message in self.messages
+                    if (row_user, row_session) == (user_id, session_id)
+                )
+                return FakeCursor(row=(count + 1,))
+            if "INSERT INTO conversation_messages" in sql:
+                self.messages.append((params[0], params[1], params[4].obj))
+                return FakeCursor()
+            if "UPDATE conversation_sessions SET title" in sql:
+                return FakeCursor(
+                    row=(
+                        params[2],
+                        params[0],
+                        None,
+                        "idle",
+                        None,
+                        datetime(2026, 6, 27, 1, 0, tzinfo=UTC),
+                        datetime(2026, 6, 27, 1, 1, tzinfo=UTC),
+                    )
+                )
+            return FakeCursor(rowcount=1)
+
+        def commit(self):
+            self.commits += 1
+
+    class FakePool:
+        def __init__(self):
+            self.connection = FakeConnection()
+            self.put_connections = []
+
+        def getconn(self):
+            return self.connection
+
+        def putconn(self, connection):
+            self.put_connections.append(connection)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(factory_module, "DeepSeekChatClient", FakeLLM)
+    pool = FakePool()
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    app = create_web_app(
+        config=config,
+        auth_service=FakeAuthService(user_id="usr_cloud_runtime", llm_provider_user_id="llm_cloud_runtime"),
+        email_sender=FakeEmailSender(),
+        user_tool_factory=CloudUserToolFactory(pool),
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+
+    response = client.post("/api/chat/stream", json={"session_id": "cloud_chat", "message": "你好"})
+
+    assert response.status_code == 200
+    assert read_sse_events(response)[-1]["answer"] == "云端回复"
+    assert [message for _user_id, _session_id, message in pool.connection.messages] == [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "云端回复"},
+    ]
+    assert [(user_id, session_id) for user_id, session_id, _message in pool.connection.messages] == [
+        ("usr_cloud_runtime", "cloud_chat"),
+        ("usr_cloud_runtime", "cloud_chat"),
+    ]
+    assert not (tmp_path / ".sessions").exists()
 
 
 def test_chat_route_is_removed():

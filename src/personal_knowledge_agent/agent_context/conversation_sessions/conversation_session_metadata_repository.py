@@ -101,6 +101,17 @@ class ConversationSessionMetadataRepository:
         self.write(updated)
         return updated
 
+    def update_summary(self, summary: str | None) -> bool:
+        metadata = self.load_or_create()
+        summary_path = self.root / metadata.summary_path
+        if summary is None:
+            if summary_path.exists():
+                summary_path.unlink()
+            return True
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(summary, encoding="utf-8")
+        return True
+
     def list_sessions(self) -> list[SessionMetadata]:
         sessions_root = self.root / ".sessions"
         if not sessions_root.exists():

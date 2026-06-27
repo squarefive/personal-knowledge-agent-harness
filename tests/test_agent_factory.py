@@ -3,6 +3,7 @@ from personal_knowledge_agent.agent_runtime import AgentLoopRunner
 from personal_knowledge_agent.agent_bootstrap import AgentConfig
 from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 from personal_knowledge_agent.agent_tools.todo_tools import TodoToolHandlers
+from personal_knowledge_agent.agent_context.conversation_sessions import RuntimeCompactionResult, SessionMetadata
 
 
 class FakeQAStore:
@@ -11,6 +12,58 @@ class FakeQAStore:
 
 class FakeTodoStore:
     pass
+
+
+class FakeTranscript:
+    def __init__(self):
+        self.messages = []
+
+    def append_message(self, message):
+        self.messages.append(message)
+        return len(self.messages)
+
+    def load_messages(self):
+        return list(self.messages)
+
+    def event_count(self):
+        return len(self.messages)
+
+
+class FakeMetadataStore:
+    def __init__(self):
+        self.summary = None
+
+    def load_or_create(self):
+        return SessionMetadata(
+            session_id="injected",
+            created_at="2026-06-27T00:00:00+00:00",
+            updated_at="2026-06-27T00:00:00+00:00",
+            cwd="memory",
+            model="test-model",
+            transcript_path="memory://transcript",
+            summary_path="memory://summary",
+            artifacts_dir="",
+        )
+
+    def update_counts(self, **kwargs):
+        return self.load_or_create()
+
+    def update_after_user_message(self, message, *, event_count, message_count):
+        return self.load_or_create()
+
+    def update_summary(self, summary):
+        self.summary = summary
+        return True
+
+
+class FakeToolResultCompactor:
+    def compact_tool_result(self, **kwargs):
+        return None
+
+
+class FakeRuntimeContextCompactor:
+    def compact(self, messages, *, existing_summary=None):
+        return RuntimeCompactionResult(messages=messages, session_summary="summary", mode="test")
 
 
 def test_create_agent_components_returns_agent_and_tools(tmp_path, monkeypatch):
@@ -133,3 +186,30 @@ def test_create_agent_components_default_behavior_creates_session_metadata(tmp_p
     create_agent_components(config)
 
     assert (tmp_path / ".sessions" / "default" / "metadata.json").exists()
+
+
+def test_create_agent_components_uses_injected_session_runtime_without_local_sessions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+    )
+    transcript = FakeTranscript()
+    metadata_store = FakeMetadataStore()
+    context_compactor = FakeToolResultCompactor()
+    runtime_compactor = FakeRuntimeContextCompactor()
+
+    components = create_agent_components(
+        config,
+        transcript=transcript,
+        metadata_store=metadata_store,
+        context_compactor=context_compactor,
+        runtime_context_compactor=runtime_compactor,
+    )
+
+    assert components.agent.message_recorder.transcript is transcript
+    assert components.agent.message_recorder.metadata_store is metadata_store
+    assert components.agent.context_compactor is context_compactor
+    assert components.agent.runtime_context_compactor is runtime_compactor
+    assert not (tmp_path / ".sessions").exists()

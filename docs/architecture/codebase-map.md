@@ -193,6 +193,7 @@ last_updated: "2026-06-27"
 | `qa_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL Q&A card 数据访问。 |
 | `schema.py` | 执行 pgvector 扩展和最小业务表的幂等 schema 初始化。 |
 | `session_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL conversation session 数据访问。 |
+| `session_runtime_adapters.py` | 将 PostgreSQL session 仓储适配为 Agent runtime transcript、metadata、summary 和 compact 依赖。 |
 | `todo_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL todo 数据访问。 |
 
 ### Tool Runtime

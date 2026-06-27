@@ -27,7 +27,7 @@ class ConversationSessionRestorer:
         self.recent_messages_count = recent_messages_count
 
     def restore(self) -> SessionRestoreResult:
-        metadata = self.metadata_store.load_or_create()
+        self.metadata_store.load_or_create()
         messages = self.transcript.load_messages()
         if _estimated_chars(messages) <= self.message_budget_chars:
             self.metadata_store.update_counts(
@@ -40,9 +40,7 @@ class ConversationSessionRestorer:
         if self.summarizer is not None:
             try:
                 summary, attempts = self.summarizer.summarize(messages)
-                summary_path = self.metadata_store.root / metadata.summary_path
-                summary_path.parent.mkdir(parents=True, exist_ok=True)
-                summary_path.write_text(summary, encoding="utf-8")
+                self.metadata_store.update_summary(summary)
                 recent = _recent_messages(messages, self.recent_messages_count)
                 self.metadata_store.update_counts(
                     event_count=self.transcript.event_count(),

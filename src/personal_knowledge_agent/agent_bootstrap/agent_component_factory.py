@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from ..agent_context.agent_profile_memory import (
     AgentMemoryCandidateExtractor,
@@ -57,6 +57,11 @@ def create_agent_components(
     llm_provider_user_id: str | None = None,
     semantic_index: SemanticIndex | None = None,
     enable_semantic_index: bool = True,
+    transcript: Any | None = None,
+    metadata_store: Any | None = None,
+    context_compactor: Any | None = None,
+    runtime_context_compactor: Any | None = None,
+    runtime_context_compactor_factory: Callable[[ConversationSessionSummarizer], Any] | None = None,
 ) -> AgentComponents:
     store = qa_store or QACardRepository(config.knowledge_db_path)
     resolved_todo_store = todo_store or TodoRepository(config.knowledge_db_path)
@@ -66,18 +71,19 @@ def create_agent_components(
         model=config.deepseek_model,
         llm_provider_user_id=llm_provider_user_id,
     )
-    transcript = ConversationTranscriptRepository(workspace_root, session_id=session_id)
-    metadata_store = ConversationSessionMetadataRepository(
+    resolved_transcript = transcript or ConversationTranscriptRepository(workspace_root, session_id=session_id)
+    resolved_metadata_store = metadata_store or ConversationSessionMetadataRepository(
         workspace_root,
         session_id=session_id,
         model=config.deepseek_model,
     )
+    summarizer = ConversationSessionSummarizer(llm)
     restore_result = ConversationSessionRestorer(
-        transcript=transcript,
-        metadata_store=metadata_store,
-        summarizer=ConversationSessionSummarizer(llm),
+        transcript=resolved_transcript,
+        metadata_store=resolved_metadata_store,
+        summarizer=summarizer,
     ).restore()
-    metadata = metadata_store.load_or_create()
+    metadata = resolved_metadata_store.load_or_create()
     memory_index_store = AgentMemoryIndexRepository(workspace_root)
     memory_store = AgentMemoryDocumentRepository(workspace_root)
     resolved_semantic_index = semantic_index
@@ -97,20 +103,29 @@ def create_agent_components(
         memory_document_repository=memory_store,
     )
     dispatcher = ToolDispatcher(tools, memory_tools, todo_tools=todo_tools)
+    resolved_runtime_context_compactor = runtime_context_compactor
+    if resolved_runtime_context_compactor is None and runtime_context_compactor_factory is not None:
+        resolved_runtime_context_compactor = runtime_context_compactor_factory(summarizer)
+    if resolved_runtime_context_compactor is None:
+        resolved_runtime_context_compactor = RuntimeContextCompactor(
+            workspace_root,
+            summarizer=summarizer,
+            session_id=session_id,
+        )
     agent = AgentLoopRunner(
         llm=llm,
         dispatcher=dispatcher,
         memory_index_store=memory_index_store,
         memory_store=memory_store,
         messages=restore_result.messages,
-        transcript=transcript,
-        metadata_store=metadata_store,
-        context_compactor=ToolResultCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir),
-        runtime_context_compactor=RuntimeContextCompactor(
-            workspace_root,
-            summarizer=ConversationSessionSummarizer(llm),
-            session_id=session_id,
+        transcript=resolved_transcript,
+        metadata_store=resolved_metadata_store,
+        context_compactor=(
+            context_compactor
+            if context_compactor is not None
+            else ToolResultCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir)
         ),
+        runtime_context_compactor=resolved_runtime_context_compactor,
         session_summary=restore_result.summary,
         context_window_tokens=config.context_window_tokens,
         memory_extractor=AgentMemoryCandidateExtractor(),

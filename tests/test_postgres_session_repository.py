@@ -5,7 +5,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from psycopg.types.json import Jsonb
 
-from personal_knowledge_agent.postgres import PostgresConversationSessionRepository
+from personal_knowledge_agent.postgres import (
+    InMemoryToolResultCompactor,
+    PostgresConversationSessionRepository,
+    PostgresConversationTranscriptAdapter,
+    PostgresRuntimeContextCompactor,
+    PostgresSessionMetadataAdapter,
+)
 
 
 NOW = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
@@ -213,6 +219,19 @@ def test_load_messages_without_limit_keeps_user_scoped_ordering() -> None:
     assert params == ("usr_1", "chat_1")
 
 
+def test_count_messages_filters_by_user_id_and_session_id() -> None:
+    connection = FakeConnection()
+    connection.next_row = (4,)
+    repo = PostgresConversationSessionRepository(connection, "usr_1")
+
+    assert repo.count_messages("chat_1") == 4
+
+    sql, params = connection.executed[0]
+    assert "SELECT COUNT(*) FROM conversation_messages" in sql
+    assert "WHERE user_id = %s AND session_id = %s" in sql
+    assert params == ("usr_1", "chat_1")
+
+
 def test_update_summary_filters_by_user_id_and_returns_rowcount() -> None:
     connection = FakeConnection()
     connection.next_rowcount = 1
@@ -273,3 +292,95 @@ def test_user_input_is_parameterized_not_concatenated_into_sql() -> None:
     sql, params = connection.executed[0]
     assert malicious_session_id not in sql
     assert params == ("usr_1", malicious_session_id)
+
+
+def test_postgres_transcript_adapter_uses_current_user_repository() -> None:
+    connection = FakeConnection()
+    connection.rows_by_call = [(1,), None, None, (1,)]
+    repo = PostgresConversationSessionRepository(connection, "usr_1")
+    transcript = PostgresConversationTranscriptAdapter(repo, "chat_1")
+
+    event_id = transcript.append_message({"role": "user", "content": "你好"})
+    count = transcript.event_count()
+
+    assert event_id == 1
+    assert count == 1
+    assert connection.executed[0][1] == ("usr_1", "chat_1")
+    assert connection.executed[1][1][:4] == ("usr_1", "chat_1", 1, "user")
+    assert connection.executed[3][1] == ("usr_1", "chat_1")
+
+
+def test_postgres_metadata_adapter_loads_or_creates_and_updates_summary() -> None:
+    connection = FakeConnection()
+    connection.rows_by_call = [None, SESSION_ROW, (2,)]
+    connection.next_rowcount = 1
+    repo = PostgresConversationSessionRepository(connection, "usr_1")
+    metadata_store = PostgresSessionMetadataAdapter(repo, "chat_1", model="deepseek-test")
+
+    metadata = metadata_store.load_or_create()
+    updated = metadata_store.update_summary("summary")
+
+    assert metadata.session_id == "chat_1"
+    assert metadata.model == "deepseek-test"
+    assert metadata.message_count == 2
+    assert metadata.transcript_path == "postgres://conversation_sessions/chat_1/messages"
+    assert updated is True
+    assert connection.executed[0][1] == ("usr_1", "chat_1")
+    assert connection.executed[1][1] == ("chat_1", "usr_1", None)
+    assert connection.executed[3][1] == ("summary", "usr_1", "chat_1")
+
+
+def test_postgres_metadata_adapter_autotitles_first_user_message_with_user_scope() -> None:
+    connection = FakeConnection()
+    connection.rows_by_call = [
+        ("chat_1", None, None, "idle", None, NOW, NOW),
+        ("chat_1", "第一条用户消息", None, "idle", None, NOW, LATER),
+        (1,),
+    ]
+    repo = PostgresConversationSessionRepository(connection, "usr_1")
+    metadata_store = PostgresSessionMetadataAdapter(repo, "chat_1")
+
+    metadata = metadata_store.update_after_user_message(
+        "第一条用户消息",
+        event_count=1,
+        message_count=1,
+    )
+
+    assert metadata.title == "第一条用户消息"
+    assert metadata.last_user_message == "第一条用户消息"
+    assert connection.executed[1][1] == ("第一条用户消息", "usr_1", "chat_1")
+
+
+def test_in_memory_tool_result_compactor_does_not_return_local_artifact_path() -> None:
+    compactor = InMemoryToolResultCompactor(threshold_chars=5)
+
+    record = compactor.compact_tool_result(
+        run_id="run_1",
+        tool_call_id="call_1",
+        tool_name="search_qa_cards",
+        result_text="很长的工具结果",
+    )
+
+    assert record is not None
+    assert record.artifact_path == ""
+    assert "未写入本地文件" in record.relevance
+
+
+def test_postgres_runtime_context_compactor_updates_session_summary() -> None:
+    class FakeSummarizer:
+        def summarize(self, messages):
+            return "压缩 summary", 1
+
+    connection = FakeConnection()
+    connection.next_rowcount = 1
+    repo = PostgresConversationSessionRepository(connection, "usr_1")
+    compactor = PostgresRuntimeContextCompactor(repo, "chat_1", summarizer=FakeSummarizer(), recent_messages_count=1)
+
+    result = compactor.compact(
+        [{"role": "user", "content": "one"}, {"role": "assistant", "content": "two"}],
+        existing_summary=None,
+    )
+
+    assert result.session_summary == "压缩 summary"
+    assert result.messages == [{"role": "assistant", "content": "two"}]
+    assert connection.executed[0][1] == ("压缩 summary", "usr_1", "chat_1")
