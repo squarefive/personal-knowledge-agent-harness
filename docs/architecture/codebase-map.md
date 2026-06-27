@@ -324,6 +324,7 @@ last_updated: "2026-06-27"
 | `.gitignore` | 忽略服务器本地 secrets、backups、override compose 和本地 env 文件。 |
 | `docker-compose.yml` | 编排 Web app、PostgreSQL pgvector 和 nginx；数据库只在 Compose 内网暴露。 |
 | `nginx.conf` | 提供 HTTP 临时反代和 SSE 基本代理设置。 |
+| `requirements.txt` | Docker 构建使用的生产 Python 依赖锁定清单，由 `uv export --no-dev --format requirements-txt --no-hashes` 生成。 |
 | `README.md` | 说明服务器 root-only secrets 文件、QQ SMTP、数据库 URL、API key、session secret 和临时 HTTP 边界。 |
 
 ### Scripts

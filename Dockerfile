@@ -4,22 +4,16 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH="/app/src" \
     PIP_INDEX_URL="https://mirrors.cloud.tencent.com/pypi/simple" \
     PIP_DEFAULT_TIMEOUT=120 \
-    UV_DEFAULT_INDEX="https://mirrors.cloud.tencent.com/pypi/simple" \
-    UV_HTTP_TIMEOUT=120 \
-    UV_LINK_MODE=copy \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/usr/local/bin:$PATH"
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir --timeout 120 --retries 10 uv
-
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+COPY deploy/requirements.txt ./deploy/requirements.txt
+RUN pip install --no-cache-dir --timeout 120 --retries 10 -r deploy/requirements.txt
 
 COPY README.md ./
 COPY scripts ./scripts
 COPY src ./src
-RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
