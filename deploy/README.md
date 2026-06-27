@@ -75,8 +75,8 @@ http://124.223.210.44
 
 ## Backup
 
-Run PostgreSQL backups from a host or maintenance container that has `pg_dump`:
+For this single-host Compose deployment, run PostgreSQL backups through the `postgres` container so the database can stay private inside the Compose network:
 
 ```bash
-DATABASE_URL_FILE=deploy/secrets/database_url scripts/backup-postgres.sh --output-dir deploy/backups --keep 7
+sudo scripts/backup-postgres-compose.sh --output-dir deploy/backups --keep 7
 ```

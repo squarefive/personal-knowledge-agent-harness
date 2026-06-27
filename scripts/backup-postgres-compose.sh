@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 --output-dir DIR [--keep N] [--compose-file FILE]" >&2
+}
+
+output_dir=""
+keep="7"
+compose_file="deploy/docker-compose.yml"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output-dir)
+      if [ "$#" -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      output_dir="$2"
+      shift 2
+      ;;
+    --keep)
+      if [ "$#" -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      keep="$2"
+      shift 2
+      ;;
+    --compose-file)
+      if [ "$#" -lt 2 ]; then
+        usage
+        exit 2
+      fi
+      compose_file="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "$output_dir" ]; then
+  usage
+  exit 2
+fi
+
+case "$keep" in
+  ''|*[!0-9]*|0)
+    echo "--keep must be a positive integer" >&2
+    exit 2
+    ;;
+esac
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required" >&2
+  exit 2
+fi
+
+mkdir -p "$output_dir"
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup_file="$output_dir/postgres-$timestamp.sql.gz"
+backup_tmp="$backup_file.tmp"
+
+cleanup_tmp() {
+  rm -f -- "$backup_tmp"
+}
+
+trap cleanup_tmp EXIT
+docker compose -f "$compose_file" exec -T postgres pg_dump -U pka -d pka | gzip -c > "$backup_tmp"
+mv -- "$backup_tmp" "$backup_file"
+trap - EXIT
+
+find "$output_dir" -maxdepth 1 -type f -name 'postgres-*.sql.gz' \
+  | sort -r \
+  | awk -v keep="$keep" 'NR > keep' \
+  | while IFS= read -r old_backup; do
+      rm -- "$old_backup"
+    done
+
+echo "$backup_file"

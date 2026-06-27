@@ -342,6 +342,7 @@ last_updated: "2026-06-27"
 | `clean-merged-branches.sh` | 清理已合并的本地分支。 |
 | `init-postgres-schema.py` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串并初始化 PostgreSQL schema。 |
 | `backup-postgres.sh` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串，执行 `pg_dump | gzip` 并保留最近 N 份备份。 |
+| `backup-postgres-compose.sh` | 在单机 Docker Compose 部署中通过 `postgres` 容器执行 `pg_dump | gzip`，避免数据库暴露到宿主机端口。 |
 | `migrate-sqlite-qa-to-postgres.py` | 将旧 SQLite `qa_cards` 迁移到指定邮箱对应的 PostgreSQL 用户，不迁移 session、todo、memory 或 Qdrant。 |
 | `rebuild-postgres-qa-embeddings.py` | 为指定邮箱用户的 PostgreSQL Q&A 卡片重建 pgvector embedding。 |
 
