@@ -10,6 +10,8 @@ from psycopg.types.json import Jsonb
 
 from personal_knowledge_agent.qa_data_access.qa_card_models import QACard, SearchResult
 
+FORBIDDEN_CATEGORIES = {"其他", "未分类", "杂项", "默认分类", "未知", "待分类"}
+
 
 class PostgresConnection(Protocol):
     def execute(self, query: str, params: Sequence[object] = ()) -> object: ...
@@ -35,7 +37,7 @@ class PostgresQACardRepository:
         clean_question = _require_text("question", question)
         clean_answer = _require_text("answer", answer)
         clean_summary = _require_text("summary", summary)
-        clean_category = _require_text("category", category)
+        clean_category = self.validate_category(category)
         clean_source_type = _require_text("source_type", source_type)
         clean_keywords = _clean_keywords(keywords)
         clean_card_id = card_id.strip() if card_id is not None else f"qa_{uuid.uuid4().hex}"
@@ -142,7 +144,7 @@ class PostgresQACardRepository:
 
     def list_recent_cards(self, limit: int = 10, category: str | None = None) -> list[QACard]:
         safe_limit = _safe_limit(limit)
-        clean_category = _optional_text("category", category)
+        clean_category = self.validate_optional_category(category)
         if clean_category is None:
             cursor = self._connection.execute(
                 """
@@ -187,6 +189,105 @@ class PostgresQACardRepository:
             )
         return [_row_to_card(row) for row in _fetchall(cursor)]
 
+    def list_all_cards(self, category: str | None = None) -> list[QACard]:
+        clean_category = self.validate_optional_category(category)
+        if clean_category is None:
+            cursor = self._connection.execute(
+                """
+                SELECT
+                  card_id,
+                  question,
+                  answer,
+                  summary,
+                  keywords,
+                  category,
+                  source_type,
+                  created_at,
+                  updated_at,
+                  embedding_status
+                FROM qa_cards
+                WHERE user_id = %s
+                ORDER BY created_at ASC
+                """,
+                (self._user_id,),
+            )
+        else:
+            cursor = self._connection.execute(
+                """
+                SELECT
+                  card_id,
+                  question,
+                  answer,
+                  summary,
+                  keywords,
+                  category,
+                  source_type,
+                  created_at,
+                  updated_at,
+                  embedding_status
+                FROM qa_cards
+                WHERE user_id = %s AND category = %s
+                ORDER BY created_at ASC
+                """,
+                (self._user_id, clean_category),
+            )
+        return [_row_to_card(row) for row in _fetchall(cursor)]
+
+    def list_unvectorized_cards(self, limit: int | None = None) -> list[QACard]:
+        if limit is None:
+            cursor = self._connection.execute(
+                """
+                SELECT
+                  card_id,
+                  question,
+                  answer,
+                  summary,
+                  keywords,
+                  category,
+                  source_type,
+                  created_at,
+                  updated_at,
+                  embedding_status
+                FROM qa_cards
+                WHERE user_id = %s AND embedding_status != 'ready'
+                ORDER BY created_at ASC
+                """,
+                (self._user_id,),
+            )
+        else:
+            cursor = self._connection.execute(
+                """
+                SELECT
+                  card_id,
+                  question,
+                  answer,
+                  summary,
+                  keywords,
+                  category,
+                  source_type,
+                  created_at,
+                  updated_at,
+                  embedding_status
+                FROM qa_cards
+                WHERE user_id = %s AND embedding_status != 'ready'
+                ORDER BY created_at ASC
+                LIMIT %s
+                """,
+                (self._user_id, _safe_limit(limit)),
+            )
+        return [_row_to_card(row) for row in _fetchall(cursor)]
+
+    def read_cards_by_ids(self, card_ids: list[str], category: str | None = None) -> list[QACard]:
+        clean_category = self.validate_optional_category(category)
+        cards: list[QACard] = []
+        for card_id in card_ids:
+            if not isinstance(card_id, str) or not card_id.strip():
+                continue
+            card = self.read_card(card_id)
+            if card is not None and (clean_category is None or card.category == clean_category):
+                cards.append(card)
+        return cards
+
     def search_keyword_cards(
         self,
         query: str,
@@ -195,7 +296,7 @@ class PostgresQACardRepository:
     ) -> list[SearchResult]:
         clean_query = _require_text("query", query)
         safe_limit = _safe_limit(limit)
-        clean_category = _optional_text("category", category)
+        clean_category = self.validate_optional_category(category)
         pattern = f"%{clean_query}%"
         if clean_category is None:
             cursor = self._connection.execute(
@@ -305,7 +406,7 @@ class PostgresQACardRepository:
                 _optional_text("answer", answer),
                 _optional_text("summary", summary),
                 Jsonb(_clean_keywords(keywords)) if keywords is not None else None,
-                _optional_text("category", category),
+                self.validate_optional_category(category),
                 _optional_text("source_type", source_type),
                 self._user_id,
                 clean_card_id,
@@ -328,6 +429,38 @@ class PostgresQACardRepository:
         )
         self._commit()
         return _rowcount(cursor) > 0
+
+    def mark_card_vectorized(self, card_id: str) -> bool:
+        clean_card_id = _require_text("card_id", card_id)
+        cursor = self._connection.execute(
+            """
+            UPDATE qa_cards
+            SET
+              embedding_status = 'ready',
+              updated_at = now()
+            WHERE user_id = %s AND card_id = %s AND embedding IS NOT NULL
+            """,
+            (self._user_id, clean_card_id),
+        )
+        self._commit()
+        return _rowcount(cursor) > 0
+
+    @staticmethod
+    def validate_category(category: str) -> str:
+        if not isinstance(category, str) or not category.strip():
+            raise ValueError("category must be a non-empty string")
+        clean = category.strip()
+        if len(clean) > 24:
+            raise ValueError("category must be at most 24 characters")
+        if clean in FORBIDDEN_CATEGORIES:
+            raise ValueError(f"category cannot be a fallback category: {clean}")
+        return clean
+
+    @classmethod
+    def validate_optional_category(cls, category: str | None) -> str | None:
+        if category is None:
+            return None
+        return cls.validate_category(category)
 
     def update_embedding_status(
         self,

@@ -174,6 +174,131 @@ def test_list_recent_cards_filters_by_user_id_and_category_with_limit_param() ->
     assert params == ("usr_1", "Agent边界", 3)
 
 
+def test_list_all_cards_filters_by_user_id_and_orders_by_created_at_asc() -> None:
+    connection = FakeConnection()
+    connection.next_rows = [CARD_ROW]
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    cards = repo.list_all_cards()
+
+    assert [card.id for card in cards] == ["qa_1"]
+    sql, params = connection.executed[0]
+    assert "FROM qa_cards WHERE user_id = %s ORDER BY created_at ASC" in sql
+    assert params == ("usr_1",)
+
+
+def test_list_all_cards_filters_by_user_id_and_category() -> None:
+    connection = FakeConnection()
+    connection.next_rows = [CARD_ROW]
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    cards = repo.list_all_cards(category="Agent边界")
+
+    assert [card.id for card in cards] == ["qa_1"]
+    sql, params = connection.executed[0]
+    assert "WHERE user_id = %s AND category = %s" in sql
+    assert "ORDER BY created_at ASC" in sql
+    assert params == ("usr_1", "Agent边界")
+
+
+def test_read_cards_by_ids_preserves_input_order_and_filters_missing_or_cross_user() -> None:
+    connection = FakeConnection()
+    first_row = (
+        "qa_1",
+        "First question",
+        "First answer",
+        "First summary",
+        ["first"],
+        "Agent边界",
+        "manual_qa",
+        NOW,
+        LATER,
+        "ready",
+    )
+    second_row = (
+        "qa_2",
+        "Second question",
+        "Second answer",
+        "Second summary",
+        ["second"],
+        "Agent边界",
+        "manual_qa",
+        NOW,
+        LATER,
+        "pending",
+    )
+    rows_by_card_id = {"qa_1": first_row, "qa_2": second_row}
+
+    def execute(query: str, params: tuple[object, ...] = ()) -> FakeCursor:
+        connection.executed.append((" ".join(query.split()), params))
+        return FakeCursor(row=rows_by_card_id.get(params[1]))
+
+    connection.execute = execute  # type: ignore[method-assign]
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    cards = repo.read_cards_by_ids(["qa_2", "qa_missing", " ", "qa_1", "qa_cross_user"])
+
+    assert [card.id for card in cards] == ["qa_2", "qa_1"]
+    assert [params for _, params in connection.executed] == [
+        ("usr_1", "qa_2"),
+        ("usr_1", "qa_missing"),
+        ("usr_1", "qa_1"),
+        ("usr_1", "qa_cross_user"),
+    ]
+
+
+def test_read_cards_by_ids_applies_category_after_user_scoped_read() -> None:
+    connection = FakeConnection()
+    connection.next_row = CARD_ROW
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    cards = repo.read_cards_by_ids(["qa_1"], category="其他分类")
+
+    assert cards == []
+    sql, params = connection.executed[0]
+    assert "WHERE user_id = %s AND card_id = %s" in sql
+    assert params == ("usr_1", "qa_1")
+
+
+def test_list_unvectorized_cards_filters_by_user_id_status_and_limit_param() -> None:
+    connection = FakeConnection()
+    connection.next_rows = [
+        (
+            "qa_2",
+            "Question",
+            "Answer",
+            "Summary",
+            ["pending"],
+            "Postgres",
+            "manual_qa",
+            NOW,
+            LATER,
+            "pending",
+        )
+    ]
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    cards = repo.list_unvectorized_cards(limit=2)
+
+    assert [card.id for card in cards] == ["qa_2"]
+    sql, params = connection.executed[0]
+    assert "WHERE user_id = %s AND embedding_status != 'ready'" in sql
+    assert "ORDER BY created_at ASC LIMIT %s" in sql
+    assert params == ("usr_1", 2)
+
+
+def test_list_unvectorized_cards_without_limit_uses_user_id_only() -> None:
+    connection = FakeConnection()
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    assert repo.list_unvectorized_cards() == []
+
+    sql, params = connection.executed[0]
+    assert "WHERE user_id = %s AND embedding_status != 'ready'" in sql
+    assert "LIMIT %s" not in sql
+    assert params == ("usr_1",)
+
+
 def test_search_keyword_cards_uses_user_id_and_parameter_tuple_for_ilike_terms() -> None:
     connection = FakeConnection()
     connection.next_rows = [
@@ -296,6 +421,54 @@ def test_update_embedding_status_updates_only_user_scoped_card() -> None:
     assert "WHERE user_id = %s AND card_id = %s" in sql
     assert params == ("ready", "[0.1,0.2]", "text-embedding-v4", "usr_1", "qa_1")
     assert connection.commit_count == 1
+
+
+def test_mark_card_vectorized_sets_ready_only_for_user_scoped_card() -> None:
+    connection = FakeConnection()
+    connection.next_rowcount = 1
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    updated = repo.mark_card_vectorized("qa_1")
+
+    assert updated is True
+    sql, params = connection.executed[0]
+    assert "UPDATE qa_cards SET embedding_status = 'ready', updated_at = now()" in sql
+    assert "WHERE user_id = %s AND card_id = %s AND embedding IS NOT NULL" in sql
+    assert params == ("usr_1", "qa_1")
+    assert connection.commit_count == 1
+
+
+def test_mark_card_vectorized_returns_false_for_missing_or_cross_user_card() -> None:
+    connection = FakeConnection()
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    updated = repo.mark_card_vectorized("qa_cross_user")
+
+    assert updated is False
+    sql, params = connection.executed[0]
+    assert "WHERE user_id = %s AND card_id = %s" in sql
+    assert params == ("usr_1", "qa_cross_user")
+    assert connection.commit_count == 1
+
+
+def test_validate_category_matches_sqlite_repository_rules() -> None:
+    assert PostgresQACardRepository.validate_category(" Agent 开发 ") == "Agent 开发"
+
+    with pytest.raises(ValueError, match="fallback category"):
+        PostgresQACardRepository.validate_category("其他")
+
+    with pytest.raises(ValueError, match="at most 24 characters"):
+        PostgresQACardRepository.validate_category("过长分类" * 10)
+
+
+def test_category_filters_use_validation_before_sql() -> None:
+    connection = FakeConnection()
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    with pytest.raises(ValueError, match="fallback category"):
+        repo.search_cards("query", category="未分类")
+
+    assert connection.executed == []
 
 
 def test_update_embedding_status_rejects_ready_without_embedding() -> None:
