@@ -44,7 +44,7 @@ Make sure the password embedded in `database_url` is the same value written to `
 From the repository root:
 
 ```bash
-docker compose -f deploy/docker-compose.yml config
+sudo docker compose -f deploy/docker-compose.yml config
 ```
 
 The app container starts with `PKA_CLOUD_ONLY=true`; if `DATABASE_URL_FILE` cannot be read or resolves to an empty value, Web startup fails instead of falling back to local SQLite/Qdrant mode.
@@ -60,9 +60,9 @@ python scripts/init-postgres-schema.py && python -m personal_knowledge_agent web
 From the repository root:
 
 ```bash
-docker compose -f deploy/docker-compose.yml up -d --build
-docker compose -f deploy/docker-compose.yml ps
-docker compose -f deploy/docker-compose.yml logs --tail=100 app postgres nginx
+sudo docker compose -f deploy/docker-compose.yml up -d --build
+sudo docker compose -f deploy/docker-compose.yml ps
+sudo docker compose -f deploy/docker-compose.yml logs --tail=100 app postgres nginx
 ```
 
 Then open:
