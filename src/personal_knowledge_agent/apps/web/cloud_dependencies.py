@@ -113,6 +113,8 @@ class WebCloudDependencies:
 
 def create_web_cloud_dependencies(config: AgentConfig) -> WebCloudDependencies | None:
     if not config.database_url:
+        if config.cloud_only:
+            raise ValueError("DATABASE_URL is required when PKA_CLOUD_ONLY=true")
         return None
     pool = create_postgres_pool(config.database_url)
     try:

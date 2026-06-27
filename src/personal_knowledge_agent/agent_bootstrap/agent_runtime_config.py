@@ -34,6 +34,7 @@ class AgentConfig:
     mail_from: str | None = None
     session_secret: str | None = None
     dashscope_api_key: str | None = None
+    cloud_only: bool = False
     qwen_embedding_base_url: str = DEFAULT_QWEN_EMBEDDING_BASE_URL
     qwen_embedding_model: str = DEFAULT_QWEN_EMBEDDING_MODEL
     qwen_embedding_dimensions: int = DEFAULT_QWEN_EMBEDDING_DIMENSIONS
@@ -64,12 +65,13 @@ def load_config(env_path: str | Path = ".env") -> AgentConfig:
         allowed_login_emails=_parse_allowed_login_emails(os.environ.get("ALLOWED_LOGIN_EMAILS")),
         smtp_host=os.environ.get("SMTP_HOST"),
         smtp_port=int(os.environ.get("SMTP_PORT", "465")),
-        smtp_ssl=_parse_bool(os.environ.get("SMTP_SSL"), default=True),
+        smtp_ssl=_parse_bool(os.environ.get("SMTP_SSL"), default=True, name="SMTP_SSL"),
         smtp_user=os.environ.get("SMTP_USER"),
         smtp_password=read_secret("SMTP_PASSWORD"),
         mail_from=os.environ.get("MAIL_FROM"),
         session_secret=read_secret("SESSION_SECRET"),
-        dashscope_api_key=read_secret("DASHSCOPE_API_KEY"),
+        dashscope_api_key=read_secret("DASHSCOPE_API_KEY", allow_empty=True),
+        cloud_only=_parse_bool(os.environ.get("PKA_CLOUD_ONLY"), default=False, name="PKA_CLOUD_ONLY"),
         qwen_embedding_base_url=os.environ.get(
             "QWEN_EMBEDDING_BASE_URL",
             DEFAULT_QWEN_EMBEDDING_BASE_URL,
@@ -94,7 +96,7 @@ def _parse_allowed_login_emails(value: str | None) -> tuple[str, ...]:
     return emails
 
 
-def _parse_bool(value: str | None, *, default: bool) -> bool:
+def _parse_bool(value: str | None, *, default: bool, name: str = "boolean") -> bool:
     if value is None:
         return default
     normalized = value.strip().lower()
@@ -102,4 +104,4 @@ def _parse_bool(value: str | None, *, default: bool) -> bool:
         return True
     if normalized in {"0", "false", "no", "off"}:
         return False
-    raise ValueError(f"Invalid boolean value for SMTP_SSL: {value!r}")
+    raise ValueError(f"Invalid boolean value for {name}: {value!r}")

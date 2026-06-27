@@ -38,6 +38,7 @@ last_updated: "2026-06-27"
 | `docs/architecture/` | 代码地图等架构说明文档目录。 |
 | `docs/guidelines/` | AI Coding 协作偏好和行为规约目录。 |
 | `docs/templates/` | Agent 开发上下文和代码地图模板目录。 |
+| `deploy/` | 单机 Docker Compose 部署底座、nginx HTTP 临时反代配置和服务器部署说明。 |
 | `scripts/` | 本地维护和格式检查脚本。 |
 | `tests/` | 自动化测试。 |
 
@@ -53,6 +54,16 @@ last_updated: "2026-06-27"
 |---|---|
 | `__init__.py` | 标记 Python 包。 |
 | `__main__.py` | CLI 根入口薄转发，供 `python -m personal_knowledge_agent` 和 `pka` 使用。 |
+
+### Root Deployment
+
+模块目录：项目根目录
+
+模块作用：提供容器镜像构建入口。
+
+| 文件 | 作用 |
+|---|---|
+| `Dockerfile` | 构建运行 Web app 的生产容器镜像，设置 `PYTHONPATH=/app/src` 并使用 `python -m personal_knowledge_agent web --host 0.0.0.0 --port 8787 --no-open` 启动。 |
 
 ### Agent Bootstrap
 
@@ -302,6 +313,19 @@ last_updated: "2026-06-27"
 | `templates/agent-development-context.template.md` | Agent 开发上下文文档模板。 |
 | `templates/codebase-map.template.md` | 代码地图文档模板。 |
 
+### Deploy
+
+模块目录：`deploy/`
+
+模块作用：保存单机云端 Docker Compose 部署底座和服务器侧操作说明。
+
+| 文件 | 作用 |
+|---|---|
+| `.gitignore` | 忽略服务器本地 secrets、backups、override compose 和本地 env 文件。 |
+| `docker-compose.yml` | 编排 Web app、PostgreSQL pgvector 和 nginx；数据库只在 Compose 内网暴露。 |
+| `nginx.conf` | 提供 HTTP 临时反代和 SSE 基本代理设置。 |
+| `README.md` | 说明服务器 root-only secrets 文件、QQ SMTP、数据库 URL、API key、session secret 和临时 HTTP 边界。 |
+
 ### Scripts
 
 模块目录：`scripts/`
@@ -315,6 +339,8 @@ last_updated: "2026-06-27"
 | `check-agent-doc-format.py` | 检查 Agent 开发上下文模板、具体 Agent 文档格式和文档篇幅告警。 |
 | `check-codebase-map-format.py` | 检查代码地图模板和实际代码地图格式。 |
 | `clean-merged-branches.sh` | 清理已合并的本地分支。 |
+| `init-postgres-schema.py` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串并初始化 PostgreSQL schema。 |
+| `backup-postgres.sh` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串，执行 `pg_dump | gzip` 并保留最近 N 份备份。 |
 | `migrate-sqlite-qa-to-postgres.py` | 将旧 SQLite `qa_cards` 迁移到指定邮箱对应的 PostgreSQL 用户，不迁移 session、todo、memory 或 Qdrant。 |
 | `rebuild-postgres-qa-embeddings.py` | 为指定邮箱用户的 PostgreSQL Q&A 卡片重建 pgvector embedding。 |
 
@@ -341,6 +367,7 @@ last_updated: "2026-06-27"
 | `test_postgres_qa_repository.py` | 覆盖 PostgreSQL Q&A card repository 的用户隔离、字段映射和参数化 SQL。 |
 | `test_postgres_qa_semantic_index.py` | 覆盖 PostgreSQL / pgvector Q&A 语义索引适配。 |
 | `test_postgres_schema.py` | 覆盖 PostgreSQL schema 初始化 SQL 和幂等执行。 |
+| `test_init_postgres_schema.py` | 覆盖 PostgreSQL schema 初始化脚本的 `DATABASE_URL` / `DATABASE_URL_FILE` 读取和初始化调用。 |
 | `test_postgres_session_repository.py` | 覆盖 PostgreSQL conversation session repository 的用户隔离、消息 JSONB 和状态更新。 |
 | `test_postgres_todo_repository.py` | 覆盖 PostgreSQL todo repository 的用户隔离、状态校验和参数化 SQL。 |
 | `test_migrate_sqlite_qa_to_postgres.py` | 覆盖 SQLite Q&A 到 PostgreSQL 迁移脚本的 CLI、用户查找、字段解析、dry-run 和 upsert SQL。 |

@@ -42,6 +42,19 @@ def test_read_secret_reports_empty_file(tmp_path):
         read_secret("SMTP_PASSWORD", environ={"SMTP_PASSWORD_FILE": str(secret_file)})
 
 
+def test_read_secret_can_treat_empty_optional_file_as_unset(tmp_path):
+    secret_file = tmp_path / "empty.txt"
+    secret_file.write_text("\n", encoding="utf-8")
+
+    value = read_secret(
+        "DASHSCOPE_API_KEY",
+        allow_empty=True,
+        environ={"DASHSCOPE_API_KEY_FILE": str(secret_file)},
+    )
+
+    assert value is None
+
+
 def test_token_helpers_generate_and_verify_values():
     token = generate_token()
     token_hash = hash_token(token)

@@ -182,6 +182,26 @@ def test_create_web_cloud_dependencies_returns_none_without_database_url(tmp_pat
     assert created_database_urls == []
 
 
+def test_create_web_cloud_dependencies_rejects_local_fallback_when_cloud_only(tmp_path, monkeypatch):
+    created_database_urls = []
+    monkeypatch.setattr(module, "create_postgres_pool", lambda database_url: created_database_urls.append(database_url))
+    config = AgentConfig(
+        deepseek_api_key="test-key",
+        deepseek_model="test-model",
+        knowledge_db_path=tmp_path / "knowledge.db",
+        cloud_only=True,
+    )
+
+    try:
+        create_web_cloud_dependencies(config)
+    except ValueError as exc:
+        assert "DATABASE_URL is required when PKA_CLOUD_ONLY=true" in str(exc)
+    else:
+        raise AssertionError("Expected cloud-only database URL error")
+
+    assert created_database_urls == []
+
+
 def test_create_web_cloud_dependencies_closes_pool_when_smtp_config_is_missing(tmp_path, monkeypatch):
     pool = FakePool()
     closed_pools = []

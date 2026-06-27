@@ -34,6 +34,7 @@ def test_load_config_reads_dotenv(tmp_path, monkeypatch):
     assert config.mail_from is None
     assert config.session_secret is None
     assert config.dashscope_api_key is None
+    assert config.cloud_only is False
     assert config.qwen_embedding_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert config.qwen_embedding_model == "text-embedding-v4"
     assert config.qwen_embedding_dimensions == 1024
@@ -104,7 +105,8 @@ def test_load_config_reads_cloud_runtime_settings(tmp_path, monkeypatch):
         "SMTP_USER=smtp-user\n"
         "SMTP_PASSWORD=smtp-password\n"
         "MAIL_FROM=agent@example.test\n"
-        "SESSION_SECRET=session-secret\n",
+        "SESSION_SECRET=session-secret\n"
+        "PKA_CLOUD_ONLY=true\n",
         encoding="utf-8",
     )
 
@@ -122,6 +124,7 @@ def test_load_config_reads_cloud_runtime_settings(tmp_path, monkeypatch):
         "MAIL_FROM",
         "SESSION_SECRET",
         "SESSION_SECRET_FILE",
+        "PKA_CLOUD_ONLY",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -136,6 +139,7 @@ def test_load_config_reads_cloud_runtime_settings(tmp_path, monkeypatch):
     assert config.smtp_password == "smtp-password"
     assert config.mail_from == "agent@example.test"
     assert config.session_secret == "session-secret"
+    assert config.cloud_only is True
 
 
 def test_load_config_prefers_secret_files(tmp_path, monkeypatch):
