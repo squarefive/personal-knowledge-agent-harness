@@ -224,6 +224,18 @@ def make_client(agent=None, tools=None):
     return TestClient(app)
 
 
+def make_auth_client(agent=None, tools=None):
+    auth_service = FakeAuthService()
+    app = create_web_app(
+        agent=agent or FakeAgent(),
+        tools=tools or FakeTools(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+    )
+    client = TestClient(app)
+    return client, auth_service
+
+
 def read_sse_events(response):
     events = []
     for block in response.text.strip().split("\n\n"):
@@ -413,6 +425,69 @@ def test_chat_stream_returns_agent_answer():
     assert events[-1]["event_type"] == "final_answer_generated"
     assert events[-1]["answer"] == "reply: 你好"
     assert agent.inputs == ["你好"]
+
+
+def test_business_chat_stream_requires_authenticated_cookie_when_auth_service_is_configured():
+    agent = FakeAgent()
+    client, auth_service = make_auth_client(agent=agent)
+
+    response = client.post("/api/chat/stream", json={"message": "你好"})
+
+    assert response.status_code == 200
+    events = read_sse_events(response)
+    assert events[-1]["event_type"] == "error"
+    assert events[-1]["error_code"] == "not_authenticated"
+    assert agent.inputs == []
+    assert auth_service.authenticated_tokens == []
+
+
+def test_business_json_apis_require_authenticated_cookie_when_auth_service_is_configured():
+    client, auth_service = make_auth_client()
+    cases = [
+        ("get", "/api/cards/recent", None),
+        ("get", "/api/cards/search?q=本地", None),
+        ("get", "/api/cards/qa_1", None),
+        ("post", "/api/sessions", None),
+        ("get", "/api/sessions", None),
+        ("patch", "/api/sessions/session_1", {"title": "新标题"}),
+        ("get", "/api/sessions/session_1/messages", None),
+        ("post", "/api/approvals/approval_1", {"decision": "approve"}),
+    ]
+
+    for method, path, json_body in cases:
+        response = getattr(client, method)(path, json=json_body) if json_body is not None else getattr(client, method)(path)
+        assert response.status_code == 200
+        assert response.json()["ok"] is False
+        assert response.json()["error_code"] == "not_authenticated"
+    assert auth_service.authenticated_tokens == []
+
+
+def test_authenticated_business_apis_keep_existing_chat_cards_and_sessions_behavior(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    agent = FakeAgent()
+    client, auth_service = make_auth_client(agent=agent)
+    client.cookies.set("pka_session", "plain-session-token")
+
+    chat_response = client.post("/api/chat/stream", json={"message": "你好"})
+    recent_response = client.get("/api/cards/recent")
+    search_response = client.get("/api/cards/search?q=本地")
+    card_response = client.get("/api/cards/qa_1")
+    created_response = client.post("/api/sessions")
+    listed_response = client.get("/api/sessions")
+    session_id = created_response.json()["session"]["session_id"]
+    renamed_response = client.patch(f"/api/sessions/{session_id}", json={"title": "新标题"})
+    messages_response = client.get(f"/api/sessions/{session_id}/messages")
+
+    assert read_sse_events(chat_response)[-1]["answer"] == "reply: 你好"
+    assert recent_response.json()["cards"][0]["card_id"] == "qa_1"
+    assert search_response.json()["cards"][0]["question"] == "本地"
+    assert card_response.json()["card"]["card_id"] == "qa_1"
+    assert created_response.json()["ok"] is True
+    assert listed_response.json()["sessions"][0]["session_id"] == session_id
+    assert renamed_response.json()["session"]["title"] == "新标题"
+    assert messages_response.json()["messages"] == []
+    assert agent.inputs == ["你好"]
+    assert auth_service.authenticated_tokens == ["plain-session-token"] * 8
 
 
 def test_chat_route_is_removed():

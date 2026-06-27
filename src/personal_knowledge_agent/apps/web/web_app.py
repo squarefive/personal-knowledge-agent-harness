@@ -308,6 +308,19 @@ def create_web_app(
     def make_approval_callback(runner: WebSessionRunner) -> Callable[[ApprovalRequest], bool]:
         return lambda request: request_web_approval(runner, request)
 
+    def require_business_authentication(pka_session: str | None) -> dict[str, Any] | None:
+        if auth_service is None:
+            return None
+        if not pka_session:
+            return _business_authentication_error()
+        try:
+            result = auth_service.authenticate_session_token(pka_session)
+        except Exception:
+            return _business_authentication_error()
+        if not getattr(result, "ok", False):
+            return _business_authentication_error()
+        return None
+
     def get_runner(session_id: str) -> WebSessionRunner:
         safe_session_id = validate_session_id(session_id)
         with runners_lock:
@@ -423,11 +436,21 @@ def create_web_app(
             return _error("auth_logout_error", "logout failed")
 
     @app.post("/api/approvals/{approval_id}")
-    def resolve_approval(approval_id: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
+    def resolve_approval(
+        approval_id: str,
+        request: ApprovalDecisionRequest,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         return approval_manager.resolve(approval_id, request.decision)
 
     @app.post("/api/sessions")
-    def create_session() -> dict[str, Any]:
+    def create_session(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         session_id = f"session_{uuid.uuid4().hex[:SESSION_ID_SUFFIX_CHARS]}"
         metadata = ConversationSessionMetadataRepository(
             workspace_root,
@@ -436,12 +459,22 @@ def create_web_app(
         return {"ok": True, "session": _metadata_payload(metadata)}
 
     @app.get("/api/sessions")
-    def list_sessions() -> dict[str, Any]:
+    def list_sessions(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         sessions = ConversationSessionMetadataRepository(workspace_root).list_sessions()
         return {"ok": True, "sessions": [_metadata_payload(metadata) for metadata in sessions]}
 
     @app.patch("/api/sessions/{session_id}")
-    def rename_session(session_id: str, request: RenameSessionRequest) -> dict[str, Any]:
+    def rename_session(
+        session_id: str,
+        request: RenameSessionRequest,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         try:
             metadata = ConversationSessionMetadataRepository(
                 workspace_root,
@@ -452,7 +485,13 @@ def create_web_app(
             return _error("session_rename_error", str(exc))
 
     @app.get("/api/sessions/{session_id}/messages")
-    def read_session_messages(session_id: str) -> dict[str, Any]:
+    def read_session_messages(
+        session_id: str,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         try:
             transcript = ConversationTranscriptRepository(workspace_root, session_id=session_id)
             return {"ok": True, "messages": transcript.load_display_messages()}
@@ -460,13 +499,21 @@ def create_web_app(
             return _error("session_read_error", str(exc))
 
     @app.post("/api/chat/stream")
-    def chat_stream(request: ChatRequest) -> StreamingResponse:
+    def chat_stream(
+        request: ChatRequest,
+        pka_session: str | None = Cookie(default=None),
+    ) -> StreamingResponse:
         message = request.message.strip()
         session_id = request.session_id or "default"
         event_queue: queue.Queue[dict[str, Any] | object] = queue.Queue()
         done = object()
 
         def run_agent() -> None:
+            auth_error = require_business_authentication(pka_session)
+            if auth_error is not None:
+                event_queue.put(_event_error(auth_error["error_code"], auth_error["message"]))
+                event_queue.put(done)
+                return
             if not message:
                 event_queue.put(_event_error("invalid_input", "message must be a non-empty string"))
                 event_queue.put(done)
@@ -520,7 +567,11 @@ def create_web_app(
     @app.get("/api/cards/recent")
     def recent_cards(
         limit: int = Query(default=DEFAULT_CARD_LIMIT, ge=MIN_CARD_LIMIT, le=MAX_CARD_LIMIT),
+        pka_session: str | None = Cookie(default=None),
     ) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         try:
             return tools.list_recent_cards({"limit": limit})
         except Exception as exc:
@@ -530,7 +581,11 @@ def create_web_app(
     def search_cards(
         q: str = Query(default="", alias="q"),
         limit: int = Query(default=DEFAULT_CARD_LIMIT, ge=MIN_CARD_LIMIT, le=MAX_CARD_LIMIT),
+        pka_session: str | None = Cookie(default=None),
     ) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         query = q.strip()
         if not query:
             return _error("invalid_input", "q must be a non-empty string")
@@ -540,7 +595,13 @@ def create_web_app(
             return _error("card_search_error", str(exc))
 
     @app.get("/api/cards/{card_id}")
-    def read_card(card_id: str) -> dict[str, Any]:
+    def read_card(
+        card_id: str,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_error = require_business_authentication(pka_session)
+        if auth_error is not None:
+            return auth_error
         try:
             return tools.read_qa_card({"card_id": card_id})
         except Exception as exc:
@@ -551,6 +612,10 @@ def create_web_app(
 
 def _error(error_code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error_code": error_code, "message": message}
+
+
+def _business_authentication_error() -> dict[str, Any]:
+    return _error("not_authenticated", "authentication is required")
 
 
 def _auth_failure_payload(result: Any) -> dict[str, Any]:
