@@ -70,6 +70,19 @@ def test_create_session_writes_user_id_and_returns_lightweight_metadata() -> Non
     assert connection.commit_count == 1
 
 
+def test_create_session_allows_same_session_id_for_different_users() -> None:
+    connection = FakeConnection()
+    connection.rows_by_call = [SESSION_ROW, SESSION_ROW]
+    first_repo = PostgresConversationSessionRepository(connection, "usr_1")
+    second_repo = PostgresConversationSessionRepository(connection, "usr_2")
+
+    first_repo.create_session(session_id="shared")
+    second_repo.create_session(session_id="shared")
+
+    assert connection.executed[0][1] == ("shared", "usr_1", None)
+    assert connection.executed[1][1] == ("shared", "usr_2", None)
+
+
 def test_list_sessions_filters_by_user_id_and_limit() -> None:
     connection = FakeConnection()
     connection.next_rows = [SESSION_ROW]

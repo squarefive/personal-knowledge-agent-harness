@@ -51,7 +51,7 @@ def test_initialize_postgres_schema_executes_expected_ddl() -> None:
     assert "embedding_model TEXT" in sql
     assert "legacy_source TEXT" in sql
     assert "legacy_card_id TEXT" in sql
-    assert "UNIQUE (user_id, session_id)" in sql
+    assert "PRIMARY KEY (user_id, session_id)" in sql
     assert "FOREIGN KEY (user_id, session_id)" in sql
     assert "REFERENCES conversation_sessions(user_id, session_id)" in sql
 
@@ -86,3 +86,18 @@ def test_business_tables_include_user_id() -> None:
         "agent_user_memories",
     ):
         assert "user_id TEXT NOT NULL REFERENCES users(user_id)" in sql_by_table[table_name]
+
+
+def test_conversation_sessions_use_user_scoped_session_id_key() -> None:
+    sql_by_table = {
+        statement.split("CREATE TABLE IF NOT EXISTS ", 1)[1].split(" ", 1)[0]: " ".join(statement.split())
+        for statement in POSTGRES_SCHEMA_STATEMENTS
+        if "CREATE TABLE IF NOT EXISTS" in statement
+    }
+
+    session_sql = sql_by_table["conversation_sessions"]
+    message_sql = sql_by_table["conversation_messages"]
+    assert "session_id TEXT PRIMARY KEY" not in session_sql
+    assert "PRIMARY KEY (user_id, session_id)" in session_sql
+    assert "REFERENCES conversation_sessions(user_id, session_id)" in message_sql
+    assert "UNIQUE (user_id, session_id, sequence_no)" in message_sql

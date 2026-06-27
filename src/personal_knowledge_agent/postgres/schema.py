@@ -79,7 +79,7 @@ POSTGRES_SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     """
     CREATE TABLE IF NOT EXISTS conversation_sessions (
-      session_id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
       user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
       title TEXT,
       summary TEXT,
@@ -87,7 +87,7 @@ POSTGRES_SCHEMA_STATEMENTS: tuple[str, ...] = (
       current_run_id TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      UNIQUE (user_id, session_id),
+      PRIMARY KEY (user_id, session_id),
       CHECK (status IN ('idle', 'running'))
     )
     """,
