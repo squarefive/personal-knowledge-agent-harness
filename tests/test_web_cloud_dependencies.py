@@ -8,6 +8,7 @@ from personal_knowledge_agent.apps.web.cloud_dependencies import (
 )
 from personal_knowledge_agent.auth import AuthService
 from personal_knowledge_agent.mail import SmtpEmailSender
+from personal_knowledge_agent.postgres import PostgresQASemanticIndex
 
 
 class FakePool:
@@ -117,6 +118,53 @@ def test_pooled_conversation_session_repository_uses_current_user(monkeypatch):
         ("init", "connection", "usr_1"),
         ("messages", "usr_1", "session_1"),
     ]
+
+
+def test_cloud_user_tool_factory_injects_postgres_semantic_index_when_embedding_key_is_configured() -> None:
+    class FakeConnectionContext:
+        def __enter__(self):
+            return "connection"
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakePool:
+        def connection(self):
+            return FakeConnectionContext()
+
+    factory = CloudUserToolFactory(
+        FakePool(),
+        dashscope_api_key="dashscope-key",
+        embedding_base_url="https://dashscope.example/v1",
+        embedding_model="text-embedding-v4",
+        embedding_dimensions=1024,
+    )
+
+    with factory.open_tools("usr_1") as tools:
+        semantic_index = tools.tools.semantic_index
+
+    assert isinstance(semantic_index, PostgresQASemanticIndex)
+    assert semantic_index.embedding_client.api_key == "dashscope-key"
+    assert semantic_index.embedding_client.base_url == "https://dashscope.example/v1"
+    assert semantic_index.embedding_client.model == "text-embedding-v4"
+
+
+def test_cloud_user_tool_factory_keeps_semantic_index_none_without_embedding_key() -> None:
+    class FakeConnectionContext:
+        def __enter__(self):
+            return "connection"
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakePool:
+        def connection(self):
+            return FakeConnectionContext()
+
+    factory = CloudUserToolFactory(FakePool(), dashscope_api_key=None)
+
+    with factory.open_tools("usr_1") as tools:
+        assert tools.tools.semantic_index is None
 
 
 def test_create_web_cloud_dependencies_returns_none_without_database_url(tmp_path, monkeypatch):

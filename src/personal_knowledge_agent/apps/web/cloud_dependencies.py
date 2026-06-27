@@ -6,15 +6,22 @@ from datetime import datetime
 from typing import Any, Iterator
 
 from ...agent_bootstrap import AgentConfig
+from ...agent_bootstrap.agent_runtime_config import (
+    DEFAULT_QWEN_EMBEDDING_BASE_URL,
+    DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
+    DEFAULT_QWEN_EMBEDDING_MODEL,
+)
 from ...agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 from ...agent_tools.todo_tools import TodoToolHandlers
 from ...auth import AuthService, AuthSessionRecord, AuthSessionWithUserRecord, AuthUser, LoginCodeRecord
+from ...llm_clients import QwenEmbeddingClient
 from ...mail import SmtpEmailConfig, SmtpEmailSender
 from ...postgres import (
     PostgresAgentMemoryRepository,
     PostgresAuthRepository,
     PostgresConversationSessionRepository,
     PostgresQACardRepository,
+    PostgresQASemanticIndex,
     PostgresTodoRepository,
     close_postgres_pool,
     create_postgres_pool,
@@ -28,15 +35,37 @@ class CloudUserTools:
     memory_index_store: PostgresAgentMemoryRepository
     memory_store: PostgresAgentMemoryRepository
 
+    def close(self) -> None:
+        semantic_index = getattr(self.tools, "semantic_index", None)
+        close = getattr(semantic_index, "close", None)
+        if callable(close):
+            close()
+
 
 class CloudUserToolFactory:
-    def __init__(self, pool: Any) -> None:
+    def __init__(
+        self,
+        pool: Any,
+        *,
+        dashscope_api_key: str | None = None,
+        embedding_base_url: str = DEFAULT_QWEN_EMBEDDING_BASE_URL,
+        embedding_model: str = DEFAULT_QWEN_EMBEDDING_MODEL,
+        embedding_dimensions: int = DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
+    ) -> None:
         self._pool = pool
+        self._dashscope_api_key = dashscope_api_key
+        self._embedding_base_url = embedding_base_url
+        self._embedding_model = embedding_model
+        self._embedding_dimensions = embedding_dimensions
 
     @contextmanager
     def open_tools(self, user_id: str) -> Iterator[CloudUserTools]:
         with self._pool.connection() as connection:
-            yield self._build_tools(connection, user_id)
+            tools = self._build_tools(connection, user_id)
+            try:
+                yield tools
+            finally:
+                tools.close()
 
     def create_persistent_tools(self, user_id: str) -> tuple[CloudUserTools, Any]:
         connection = self._pool.getconn()
@@ -53,12 +82,24 @@ class CloudUserToolFactory:
         qa_store = PostgresQACardRepository(connection, user_id)
         todo_store = PostgresTodoRepository(connection, user_id)
         memory_store = PostgresAgentMemoryRepository(connection, user_id)
+        semantic_index = self._build_semantic_index(qa_store)
         return CloudUserTools(
-            tools=QAKnowledgeToolHandlers(qa_store, semantic_index=None),
+            tools=QAKnowledgeToolHandlers(qa_store, semantic_index=semantic_index),
             todo_tools=TodoToolHandlers(todo_store),
             memory_index_store=memory_store,
             memory_store=memory_store,
         )
+
+    def _build_semantic_index(self, qa_store: PostgresQACardRepository) -> PostgresQASemanticIndex | None:
+        if not self._dashscope_api_key:
+            return None
+        embedding_client = QwenEmbeddingClient(
+            api_key=self._dashscope_api_key,
+            base_url=self._embedding_base_url,
+            model=self._embedding_model,
+            dimensions=self._embedding_dimensions,
+        )
+        return PostgresQASemanticIndex(qa_store, embedding_client)
 
 
 @dataclass(frozen=True)
@@ -84,7 +125,13 @@ def create_web_cloud_dependencies(config: AgentConfig) -> WebCloudDependencies |
             pool=pool,
             auth_service=auth_service,
             email_sender=email_sender,
-            user_tool_factory=CloudUserToolFactory(pool),
+            user_tool_factory=CloudUserToolFactory(
+                pool,
+                dashscope_api_key=config.dashscope_api_key,
+                embedding_base_url=config.qwen_embedding_base_url,
+                embedding_model=config.qwen_embedding_model,
+                embedding_dimensions=config.qwen_embedding_dimensions,
+            ),
             session_repository=PooledConversationSessionRepository(pool),
         )
     except Exception:

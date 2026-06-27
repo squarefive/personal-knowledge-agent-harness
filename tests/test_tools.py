@@ -119,6 +119,36 @@ def test_tool_definitions_include_parameter_descriptions(tmp_path):
             assert property_schema["description"]
 
 
+def test_qa_tool_schema_does_not_expose_legacy_storage_descriptions(tmp_path):
+    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    dispatcher = ToolDispatcher(qa_tools, create_memory_tools(tmp_path))
+
+    qa_schema_text = json.dumps(
+        [
+            definition
+            for definition in dispatcher.definitions()
+            if definition["function"]["name"]
+            in {
+                "save_qa_card",
+                "search_qa_cards",
+                "hybrid_search_qa_cards",
+                "read_qa_card",
+                "update_qa_card",
+                "delete_qa_card",
+                "list_recent_cards",
+                "detect_duplicate_cards",
+                "merge_qa_cards",
+                "rebuild_qa_semantic_index",
+            }
+        ],
+        ensure_ascii=False,
+    )
+
+    assert "SQLite" not in qa_schema_text
+    assert "Qdrant" not in qa_schema_text
+    assert "本地" not in qa_schema_text
+
+
 def test_detect_duplicate_cards_definition_includes_all_scope(tmp_path):
     tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
     definition = next(
@@ -129,7 +159,7 @@ def test_detect_duplicate_cards_definition_includes_all_scope(tmp_path):
     properties = definition["function"]["parameters"]["properties"]
 
     assert properties["scope"]["enum"] == ["target", "all"]
-    assert "all 检测本地知识库全部 Q&A 卡片" in properties["scope"]["description"]
+    assert "all 检测知识库全部 Q&A 卡片" in properties["scope"]["description"]
 
 
 def test_save_qa_card_validates_required_fields(tmp_path):
@@ -380,7 +410,7 @@ def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tm
 
     assert result["ok"] is True
     assert result["cards"] == []
-    assert result["message"] == "没有找到足够相关的本地知识卡片。"
+    assert result["message"] == "没有找到足够相关的知识卡片。"
 
 
 def test_search_and_recent_cards_filter_by_category(tmp_path):
@@ -502,7 +532,7 @@ def test_hybrid_search_does_not_fallback_across_category(tmp_path):
 
     assert result["ok"] is True
     assert result["cards"] == []
-    assert result["message"] == "指定 category 下没有找到相关本地知识卡片。"
+    assert result["message"] == "指定 category 下没有找到相关知识卡片。"
 
 
 def test_detect_duplicate_cards_filters_self_and_auto_returns_only_duplicates(tmp_path):

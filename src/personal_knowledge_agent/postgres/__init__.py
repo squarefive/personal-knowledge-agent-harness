@@ -4,6 +4,7 @@ from .auth_repository import PostgresAuthRepository
 from .memory_repository import PostgresAgentMemoryRepository
 from .postgres_pool import close_postgres_pool, create_postgres_pool
 from .qa_repository import PostgresQACardRepository
+from .qa_semantic_index import PostgresQASemanticIndex
 from .schema import POSTGRES_SCHEMA_STATEMENTS, initialize_postgres_schema
 from .session_repository import ConversationSessionRecord, PostgresConversationSessionRepository
 from .session_runtime_adapters import (
@@ -23,6 +24,7 @@ __all__ = [
     "PostgresConversationSessionRepository",
     "PostgresConversationTranscriptAdapter",
     "PostgresQACardRepository",
+    "PostgresQASemanticIndex",
     "PostgresRuntimeContextCompactor",
     "PostgresSessionMetadataAdapter",
     "PostgresTodoRepository",

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -9,17 +8,11 @@ import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, PointIdsList, PointStruct, VectorParams
 
-from .qa_card_models import QACard
+from .qa_card_models import QACard, SemanticSearchHit
 
 
 class QACardSemanticIndexError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True)
-class SemanticSearchHit:
-    card_id: str
-    score: float
 
 
 class QACardSemanticIndex:

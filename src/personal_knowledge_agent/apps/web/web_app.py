@@ -339,6 +339,11 @@ def create_web_app(
     def make_approval_callback(runner: WebSessionRunner) -> Callable[[ApprovalRequest], bool]:
         return lambda request: request_web_approval(runner, request)
 
+    def close_persistent_cloud_tools(cloud_tools: Any | None, connection: Any) -> None:
+        if cloud_tools is not None:
+            cloud_tools.close()
+        user_tool_factory.close_persistent_tools(connection)
+
     def authenticate_business_session(
         pka_session: str | None,
     ) -> AuthenticatedSessionDependency | dict[str, Any] | None:
@@ -422,7 +427,10 @@ def create_web_app(
                 placeholder.agent = components.agent
                 if persistent_connection is not None:
                     placeholder.close_callback = (
-                        lambda connection=persistent_connection: user_tool_factory.close_persistent_tools(connection)
+                        lambda tools=cloud_tools, connection=persistent_connection: close_persistent_cloud_tools(
+                            tools,
+                            connection,
+                        )
                     )
                 runner = placeholder
             runners[runner_key] = runner

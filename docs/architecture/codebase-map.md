@@ -22,7 +22,7 @@ last_updated: "2026-06-27"
 | `src/personal_knowledge_agent/agent_tools/qa_knowledge_tools/` | Q&A 知识工具 handler。 |
 | `src/personal_knowledge_agent/agent_tools/agent_memory_tools/` | Agent memory 读取工具 handler。 |
 | `src/personal_knowledge_agent/agent_tools/todo_tools/` | Todo 待办工具 handler。 |
-| `src/personal_knowledge_agent/qa_data_access/` | Q&A card 的 SQLite 和 Qdrant 数据访问。 |
+| `src/personal_knowledge_agent/qa_data_access/` | 旧默认路径的 Q&A card SQLite 和 Qdrant 数据访问。 |
 | `src/personal_knowledge_agent/todo_data_access/` | Todo 待办项的 SQLite 数据访问。 |
 | `src/personal_knowledge_agent/auth/` | 邮箱验证码登录的认证核心服务和仓储协议。 |
 | `src/personal_knowledge_agent/postgres/` | PostgreSQL 连接池和基础 schema 初始化。 |
@@ -150,7 +150,7 @@ last_updated: "2026-06-27"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Q&A 数据访问组件。 |
-| `qa_card_models.py` | 定义 Q&A card 和关键词检索结果数据结构。 |
+| `qa_card_models.py` | 定义 Q&A card、关键词检索结果和语义检索命中数据结构。 |
 | `qa_card_repository.py` | 初始化和读写 SQLite `qa_cards` 表。 |
 | `qa_card_semantic_index.py` | 封装 DashScope embedding 和 Qdrant local mode 语义索引。 |
 | `duplicate_detection.py` | 提供本地 Q&A 全库重复检测服务，负责候选召回、相似度打分和重复组构建。 |
@@ -192,6 +192,7 @@ last_updated: "2026-06-27"
 | `memory_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL user-preference memory 读取仓储。 |
 | `postgres_pool.py` | 从 `database_url` 创建连接池并关闭连接池。 |
 | `qa_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL Q&A card 数据访问。 |
+| `qa_semantic_index.py` | 实现基于 PostgreSQL / pgvector 的 Q&A 语义索引适配。 |
 | `schema.py` | 执行 pgvector 扩展和最小业务表的幂等 schema 初始化。 |
 | `session_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL conversation session 数据访问。 |
 | `session_runtime_adapters.py` | 将 PostgreSQL session 仓储适配为 Agent runtime transcript、metadata、summary 和 compact 依赖。 |
@@ -221,6 +222,7 @@ last_updated: "2026-06-27"
 | `__init__.py` | 导出 LLM client。 |
 | `deepseek_chat_client.py` | DeepSeek streaming chat 薄客户端和响应转换。 |
 | `llm_models.py` | 定义 LLMResponse 数据结构。 |
+| `qwen_embedding_client.py` | Qwen / DashScope embedding 薄客户端。 |
 
 ### Mail
 
@@ -314,6 +316,7 @@ last_updated: "2026-06-27"
 | `check-codebase-map-format.py` | 检查代码地图模板和实际代码地图格式。 |
 | `clean-merged-branches.sh` | 清理已合并的本地分支。 |
 | `migrate-sqlite-qa-to-postgres.py` | 将旧 SQLite `qa_cards` 迁移到指定邮箱对应的 PostgreSQL 用户，不迁移 session、todo、memory 或 Qdrant。 |
+| `rebuild-postgres-qa-embeddings.py` | 为指定邮箱用户的 PostgreSQL Q&A 卡片重建 pgvector embedding。 |
 
 ### Tests
 
@@ -336,10 +339,12 @@ last_updated: "2026-06-27"
 | `test_mailer.py` | 覆盖 SMTP 邮件发送 adapter。 |
 | `test_postgres_auth_repository.py` | 覆盖 PostgreSQL 认证仓储 SQL 参数化、字段映射和 hash-only 写入。 |
 | `test_postgres_qa_repository.py` | 覆盖 PostgreSQL Q&A card repository 的用户隔离、字段映射和参数化 SQL。 |
+| `test_postgres_qa_semantic_index.py` | 覆盖 PostgreSQL / pgvector Q&A 语义索引适配。 |
 | `test_postgres_schema.py` | 覆盖 PostgreSQL schema 初始化 SQL 和幂等执行。 |
 | `test_postgres_session_repository.py` | 覆盖 PostgreSQL conversation session repository 的用户隔离、消息 JSONB 和状态更新。 |
 | `test_postgres_todo_repository.py` | 覆盖 PostgreSQL todo repository 的用户隔离、状态校验和参数化 SQL。 |
 | `test_migrate_sqlite_qa_to_postgres.py` | 覆盖 SQLite Q&A 到 PostgreSQL 迁移脚本的 CLI、用户查找、字段解析、dry-run 和 upsert SQL。 |
+| `test_rebuild_postgres_qa_embeddings.py` | 覆盖 PostgreSQL Q&A embedding 重建脚本的用户定位、成功和失败续跑。 |
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |
 | `test_web_app.py` | 覆盖 Web API、SSE 聊天、session 隔离和卡片接口。 |

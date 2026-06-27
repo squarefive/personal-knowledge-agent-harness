@@ -471,6 +471,37 @@ def test_category_filters_use_validation_before_sql() -> None:
     assert connection.executed == []
 
 
+def test_search_vector_cards_uses_user_ready_embedding_category_distance_and_limit() -> None:
+    connection = FakeConnection()
+    connection.next_rows = [("qa_1", 0.91)]
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    hits = repo.search_vector_cards([0.1, 0.2, 0.3], limit=7, category="Agent边界")
+
+    assert [(hit.card_id, hit.score) for hit in hits] == [("qa_1", 0.91)]
+    sql, params = connection.executed[0]
+    assert "FROM qa_cards" in sql
+    assert "WHERE user_id = %s" in sql
+    assert "embedding_status = 'ready'" in sql
+    assert "embedding IS NOT NULL" in sql
+    assert "AND category = %s" in sql
+    assert "ORDER BY embedding <=> %s::vector" in sql
+    assert "LIMIT %s" in sql
+    assert params == ("[0.1,0.2,0.3]", "usr_1", "Agent边界", "[0.1,0.2,0.3]", 7)
+
+
+def test_search_vector_cards_without_category_omits_category_filter() -> None:
+    connection = FakeConnection()
+    repo = PostgresQACardRepository(connection, "usr_1")
+
+    repo.search_vector_cards([0.1, 0.2], limit=3)
+
+    sql, params = connection.executed[0]
+    assert "AND category = %s" not in sql
+    assert "ORDER BY embedding <=> %s::vector" in sql
+    assert params == ("[0.1,0.2]", "usr_1", "[0.1,0.2]", 3)
+
+
 def test_update_embedding_status_rejects_ready_without_embedding() -> None:
     connection = FakeConnection()
     repo = PostgresQACardRepository(connection, "usr_1")

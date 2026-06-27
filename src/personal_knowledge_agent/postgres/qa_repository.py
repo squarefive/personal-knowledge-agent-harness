@@ -8,7 +8,7 @@ from typing import Protocol
 
 from psycopg.types.json import Jsonb
 
-from personal_knowledge_agent.qa_data_access.qa_card_models import QACard, SearchResult
+from ..qa_data_access.qa_card_models import QACard, SearchResult, SemanticSearchHit
 
 FORBIDDEN_CATEGORIES = {"其他", "未分类", "杂项", "默认分类", "未知", "待分类"}
 
@@ -359,6 +359,50 @@ class PostgresQACardRepository:
     ) -> list[SearchResult]:
         return self.search_keyword_cards(query=query, limit=limit, category=category)
 
+    def search_vector_cards(
+        self,
+        embedding: Sequence[float],
+        limit: int = 5,
+        category: str | None = None,
+    ) -> list[SemanticSearchHit]:
+        vector = _vector_literal(embedding)
+        if vector is None:
+            raise ValueError("embedding must not be empty")
+        safe_limit = _safe_limit(limit)
+        clean_category = self.validate_optional_category(category)
+        if clean_category is None:
+            cursor = self._connection.execute(
+                """
+                SELECT
+                  card_id,
+                  1 - (embedding <=> %s::vector) AS score
+                FROM qa_cards
+                WHERE user_id = %s
+                  AND embedding_status = 'ready'
+                  AND embedding IS NOT NULL
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (vector, self._user_id, vector, safe_limit),
+            )
+        else:
+            cursor = self._connection.execute(
+                """
+                SELECT
+                  card_id,
+                  1 - (embedding <=> %s::vector) AS score
+                FROM qa_cards
+                WHERE user_id = %s
+                  AND embedding_status = 'ready'
+                  AND embedding IS NOT NULL
+                  AND category = %s
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s
+                """,
+                (vector, self._user_id, clean_category, vector, safe_limit),
+            )
+        return [_row_to_semantic_hit(row) for row in _fetchall(cursor)]
+
     def update_card(
         self,
         card_id: str,
@@ -544,6 +588,13 @@ def _row_to_search_result(row: object) -> SearchResult:
     )
 
 
+def _row_to_semantic_hit(row: object) -> SemanticSearchHit:
+    return SemanticSearchHit(
+        card_id=str(_row_value(row, 0, "card_id")),
+        score=float(_row_value(row, 1, "score")),
+    )
+
+
 def _row_value(row: object, index: int, key: str) -> object:
     if isinstance(row, dict):
         return row[key]
@@ -595,6 +646,8 @@ def _safe_limit(limit: int) -> int:
 
 def _vector_literal(embedding: Sequence[float] | None) -> str | None:
     if embedding is None:
+        return None
+    if not embedding:
         return None
     return "[" + ",".join(str(value) for value in embedding) + "]"
 
