@@ -192,6 +192,7 @@ last_updated: "2026-06-27"
 | `postgres_pool.py` | 从 `database_url` 创建连接池并关闭连接池。 |
 | `qa_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL Q&A card 数据访问。 |
 | `schema.py` | 执行 pgvector 扩展和最小业务表的幂等 schema 初始化。 |
+| `session_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL conversation session 数据访问。 |
 | `todo_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL todo 数据访问。 |
 
 ### Tool Runtime
@@ -333,6 +334,7 @@ last_updated: "2026-06-27"
 | `test_postgres_auth_repository.py` | 覆盖 PostgreSQL 认证仓储 SQL 参数化、字段映射和 hash-only 写入。 |
 | `test_postgres_qa_repository.py` | 覆盖 PostgreSQL Q&A card repository 的用户隔离、字段映射和参数化 SQL。 |
 | `test_postgres_schema.py` | 覆盖 PostgreSQL schema 初始化 SQL 和幂等执行。 |
+| `test_postgres_session_repository.py` | 覆盖 PostgreSQL conversation session repository 的用户隔离、消息 JSONB 和状态更新。 |
 | `test_postgres_todo_repository.py` | 覆盖 PostgreSQL todo repository 的用户隔离、状态校验和参数化 SQL。 |
 | `test_migrate_sqlite_qa_to_postgres.py` | 覆盖 SQLite Q&A 到 PostgreSQL 迁移脚本的 CLI、用户查找、字段解析、dry-run 和 upsert SQL。 |
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
