@@ -1,4 +1,7 @@
 const state = {
+  authUser: null,
+  loginCodeSent: false,
+  resendTimerId: null,
   cards: [],
   busy: false,
   sessions: [],
@@ -10,6 +13,14 @@ const state = {
 };
 
 const elements = {
+  authGate: document.querySelector("#authGate"),
+  authForm: document.querySelector("#authForm"),
+  authEmailInput: document.querySelector("#authEmailInput"),
+  authCodeGroup: document.querySelector("#authCodeGroup"),
+  authCodeInput: document.querySelector("#authCodeInput"),
+  authStatus: document.querySelector("#authStatus"),
+  requestCodeButton: document.querySelector("#requestCodeButton"),
+  authSubmitButton: document.querySelector("#authSubmitButton"),
   appShell: document.querySelector("#appShell"),
   toggleSessionsButton: document.querySelector("#toggleSessionsButton"),
   toggleCardsButton: document.querySelector("#toggleCardsButton"),
@@ -33,6 +44,8 @@ const elements = {
   cardsList: document.querySelector("#cardsList"),
   cardDetail: document.querySelector("#cardDetail"),
   closeCardDetailButton: document.querySelector("#closeCardDetailButton"),
+  currentUserEmail: document.querySelector("#currentUserEmail"),
+  logoutButton: document.querySelector("#logoutButton"),
 };
 
 const cardTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -57,6 +70,20 @@ const detailTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
 });
 
 applyPaneState();
+setLoginCodeSent(false);
+
+elements.requestCodeButton.addEventListener("click", () => {
+  requestLoginCode().catch((error) => setAuthStatus(String(error), "error"));
+});
+
+elements.authForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  verifyLoginCode().catch((error) => setAuthStatus(String(error), "error"));
+});
+
+elements.logoutButton.addEventListener("click", () => {
+  logout().catch((error) => setAuthStatus(String(error), "error"));
+});
 
 elements.toggleSessionsButton.addEventListener("click", () => {
   setPaneCollapsed("left", !state.leftCollapsed);
@@ -85,7 +112,7 @@ elements.chatForm.addEventListener("submit", async (event) => {
     clearOpenApprovalDialogs("cancelled");
     renderRunError(agentMessage, String(error));
   } finally {
-    setBusy(false, "本地 Web UI 已就绪");
+    setBusy(false, "个人知识库已就绪");
   }
 });
 
@@ -100,12 +127,11 @@ elements.renameSessionButton.addEventListener("click", async () => {
   const activeSession = state.sessions.find((session) => session.session_id === state.activeSessionId);
   const nextTitle = window.prompt("重命名会话", activeSession?.title || "");
   if (nextTitle === null) return;
-  const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
+  const result = await getJson(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title: nextTitle }),
   });
-  const result = await response.json();
   if (!result.ok) {
     setBusy(false, result.message || "重命名失败");
     return;
@@ -139,12 +165,194 @@ elements.refreshCardsButton.addEventListener("click", async () => {
 
 elements.closeCardDetailButton.addEventListener("click", closeCardDetail);
 
-async function getJson(url) {
-  const response = await fetch(url);
+async function bootApp() {
+  setAuthStatus("正在检查登录状态。", "muted");
+  const result = await getJson("/api/auth/me", {}, { allowAuthError: true });
+  if (result.ok) {
+    await enterAuthenticatedApp(result.user);
+    return;
+  }
+  const message =
+    result.error_code === "not_authenticated"
+      ? ""
+      : resultMessage(result, "认证服务暂时不可用。");
+  showLogin(message, message ? "error" : "muted");
+}
+
+async function enterAuthenticatedApp(user) {
+  state.authUser = user || null;
+  elements.currentUserEmail.textContent = state.authUser?.email || "已登录";
+  stopResendTimer();
+  setLoginCodeSent(false);
+  elements.authGate.hidden = true;
+  elements.appShell.hidden = false;
+  await initializeApp();
+  await loadRecentCards();
+  setBusy(false, "个人知识库已就绪");
+}
+
+async function requestLoginCode() {
+  const email = elements.authEmailInput.value.trim();
+  if (!email) {
+    setAuthStatus("请输入邮箱。", "error");
+    return;
+  }
+  elements.requestCodeButton.disabled = true;
+  setAuthStatus("正在发送验证码。", "muted");
+  const result = await postJson("/api/auth/request-code", { email }, { allowAuthError: true });
+  if (!result.ok) {
+    elements.requestCodeButton.disabled = false;
+    setLoginCodeSent(false);
+    setAuthStatus(resultMessage(result, "验证码发送失败。"), "error");
+    return;
+  }
+  setLoginCodeSent(true);
+  elements.authCodeInput.focus();
+  startResendTimer();
+}
+
+async function verifyLoginCode() {
+  const email = elements.authEmailInput.value.trim();
+  const code = elements.authCodeInput.value.trim();
+  if (!email) {
+    setAuthStatus("请输入邮箱。", "error");
+    return;
+  }
+  if (!/^\d{6}$/.test(code)) {
+    setAuthStatus("请输入 6 位验证码。", "error");
+    return;
+  }
+  elements.authSubmitButton.disabled = true;
+  setAuthStatus("正在登录。", "muted");
+  const result = await postJson("/api/auth/verify-code", { email, code }, { allowAuthError: true });
+  if (!result.ok) {
+    elements.authSubmitButton.disabled = false;
+    setAuthStatus(resultMessage(result, "验证码无效或已过期。"), "error");
+    return;
+  }
+  stopResendTimer();
+  setAuthStatus("登录成功，正在载入知识库。", "success");
+  await enterAuthenticatedApp(result.user);
+}
+
+async function logout() {
+  if (state.busy) return;
+  elements.logoutButton.disabled = true;
+  try {
+    await postJson("/api/auth/logout", {}, { allowAuthError: true });
+  } finally {
+    elements.logoutButton.disabled = false;
+    clearOpenApprovalDialogs("cancelled");
+    resetAuthenticatedState();
+    showLogin("已退出登录。", "muted");
+  }
+}
+
+async function postJson(url, body, options = {}) {
+  return getJson(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    },
+    options,
+  );
+}
+
+async function getJson(url, init = {}, options = {}) {
+  const response = await fetch(url, { credentials: "same-origin", ...init });
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  return response.json();
+  const result = await response.json();
+  if (!options.allowAuthError && isNotAuthenticated(result)) {
+    showLogin("登录状态已失效，请重新登录。", "error");
+    throw new Error("not_authenticated");
+  }
+  return result;
+}
+
+function isNotAuthenticated(result) {
+  return result && result.ok === false && result.error_code === "not_authenticated";
+}
+
+function resultMessage(result, fallback) {
+  const messages = {
+    auth_not_configured: "认证服务暂时不可用。",
+    auth_request_error: "验证码发送失败，请稍后再试。",
+    auth_verify_error: "登录验证失败，请稍后再试。",
+    email_not_allowed: "该邮箱不在允许登录范围内。",
+    invalid_login_code: "验证码无效。",
+    login_code_expired: "验证码已过期，请重新发送。",
+    login_code_consumed: "验证码已使用，请重新发送。",
+    login_code_not_found: "请先发送验证码。",
+    too_many_attempts: "验证码尝试次数过多，请重新发送。",
+    user_not_found: "没有找到该邮箱对应的账号。",
+  };
+  return messages[result?.error_code] || result?.message || fallback;
+}
+
+function showLogin(message = "", variant = "muted") {
+  state.authUser = null;
+  elements.appShell.hidden = true;
+  elements.authGate.hidden = false;
+  setBusy(false, "个人知识库问答助手");
+  if (message) {
+    setAuthStatus(message, variant);
+  } else if (!state.loginCodeSent) {
+    setAuthStatus("输入邮箱后获取验证码。", "muted");
+  }
+}
+
+function resetAuthenticatedState() {
+  state.sessions = [];
+  state.cards = [];
+  state.activeSessionId = null;
+  state.selectedCardId = null;
+  window.localStorage.removeItem("active_session_id");
+  renderSessions([]);
+  renderCards([]);
+  resetMessages("登录后开始提问或录入 Q&A。");
+}
+
+function setLoginCodeSent(sent) {
+  state.loginCodeSent = sent;
+  elements.authCodeGroup.hidden = !sent;
+  elements.authSubmitButton.disabled = !sent;
+  if (!sent) {
+    elements.authCodeInput.value = "";
+  }
+}
+
+function setAuthStatus(message, variant = "muted") {
+  elements.authStatus.textContent = message;
+  elements.authStatus.dataset.variant = variant;
+}
+
+function startResendTimer(seconds = 60) {
+  stopResendTimer();
+  let remaining = seconds;
+  elements.requestCodeButton.disabled = true;
+  const tick = () => {
+    if (remaining <= 0) {
+      stopResendTimer();
+      elements.requestCodeButton.disabled = false;
+      setAuthStatus("可以重新发送验证码。", "muted");
+      return;
+    }
+    setAuthStatus(`验证码已发送，请查看 QQ 邮箱。${remaining} 秒后可重新发送。`, "success");
+    remaining -= 1;
+  };
+  tick();
+  state.resendTimerId = window.setInterval(tick, 1000);
+}
+
+function stopResendTimer() {
+  if (state.resendTimerId) {
+    window.clearInterval(state.resendTimerId);
+    state.resendTimerId = null;
+  }
 }
 
 async function initializeApp() {
@@ -164,11 +372,7 @@ async function initializeApp() {
 }
 
 async function createSession() {
-  const response = await fetch("/api/sessions", { method: "POST" });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-  const result = await response.json();
+  const result = await postJson("/api/sessions");
   if (!result.ok) {
     throw new Error(result.message || "创建会话失败");
   }
@@ -255,7 +459,7 @@ function resetMessages(message) {
 function renderHistoryMessages(messages) {
   elements.messages.replaceChildren();
   if (!messages.length) {
-    resetMessages("你好。你可以录入一条 Q&A，也可以提问，我会基于本地知识库回答并列出来源。");
+    resetMessages("你好。你可以录入一条 Q&A，也可以提问，我会基于知识库回答并列出来源。");
     return;
   }
   for (const message of messages) {
@@ -318,6 +522,7 @@ function appendAgentRunMessage() {
 async function streamChat(message, agentMessage) {
   const response = await fetch("/api/chat/stream", {
     method: "POST",
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: state.activeSessionId, message }),
   });
@@ -385,7 +590,7 @@ function renderAgentEvent(message, event) {
       resolveApprovalDialog(event);
       break;
     case "evidence_checked":
-      addStep(message, event.source_count ? `已核对 ${event.source_count} 条来源` : "未使用本地来源");
+      addStep(message, event.source_count ? `已核对 ${event.source_count} 条来源` : "未使用知识库来源");
       break;
     case "answer_delta":
       appendAnswerDelta(message, event.turn ?? 0, event.text || "");
@@ -394,6 +599,11 @@ function renderAgentEvent(message, event) {
       finishAnswer(message, event.answer || "");
       break;
     case "error":
+      if (event.error_code === "not_authenticated") {
+        renderRunError(message, event.message || "登录状态已失效。");
+        showLogin("登录状态已失效，请重新登录。", "error");
+        break;
+      }
       renderRunError(message, event.message || "本轮没有完成。");
       break;
     default:
@@ -574,7 +784,7 @@ function showApprovalDialog(message, event) {
 
   const risk = document.createElement("div");
   risk.className = "approval-risk";
-  risk.textContent = summary.risk || "该操作会修改本地数据。";
+  risk.textContent = summary.risk || "该操作会修改知识库数据。";
 
   const actions = document.createElement("div");
   actions.className = "approval-actions";
@@ -637,13 +847,8 @@ async function submitApproval(dialog, decision) {
   if (!approvalId) return;
   setApprovalDialogState(dialog, decision === "approve" ? "submitting-approve" : "submitting-deny");
   try {
-    const response = await fetch(`/api/approvals/${encodeURIComponent(approvalId)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
-    });
-    const result = await response.json();
-    if (!response.ok || !result.ok) {
+    const result = await postJson(`/api/approvals/${encodeURIComponent(approvalId)}`, { decision });
+    if (!result.ok) {
       setApprovalDialogState(dialog, "submit-error", result.message || "确认提交失败");
     }
   } catch (error) {
@@ -720,8 +925,8 @@ function setApprovalDialogState(dialog, status, message = "") {
 
 function toolDisplayName(toolName) {
   const labels = {
-    hybrid_search_qa_cards: "搜索本地知识库",
-    search_qa_cards: "搜索本地知识库",
+    hybrid_search_qa_cards: "搜索知识库",
+    search_qa_cards: "搜索知识库",
     save_qa_card: "保存知识卡片",
     read_qa_card: "读取知识卡片",
     list_recent_cards: "读取最近卡片",
@@ -1041,8 +1246,8 @@ function renderCardDetail(card) {
   const sourceList = document.createElement("div");
   sourceList.className = "source-list";
   sourceList.append(
-    sourceRow("本地 Q&A 卡片", card.card_id || "", "100%"),
-    sourceRow(card.source_type || "manual_qa", "SQLite", "事实源")
+    sourceRow("Q&A 卡片", card.card_id || "", "100%"),
+    sourceRow(card.source_type || "manual_qa", "PostgreSQL", "事实源")
   );
   const sourceLink = document.createElement("button");
   sourceLink.className = "source-link";
@@ -1176,7 +1381,7 @@ function appendEmptyWorkspace(message) {
   const emptyIcon = icon("tray");
   emptyIcon.classList.add("empty-icon");
   const title = document.createElement("h2");
-  title.textContent = "本地知识库问答助手";
+  title.textContent = "个人知识库问答助手";
   const body = document.createElement("p");
   body.textContent = message || "从右侧选择知识卡片查看详情，或在下方提问开始对话。";
   empty.append(emptyIcon, title, body);
@@ -1222,10 +1427,6 @@ function sourceRow(name, detail, score) {
   return row;
 }
 
-initializeApp().catch((error) => {
-  resetMessages(String(error));
-});
-
-loadRecentCards().catch((error) => {
-  renderCards([], String(error));
+bootApp().catch((error) => {
+  showLogin(String(error), "error");
 });

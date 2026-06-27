@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import queue
 import threading
 import uuid
@@ -9,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
-from fastapi import FastAPI, Query
+from fastapi import Cookie, FastAPI, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -23,7 +24,15 @@ from ...agent_context.conversation_sessions import (
 )
 from ...agent_observability import AgentEventJsonlLogger
 from ...agent_runtime import AgentEvent, new_run_id
+from ...postgres import (
+    InMemoryToolResultCompactor,
+    PostgresConversationSessionRepository,
+    PostgresConversationTranscriptAdapter,
+    PostgresRuntimeContextCompactor,
+    PostgresSessionMetadataAdapter,
+)
 from ...tool_runtime import ApprovalRequest, default_approval_callback
+from .cloud_dependencies import CloudUserToolFactory
 
 SESSION_ID_SUFFIX_CHARS = 12
 THREAD_JOIN_TIMEOUT_SECONDS = 1
@@ -34,6 +43,7 @@ DEFAULT_CARD_LIMIT = 10
 MIN_CARD_LIMIT = 1
 MAX_CARD_LIMIT = 50
 MERGE_TOOL_NAME = "merge_qa_cards"
+AUTH_COOKIE_NAME = "pka_session"
 
 
 class ChatAgent(Protocol):
@@ -48,9 +58,50 @@ class CardTools(Protocol):
     def read_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]: ...
 
 
+class AuthServiceDependency(Protocol):
+    def request_login_code(self, email: str) -> Any: ...
+
+    def verify_login_code(self, email: str, code: str) -> Any: ...
+
+    def authenticate_session_token(self, session_token: str) -> Any: ...
+
+    def revoke_session_token(self, session_token: str) -> bool: ...
+
+
+class EmailSenderDependency(Protocol):
+    def send_login_code(self, to_email: str, code: str, expires_minutes: int) -> None: ...
+
+
+class SessionRepositoryDependency(Protocol):
+    def create_session(self, user_id: str, *, session_id: str, title: str | None = None) -> Any: ...
+
+    def list_sessions(self, user_id: str) -> list[Any]: ...
+
+    def rename_session(self, user_id: str, session_id: str, title: str) -> Any | None: ...
+
+    def load_messages(self, user_id: str, session_id: str) -> list[dict[str, Any]]: ...
+
+
+class AuthenticatedSessionDependency(Protocol):
+    user_id: str
+    email: str
+    llm_provider_user_id: str
+    session_id: str
+    expires_at: datetime
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+
+
+class AuthEmailRequest(BaseModel):
+    email: str
+
+
+class AuthVerifyCodeRequest(BaseModel):
+    email: str
+    code: str
 
 
 class RenameSessionRequest(BaseModel):
@@ -226,11 +277,13 @@ class WebSessionRunner:
         agent: ChatAgent | None,
         events: list[dict[str, Any]],
         event_logger: AgentEventJsonlLogger | None = None,
+        close_callback: Callable[[], None] | None = None,
     ):
         self.session_id = session_id
         self.agent = agent
         self.events = events
         self.event_logger = event_logger
+        self.close_callback = close_callback
         self.lock = threading.Lock()
         self.active_event_queue: queue.Queue[dict[str, Any] | object] | None = None
         self.active_event_queue_lock = threading.Lock()
@@ -262,11 +315,16 @@ def create_web_app(
     config: AgentConfig | None = None,
     agent: ChatAgent | None = None,
     tools: CardTools | None = None,
+    auth_service: AuthServiceDependency | None = None,
+    email_sender: EmailSenderDependency | None = None,
+    user_tool_factory: CloudUserToolFactory | None = None,
+    cloud_session_repository: SessionRepositoryDependency | None = None,
     event_logger: AgentEventJsonlLogger | None = None,
 ) -> FastAPI:
     events: list[dict[str, Any]] = []
-    resolved_config = config or (load_config() if agent is None or tools is None else None)
-    runners: dict[str, WebSessionRunner] = {}
+    needs_config = agent is None or (tools is None and user_tool_factory is None)
+    resolved_config = config or (load_config() if needs_config else None)
+    runners: dict[tuple[str | None, str], WebSessionRunner] = {}
     runners_lock = threading.Lock()
     approval_manager = WebApprovalManager(timeout_seconds=APPROVAL_TIMEOUT_SECONDS)
     workspace_root = Path.cwd()
@@ -281,11 +339,35 @@ def create_web_app(
     def make_approval_callback(runner: WebSessionRunner) -> Callable[[ApprovalRequest], bool]:
         return lambda request: request_web_approval(runner, request)
 
-    def get_runner(session_id: str) -> WebSessionRunner:
+    def close_persistent_cloud_tools(cloud_tools: Any | None, connection: Any) -> None:
+        if cloud_tools is not None:
+            cloud_tools.close()
+        user_tool_factory.close_persistent_tools(connection)
+
+    def authenticate_business_session(
+        pka_session: str | None,
+    ) -> AuthenticatedSessionDependency | dict[str, Any] | None:
+        if auth_service is None:
+            return None
+        if not pka_session:
+            return _business_authentication_error()
+        try:
+            result = auth_service.authenticate_session_token(pka_session)
+        except Exception:
+            return _business_authentication_error()
+        if not getattr(result, "ok", False):
+            return _business_authentication_error()
+        return result
+
+    def get_runner(
+        session_id: str,
+        auth_session: AuthenticatedSessionDependency | None = None,
+    ) -> WebSessionRunner:
         safe_session_id = validate_session_id(session_id)
+        runner_key = (_authenticated_user_id(auth_session), safe_session_id)
         with runners_lock:
-            if safe_session_id in runners:
-                return runners[safe_session_id]
+            if runner_key in runners:
+                return runners[runner_key]
             if agent is not None:
                 runner = WebSessionRunner(
                     session_id=safe_session_id,
@@ -300,18 +382,80 @@ def create_web_app(
                     events=events,
                     event_logger=event_logger,
                 )
-                components = create_agent_components(
-                    resolved_config,
-                    event_sink=placeholder.collect_event,
-                    approval_callback=make_approval_callback(placeholder),
-                    session_id=safe_session_id,
-                )
+                cloud_tools = None
+                persistent_connection = None
+                if user_tool_factory is not None and auth_session is not None:
+                    cloud_tools, persistent_connection = user_tool_factory.create_persistent_tools(auth_session.user_id)
+                component_kwargs: dict[str, Any] = {
+                    "event_sink": placeholder.collect_event,
+                    "approval_callback": make_approval_callback(placeholder),
+                    "session_id": safe_session_id,
+                }
+                if cloud_tools is not None and auth_session is not None:
+                    session_repository = PostgresConversationSessionRepository(
+                        persistent_connection,
+                        auth_session.user_id,
+                    )
+                    component_kwargs.update(
+                        {
+                            "qa_store": cloud_tools.tools.store,
+                            "todo_store": cloud_tools.todo_tools.store,
+                            "llm_provider_user_id": auth_session.llm_provider_user_id,
+                            "enable_semantic_index": False,
+                            "transcript": PostgresConversationTranscriptAdapter(
+                                session_repository,
+                                safe_session_id,
+                            ),
+                            "metadata_store": PostgresSessionMetadataAdapter(
+                                session_repository,
+                                safe_session_id,
+                                model=resolved_config.deepseek_model,
+                            ),
+                            "context_compactor": InMemoryToolResultCompactor(),
+                            "memory_index_store": cloud_tools.memory_index_store,
+                            "memory_store": cloud_tools.memory_store,
+                            "runtime_context_compactor_factory": (
+                                lambda summarizer, repository=session_repository: PostgresRuntimeContextCompactor(
+                                    repository,
+                                    safe_session_id,
+                                    summarizer=summarizer,
+                                )
+                            ),
+                        }
+                    )
+                components = create_agent_components(resolved_config, **component_kwargs)
                 placeholder.agent = components.agent
+                if persistent_connection is not None:
+                    placeholder.close_callback = (
+                        lambda tools=cloud_tools, connection=persistent_connection: close_persistent_cloud_tools(
+                            tools,
+                            connection,
+                        )
+                    )
                 runner = placeholder
-            runners[safe_session_id] = runner
+            runners[runner_key] = runner
             return runner
 
-    if tools is None:
+    def get_card_tools(auth_session: AuthenticatedSessionDependency | None) -> CardTools:
+        if user_tool_factory is not None and auth_session is not None:
+            raise RuntimeError("cloud card tools must be opened with call_card_tools")
+        if tools is None:
+            raise RuntimeError("card tools are not configured")
+        return tools
+
+    def call_card_tools(
+        auth_session: AuthenticatedSessionDependency | None,
+        callback: Callable[[CardTools], dict[str, Any]],
+    ) -> dict[str, Any]:
+        if user_tool_factory is not None and auth_session is not None:
+            with user_tool_factory.open_tools(auth_session.user_id) as scoped_tools:
+                return callback(scoped_tools.tools)
+        return callback(get_card_tools(auth_session))
+
+    def use_cloud_session_repository(auth_session: AuthenticatedSessionDependency | None) -> bool:
+        return cloud_session_repository is not None and auth_session is not None
+
+    if tools is None and user_tool_factory is None:
         tools = create_agent_components(
             resolved_config,
             approval_callback=default_approval_callback,
@@ -322,6 +466,14 @@ def create_web_app(
     app.state.agent_events = events
     app.state.approval_manager = approval_manager
     app.state.event_logger = event_logger
+
+    @app.on_event("shutdown")
+    def close_runners() -> None:
+        with runners_lock:
+            callbacks = [runner.close_callback for runner in runners.values() if runner.close_callback is not None]
+            runners.clear()
+        for callback in callbacks:
+            callback()
 
     static_dir = Path(__file__).with_name("static")
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -334,13 +486,87 @@ def create_web_app(
     def health() -> dict[str, Any]:
         return {"ok": True}
 
+    @app.post("/api/auth/request-code")
+    def request_login_code(request: AuthEmailRequest) -> dict[str, Any]:
+        if auth_service is None or email_sender is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        try:
+            result = auth_service.request_login_code(request.email)
+            if not getattr(result, "ok", False):
+                return _auth_failure_payload(result)
+            expires_minutes = _expires_minutes(result.expires_at)
+            email_sender.send_login_code(result.email, result.plaintext_code, expires_minutes)
+            return {"ok": True, "email": result.email}
+        except Exception:
+            return _error("auth_request_error", "login code request failed")
+
+    @app.post("/api/auth/verify-code")
+    def verify_login_code(request: AuthVerifyCodeRequest, response: Response) -> dict[str, Any]:
+        if auth_service is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        try:
+            result = auth_service.verify_login_code(request.email, request.code)
+            if not getattr(result, "ok", False):
+                return _auth_failure_payload(result)
+            response.set_cookie(
+                AUTH_COOKIE_NAME,
+                result.session_token,
+                max_age=_cookie_max_age(result.expires_at),
+                httponly=True,
+                samesite="lax",
+                path="/",
+            )
+            return {"ok": True, "user": _verified_user_payload(result)}
+        except Exception:
+            return _error("auth_verify_error", "login code verification failed")
+
+    @app.get("/api/auth/me")
+    def read_current_user(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        if auth_service is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        if not pka_session:
+            return _error("not_authenticated", "authentication session is missing")
+        try:
+            result = auth_service.authenticate_session_token(pka_session)
+            if not getattr(result, "ok", False):
+                return _auth_failure_payload(result)
+            return {"ok": True, "user": _authenticated_user_payload(result)}
+        except Exception:
+            return _error("auth_me_error", "authentication lookup failed")
+
+    @app.post("/api/auth/logout")
+    def logout(response: Response, pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        if auth_service is None:
+            return _error("auth_not_configured", "authentication is not configured")
+        try:
+            if pka_session:
+                auth_service.revoke_session_token(pka_session)
+            response.delete_cookie(AUTH_COOKIE_NAME, path="/", samesite="lax")
+            return {"ok": True}
+        except Exception:
+            response.delete_cookie(AUTH_COOKIE_NAME, path="/", samesite="lax")
+            return _error("auth_logout_error", "logout failed")
+
     @app.post("/api/approvals/{approval_id}")
-    def resolve_approval(approval_id: str, request: ApprovalDecisionRequest) -> dict[str, Any]:
+    def resolve_approval(
+        approval_id: str,
+        request: ApprovalDecisionRequest,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
         return approval_manager.resolve(approval_id, request.decision)
 
     @app.post("/api/sessions")
-    def create_session() -> dict[str, Any]:
+    def create_session(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
         session_id = f"session_{uuid.uuid4().hex[:SESSION_ID_SUFFIX_CHARS]}"
+        if use_cloud_session_repository(auth_session):
+            record = cloud_session_repository.create_session(auth_session.user_id, session_id=session_id)
+            return {"ok": True, "session": _cloud_session_payload(record)}
         metadata = ConversationSessionMetadataRepository(
             workspace_root,
             session_id=session_id,
@@ -348,13 +574,31 @@ def create_web_app(
         return {"ok": True, "session": _metadata_payload(metadata)}
 
     @app.get("/api/sessions")
-    def list_sessions() -> dict[str, Any]:
+    def list_sessions(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
+        if use_cloud_session_repository(auth_session):
+            sessions = cloud_session_repository.list_sessions(auth_session.user_id)
+            return {"ok": True, "sessions": [_cloud_session_payload(session) for session in sessions]}
         sessions = ConversationSessionMetadataRepository(workspace_root).list_sessions()
         return {"ok": True, "sessions": [_metadata_payload(metadata) for metadata in sessions]}
 
     @app.patch("/api/sessions/{session_id}")
-    def rename_session(session_id: str, request: RenameSessionRequest) -> dict[str, Any]:
+    def rename_session(
+        session_id: str,
+        request: RenameSessionRequest,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
         try:
+            if use_cloud_session_repository(auth_session):
+                record = cloud_session_repository.rename_session(auth_session.user_id, session_id, request.title)
+                if record is None:
+                    return _error("session_not_found", "session not found")
+                return {"ok": True, "session": _cloud_session_payload(record)}
             metadata = ConversationSessionMetadataRepository(
                 workspace_root,
                 session_id=session_id,
@@ -364,28 +608,51 @@ def create_web_app(
             return _error("session_rename_error", str(exc))
 
     @app.get("/api/sessions/{session_id}/messages")
-    def read_session_messages(session_id: str) -> dict[str, Any]:
+    def read_session_messages(
+        session_id: str,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
         try:
+            if use_cloud_session_repository(auth_session):
+                messages = cloud_session_repository.load_messages(auth_session.user_id, session_id)
+                return {"ok": True, "messages": _cloud_display_messages(messages)}
             transcript = ConversationTranscriptRepository(workspace_root, session_id=session_id)
             return {"ok": True, "messages": transcript.load_display_messages()}
         except Exception as exc:
             return _error("session_read_error", str(exc))
 
     @app.post("/api/chat/stream")
-    def chat_stream(request: ChatRequest) -> StreamingResponse:
+    def chat_stream(
+        request: ChatRequest,
+        pka_session: str | None = Cookie(default=None),
+    ) -> StreamingResponse:
         message = request.message.strip()
         session_id = request.session_id or "default"
         event_queue: queue.Queue[dict[str, Any] | object] = queue.Queue()
         done = object()
 
         def run_agent() -> None:
+            auth_session = authenticate_business_session(pka_session)
+            if _is_auth_error(auth_session):
+                event_queue.put(_event_error(auth_session["error_code"], auth_session["message"]))
+                event_queue.put(done)
+                return
             if not message:
                 event_queue.put(_event_error("invalid_input", "message must be a non-empty string"))
                 event_queue.put(done)
                 return
             try:
-                runner = get_runner(session_id)
-                with runner.lock:
+                runner = get_runner(
+                    session_id,
+                    auth_session if auth_session is not None else None,
+                )
+                if not runner.lock.acquire(blocking=False):
+                    event_queue.put(_event_error("session_busy", "current session is already running"))
+                    return
+                try:
                     with runner.active_event_queue_lock:
                         runner.active_event_queue = event_queue
                     try:
@@ -404,6 +671,8 @@ def create_web_app(
                     finally:
                         with runner.active_event_queue_lock:
                             runner.active_event_queue = None
+                finally:
+                    runner.lock.release()
             except Exception as exc:
                 event_queue.put(_event_error("agent_error", f"Agent run failed: {exc}"))
             finally:
@@ -427,9 +696,16 @@ def create_web_app(
     @app.get("/api/cards/recent")
     def recent_cards(
         limit: int = Query(default=DEFAULT_CARD_LIMIT, ge=MIN_CARD_LIMIT, le=MAX_CARD_LIMIT),
+        pka_session: str | None = Cookie(default=None),
     ) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
         try:
-            return tools.list_recent_cards({"limit": limit})
+            return call_card_tools(
+                auth_session if auth_session is not None else None,
+                lambda card_tools: card_tools.list_recent_cards({"limit": limit}),
+            )
         except Exception as exc:
             return _error("card_read_error", str(exc))
 
@@ -437,19 +713,35 @@ def create_web_app(
     def search_cards(
         q: str = Query(default="", alias="q"),
         limit: int = Query(default=DEFAULT_CARD_LIMIT, ge=MIN_CARD_LIMIT, le=MAX_CARD_LIMIT),
+        pka_session: str | None = Cookie(default=None),
     ) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
         query = q.strip()
         if not query:
             return _error("invalid_input", "q must be a non-empty string")
         try:
-            return tools.search_qa_cards({"query": query, "limit": limit})
+            return call_card_tools(
+                auth_session if auth_session is not None else None,
+                lambda card_tools: card_tools.search_qa_cards({"query": query, "limit": limit}),
+            )
         except Exception as exc:
             return _error("card_search_error", str(exc))
 
     @app.get("/api/cards/{card_id}")
-    def read_card(card_id: str) -> dict[str, Any]:
+    def read_card(
+        card_id: str,
+        pka_session: str | None = Cookie(default=None),
+    ) -> dict[str, Any]:
+        auth_session = authenticate_business_session(pka_session)
+        if _is_auth_error(auth_session):
+            return auth_session
         try:
-            return tools.read_qa_card({"card_id": card_id})
+            return call_card_tools(
+                auth_session if auth_session is not None else None,
+                lambda card_tools: card_tools.read_qa_card({"card_id": card_id}),
+            )
         except Exception as exc:
             return _error("card_read_error", str(exc))
 
@@ -460,8 +752,104 @@ def _error(error_code: str, message: str) -> dict[str, Any]:
     return {"ok": False, "error_code": error_code, "message": message}
 
 
+def _business_authentication_error() -> dict[str, Any]:
+    return _error("not_authenticated", "authentication is required")
+
+
+def _is_auth_error(value: Any) -> bool:
+    return isinstance(value, dict) and value.get("ok") is False
+
+
+def _authenticated_user_id(auth_session: AuthenticatedSessionDependency | None) -> str | None:
+    if auth_session is None:
+        return None
+    return auth_session.user_id
+
+
+def _auth_failure_payload(result: Any) -> dict[str, Any]:
+    return _error(str(result.error_code), str(result.message))
+
+
+def _verified_user_payload(result: Any) -> dict[str, Any]:
+    return {
+        "user_id": result.user_id,
+        "email": result.email,
+        "expires_at": result.expires_at.isoformat(),
+    }
+
+
+def _authenticated_user_payload(result: Any) -> dict[str, Any]:
+    return {
+        "user_id": result.user_id,
+        "email": result.email,
+        "session_id": result.session_id,
+        "expires_at": result.expires_at.isoformat(),
+    }
+
+
+def _expires_minutes(expires_at: datetime) -> int:
+    return max(1, math.ceil((_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds() / 60))
+
+
+def _cookie_max_age(expires_at: datetime) -> int:
+    return max(0, int((_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds()))
+
+
+def _ensure_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
 def _metadata_payload(metadata: SessionMetadata) -> dict[str, Any]:
     return asdict(metadata)
+
+
+def _cloud_session_payload(record: Any) -> dict[str, Any]:
+    session_id = str(_record_value(record, "session_id", ""))
+    created_at = str(_record_value(record, "created_at", ""))
+    updated_at = str(_record_value(record, "updated_at", ""))
+    title = _record_value(record, "title", None)
+    return _metadata_payload(
+        SessionMetadata(
+            session_id=session_id,
+            created_at=created_at,
+            updated_at=updated_at,
+            cwd="",
+            model="",
+            transcript_path="",
+            summary_path="",
+            artifacts_dir="",
+            title=title if isinstance(title, str) and title else "新会话",
+            title_source="user" if isinstance(title, str) and title else "auto",
+        )
+    )
+
+
+def _cloud_display_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    display_messages: list[dict[str, Any]] = []
+    for index, message in enumerate(messages, start=1):
+        role = message.get("role")
+        content = message.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        if role == "assistant" and (message.get("tool_calls") or message.get("tool_call_id")):
+            continue
+        display_messages.append(
+            {
+                "role": role,
+                "content": content,
+                "created_at": str(message.get("created_at", "")),
+                "event_id": index,
+            }
+        )
+    return display_messages
+
+
+def _record_value(record: Any, key: str, default: Any) -> Any:
+    if isinstance(record, dict):
+        return record.get(key, default)
+    return getattr(record, key, default)
 
 
 def _event_error(error_code: str, message: str) -> dict[str, Any]:

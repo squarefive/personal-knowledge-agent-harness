@@ -25,3 +25,9 @@ class SearchResult:
     source_type: str
     created_at: str
     category: str
+
+
+@dataclass(frozen=True)
+class SemanticSearchHit:
+    card_id: str
+    score: float

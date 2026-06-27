@@ -112,14 +112,14 @@ class QAKnowledgeToolHandlers:
             semantic_hits = []
             semantic_degraded = False
             if self.semantic_index is None or not self.semantic_index.is_enabled():
-                warning = "语义检索未启用，已降级为本地关键词检索。"
+                warning = "语义检索未启用，已降级为关键词检索。"
                 semantic_degraded = True
             else:
                 try:
                     semantic_limit = max(limit * 5, 20) if category is not None else limit
                     semantic_hits = self.semantic_index.search(query, limit=semantic_limit)
                 except Exception as exc:
-                    warning = f"语义检索失败，已降级为本地关键词检索: {exc}"
+                    warning = f"语义检索失败，已降级为关键词检索: {exc}"
                     semantic_degraded = True
 
             candidates = self._rank_hybrid_candidates(
@@ -137,9 +137,9 @@ class QAKnowledgeToolHandlers:
             returned_candidates = self._select_hybrid_candidates(candidates, limit=limit)
             if not semantic_degraded and not returned_candidates:
                 message = (
-                    "指定 category 下没有找到相关本地知识卡片。"
+                    "指定 category 下没有找到相关知识卡片。"
                     if category is not None
-                    else "没有找到足够相关的本地知识卡片。"
+                    else "没有找到足够相关的知识卡片。"
                 )
             elif not semantic_degraded and returned_candidates[0].match_level == "weak":
                 warning = "只找到弱相关候选，回答前应读取完整卡片并谨慎判断。"
@@ -312,12 +312,12 @@ class QAKnowledgeToolHandlers:
             warning: str | None = None
             semantic_hits = []
             if self.semantic_index is None or not self.semantic_index.is_enabled():
-                warning = "语义检索未启用，已降级为本地关键词查重。"
+                warning = "语义检索未启用，已降级为关键词查重。"
             else:
                 try:
                     semantic_hits = self.semantic_index.search(query, limit=over_fetch_limit)
                 except Exception as exc:
-                    warning = f"语义检索失败，已降级为本地关键词查重: {exc}"
+                    warning = f"语义检索失败，已降级为关键词查重: {exc}"
 
             candidates = self._rank_duplicate_candidates(
                 target_card=target_card,
@@ -760,7 +760,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "save_qa_card",
-            "description": "保存一条本地 Q&A 知识卡片。仅在用户明确提供 Q&A 并表达保存意图时使用；本工具会写入 SQLite 事实库，并在语义索引启用时同步 Qdrant。",
+            "description": "保存一条 Q&A 知识卡片。仅在用户明确提供 Q&A 并表达保存意图时使用；本工具会写入服务端事实库，并在语义索引启用时同步向量索引。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -795,7 +795,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_qa_cards",
-            "description": "使用 SQLite LIKE 检索本地 Q&A 知识卡片，作为关键词检索和降级兜底。返回候选摘要，不是完整回答依据；需要回答时继续读取完整卡片。",
+            "description": "使用关键词检索 Q&A 知识卡片，作为基础检索和降级兜底。返回候选摘要，不是完整回答依据；需要回答时继续读取完整卡片。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -821,7 +821,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "hybrid_search_qa_cards",
-            "description": "默认本地 Q&A 检索工具。用于用户要求基于本地知识库、已保存 Q&A、历史记录或来源回答时；返回候选摘要和排序信息，不是完整回答依据。",
+            "description": "默认 Q&A 检索工具。用于用户要求基于知识库、已保存 Q&A、历史记录或来源回答时；返回候选摘要和排序信息，不是完整回答依据。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -865,7 +865,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_qa_card",
-            "description": "更新一条本地 Q&A 知识卡片。仅当用户明确要求修改某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
+            "description": "更新一条 Q&A 知识卡片。仅当用户明确要求修改某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -904,7 +904,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delete_qa_card",
-            "description": "物理删除一条本地 Q&A 知识卡片。仅当用户明确要求删除某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
+            "description": "物理删除一条 Q&A 知识卡片。仅当用户明确要求删除某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -943,14 +943,14 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "detect_duplicate_cards",
-            "description": "检测疑似重复的本地 Q&A 知识卡片，只返回 duplicate 或 possible_duplicate 候选。用户主动查重、整理或合并时使用 mode=manual；保存或更新后的低打扰检测使用 mode=auto，且不得自动合并。",
+            "description": "检测疑似重复的 Q&A 知识卡片，只返回 duplicate 或 possible_duplicate 候选。用户主动查重、整理或合并时使用 mode=manual；保存或更新后的低打扰检测使用 mode=auto，且不得自动合并。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "scope": {
                         "type": "string",
                         "enum": ["target", "all"],
-                        "description": "target 检测指定卡片或文本；all 检测本地知识库全部 Q&A 卡片。",
+                        "description": "target 检测指定卡片或文本；all 检测知识库全部 Q&A 卡片。",
                     },
                     "card_id": {
                         "type": "string",
@@ -982,7 +982,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "merge_qa_cards",
-            "description": "合并多张本地 Q&A 知识卡片：创建一张新卡片，并物理删除原卡片。仅当用户明确要求合并且已确认合并草案时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
+            "description": "合并多张 Q&A 知识卡片：创建一张新卡片，并物理删除原卡片。仅当用户明确要求合并且已确认合并草案时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -1022,7 +1022,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "rebuild_qa_semantic_index",
-            "description": "把尚未向量化的历史 Q&A 卡片写入 Qdrant 本地语义索引。用于维护或修复语义索引，不改变 SQLite 事实内容；不是普通问答检索工具。",
+            "description": "为尚未向量化的历史 Q&A 卡片重建语义向量索引。用于维护或修复语义索引，不改变 Q&A 事实内容；不是普通问答检索工具。",
             "parameters": {
                 "type": "object",
                 "properties": {

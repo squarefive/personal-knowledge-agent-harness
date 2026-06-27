@@ -14,17 +14,14 @@ def test_extract_user_preference_requires_confirmation():
     assert candidates[0].write_policy == "needs_confirmation"
 
 
-def test_extract_project_decision_can_auto_write():
+def test_extract_project_decision_is_not_a_cloud_user_preference_candidate():
     candidates = AgentMemoryCandidateExtractor().extract(
         user_input="我们决定：Q&A 知识库和 Agent memory 必须分开。",
         final_answer="已记录为设计决策。",
         recent_messages=[{"role": "user", "content": "当前在设计 Agent memory 管理"}],
     )
 
-    assert len(candidates) == 1
-    assert candidates[0].type == "project"
-    assert candidates[0].source_type == "user_decision"
-    assert candidates[0].write_policy == "auto_write"
+    assert candidates == []
 
 
 def test_extract_ignores_temporary_smalltalk():

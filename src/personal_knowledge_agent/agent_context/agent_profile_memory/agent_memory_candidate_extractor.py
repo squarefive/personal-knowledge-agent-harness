@@ -6,7 +6,6 @@ from typing import Any
 from .agent_memory_models import MemoryCandidate, MemoryIndex
 
 USER_PREFERENCE_MARKERS = ("记住", "以后", "每次", "总是")
-PROJECT_DECISION_MARKERS = ("决定", "确认", "必须", "不要", "不允许")
 
 
 class AgentMemoryCandidateExtractor:
@@ -32,44 +31,11 @@ class AgentMemoryCandidateExtractor:
                     write_policy="needs_confirmation",
                 )
             )
-        if _contains_any(user_input, PROJECT_DECISION_MARKERS) and _looks_project_related(
-            user_input,
-            recent_messages,
-        ):
-            candidates.append(
-                MemoryCandidate(
-                    name=_candidate_name("project-decision", user_input),
-                    type="project",
-                    description=_first_sentence(user_input),
-                    content=user_input.strip(),
-                    source_type="user_decision",
-                    source_ref=None,
-                    confidence="high",
-                    write_policy="auto_write",
-                )
-            )
         return _dedupe_against_index(candidates, memory_index)
 
 
 def _contains_any(value: str, markers: tuple[str, ...]) -> bool:
     return any(marker in value for marker in markers)
-
-
-def _looks_project_related(value: str, recent_messages: list[dict[str, Any]] | None) -> bool:
-    project_markers = ("项目", "Agent", "agent", "Q&A", "memory", "记忆", "上下文", "工具", "SQLite")
-    if _contains_any(value, project_markers):
-        return True
-    if not recent_messages:
-        return False
-    session_text = " ".join(_message_text(message) for message in recent_messages)
-    return _contains_any(session_text, project_markers)
-
-
-def _message_text(message: dict[str, Any]) -> str:
-    content = message.get("content", "")
-    if isinstance(content, str):
-        return content
-    return str(content)
 
 
 def _candidate_name(prefix: str, content: str) -> str:
