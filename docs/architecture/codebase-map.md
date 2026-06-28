@@ -38,6 +38,7 @@ last_updated: "2026-06-28"
 | `docs/architecture/` | 代码地图等架构说明文档目录。 |
 | `docs/guidelines/` | AI Coding 协作偏好和行为规约目录。 |
 | `docs/templates/` | Agent 开发上下文和代码地图模板目录。 |
+| `.github/workflows/` | GitHub Actions CI/CD workflow 目录。 |
 | `deploy/` | 单机 Docker Compose 部署底座、nginx HTTP 临时反代配置和服务器部署说明。 |
 | `scripts/` | 本地维护和格式检查脚本。 |
 | `tests/` | 自动化测试。 |
@@ -64,6 +65,16 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `Dockerfile` | 构建运行 cloud-only Web app 的生产容器镜像，设置 `PYTHONPATH=/app/src` 并启动 Web 服务。 |
+
+### GitHub Workflows
+
+模块目录：`.github/workflows/`
+
+模块作用：保存 GitHub Actions 自动测试、镜像发布和生产部署 workflow。
+
+| 文件 | 作用 |
+|---|---|
+| `ci-cd.yml` | 在 `main` 分支 push 后运行测试，构建并推送 GHCR app 镜像，再通过 SSH 触发服务器生产部署。 |
 
 ### Agent Bootstrap
 
@@ -339,6 +350,7 @@ last_updated: "2026-06-28"
 | `init-postgres-schema.py` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串并初始化 PostgreSQL schema。 |
 | `backup-postgres.sh` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串，执行 `pg_dump | gzip` 并保留最近 N 份备份。 |
 | `backup-postgres-compose.sh` | 在单机 Docker Compose 部署中通过 `postgres` 容器执行 `pg_dump | gzip`，避免数据库暴露到宿主机端口。 |
+| `deploy-production.sh` | 服务器生产部署入口；先执行 PostgreSQL Compose 备份，再拉取指定 GHCR app 镜像并重启 Compose 服务。 |
 | `migrate-sqlite-qa-to-postgres.py` | 将旧 SQLite `qa_cards` 作为一次性来源迁移到指定邮箱对应的 PostgreSQL 用户，不迁移 session、todo、memory 或 Qdrant。 |
 | `rebuild-postgres-qa-embeddings.py` | 为指定邮箱用户的 PostgreSQL Q&A 卡片重建 pgvector embedding。 |
 

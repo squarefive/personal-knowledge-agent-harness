@@ -46,7 +46,7 @@ Make sure the password embedded in `database_url` is the same value written to `
 From the repository root:
 
 ```bash
-sudo docker compose -f deploy/docker-compose.yml config
+APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml config
 ```
 
 The app container starts with `PKA_CLOUD_ONLY=true`; if `DATABASE_URL_FILE` cannot be read or resolves to an empty value, Web startup fails instead of falling back to local SQLite/Qdrant mode.
@@ -62,9 +62,10 @@ python scripts/init-postgres-schema.py && python -m personal_knowledge_agent web
 From the repository root:
 
 ```bash
-sudo docker compose -f deploy/docker-compose.yml up -d --build
-sudo docker compose -f deploy/docker-compose.yml ps
-sudo docker compose -f deploy/docker-compose.yml logs --tail=100 app postgres nginx
+APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml pull app
+APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml logs --tail=100 app postgres nginx
 ```
 
 Then open:
@@ -79,4 +80,48 @@ For this single-host Compose deployment, run PostgreSQL backups through the `pos
 
 ```bash
 sudo scripts/backup-postgres-compose.sh --output-dir deploy/backups --keep 7
+```
+
+## CI/CD
+
+Production app images are built by GitHub Actions and pushed to GitHub Container Registry:
+
+```text
+ghcr.io/squarefive/personal-knowledge-agent-harness:<commit-sha>
+ghcr.io/squarefive/personal-knowledge-agent-harness:latest
+```
+
+The production Compose file pulls the app image from GHCR. It does not build the app image on the server.
+
+The workflow runs only after pushes to `main`:
+
+1. Run the test suite.
+2. Build and push the app image with both `<commit-sha>` and `latest` tags.
+3. Connect to the production server over SSH.
+4. Upload the Compose and deployment scripts needed by the server.
+5. Run `scripts/deploy-production.sh` with `APP_IMAGE_TAG=<commit-sha>`.
+
+Configure these GitHub Actions repository secrets before enabling automatic deployment:
+
+- `PROD_HOST`: production server host, for example `124.223.210.44`.
+- `PROD_USER`: SSH user, for example `ubuntu`.
+- `PROD_DEPLOY_DIR`: server deployment directory, for example `/opt/personal-knowledge-agent`.
+- `PROD_SSH_KEY`: private SSH key used by GitHub Actions to log in to the server.
+
+Application runtime secrets must stay on the server under `deploy/secrets/`. Do not add DeepSeek, DashScope, SMTP, PostgreSQL, or session secrets to GitHub Actions unless a future workflow explicitly needs them.
+
+The deployment script performs a PostgreSQL backup before replacing the app container:
+
+```bash
+APP_IMAGE_TAG=<commit-sha> scripts/deploy-production.sh
+```
+
+## Rollback
+
+To roll back the app container to a previous image tag, run from the server deployment directory:
+
+```bash
+APP_IMAGE_TAG=<previous-commit-sha> docker compose -f deploy/docker-compose.yml pull app
+APP_IMAGE_TAG=<previous-commit-sha> docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml logs --tail=100 app
 ```
