@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from personal_knowledge_agent.agent_bootstrap import AgentConfig
 from personal_knowledge_agent.agent_runtime import AgentEvent
-from personal_knowledge_agent.llm_clients import LLMResponse
+from personal_knowledge_agent.llm_clients import LLMResponse, LLMUsage
 from personal_knowledge_agent.tool_runtime import ApprovalRequest
 from personal_knowledge_agent.apps.web import create_web_app
 from personal_knowledge_agent.apps.web.cloud_dependencies import CloudUserToolFactory, CloudUserTools
@@ -297,6 +297,7 @@ class FakeCloudSessionRepository:
             summary=None,
             status="idle",
             current_run_id=None,
+            last_prompt_usage_ratio=None,
             created_at="2026-06-27T01:00:00+00:00",
             updated_at="2026-06-27T01:00:00+00:00",
         )
@@ -318,11 +319,15 @@ class FakeCloudSessionRepository:
             summary=record.summary,
             status=record.status,
             current_run_id=record.current_run_id,
+            last_prompt_usage_ratio=record.last_prompt_usage_ratio,
             created_at=record.created_at,
             updated_at="2026-06-27T01:01:00+00:00",
         )
         self.sessions[(user_id, session_id)] = updated
         return updated
+
+    def get_session(self, user_id, session_id):
+        return self.sessions.get((user_id, session_id))
 
     def load_messages(self, user_id, session_id):
         self.loaded_calls.append((user_id, session_id))
@@ -334,6 +339,13 @@ class FakeCloudSessionRepository:
                 {"role": "tool", "content": "hidden"},
             ],
         )
+
+    def update_prompt_usage_ratio(self, user_id, session_id, ratio):
+        record = self.sessions.get((user_id, session_id))
+        if record is None:
+            return False
+        record.last_prompt_usage_ratio = ratio
+        return True
 
 
 class MultiUserAuthService(FakeAuthService):
@@ -699,8 +711,12 @@ def test_authenticated_session_apis_use_cloud_repository_and_do_not_touch_local_
     messages_response = client.get(f"/api/sessions/{session_id}/messages")
 
     assert created_response.json()["ok"] is True
+    assert created_response.json()["session"]["last_prompt_usage_ratio"] is None
     assert listed_response.json()["sessions"][0]["session_id"] == session_id
+    assert listed_response.json()["sessions"][0]["last_prompt_usage_ratio"] is None
     assert renamed_response.json()["session"]["title"] == "云端标题"
+    assert messages_response.json()["session"]["session_id"] == session_id
+    assert messages_response.json()["session"]["last_prompt_usage_ratio"] is None
     assert messages_response.json()["messages"] == [
         {
             "role": "user",
@@ -888,7 +904,7 @@ def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_l
             self.llm_provider_user_id = kwargs.get("llm_provider_user_id")
 
         def chat(self, *, messages, tools, system_prompt, on_text_delta=None):
-            return LLMResponse(text="云端回复")
+            return LLMResponse(text="云端回复", usage=LLMUsage(prompt_tokens=25, completion_tokens=3, total_tokens=28))
 
     class FakeCursor:
         def __init__(self, row=None, rows=None, rowcount=1):
@@ -912,7 +928,7 @@ def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_l
         def execute(self, query, params=()):
             sql = " ".join(query.split())
             self.executed.append((sql, params))
-            if "SELECT session_id, title, summary, status, current_run_id, created_at, updated_at" in sql:
+            if "SELECT session_id, title, summary, status, current_run_id, last_prompt_usage_ratio" in sql:
                 record = self.sessions.get((params[0], params[1]))
                 return FakeCursor(row=record)
             if "INSERT INTO conversation_sessions" in sql:
@@ -921,6 +937,7 @@ def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_l
                     params[2],
                     None,
                     "idle",
+                    None,
                     None,
                     datetime(2026, 6, 27, 1, 0, tzinfo=UTC),
                     datetime(2026, 6, 27, 1, 0, tzinfo=UTC),
@@ -962,10 +979,17 @@ def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_l
                         None,
                         "idle",
                         None,
+                        None,
                         datetime(2026, 6, 27, 1, 0, tzinfo=UTC),
                         datetime(2026, 6, 27, 1, 1, tzinfo=UTC),
                     )
                 )
+            if "UPDATE conversation_sessions SET last_prompt_usage_ratio" in sql:
+                key = (params[1], params[2])
+                row = self.sessions.get(key)
+                if row is not None:
+                    self.sessions[key] = (row[0], row[1], row[2], row[3], row[4], params[0], row[6], row[7])
+                return FakeCursor(rowcount=1)
             return FakeCursor(rowcount=1)
 
         def commit(self):
@@ -988,6 +1012,7 @@ def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_l
     config = AgentConfig(
         deepseek_api_key="test-key",
         deepseek_model="test-model",
+        context_window_tokens=100,
     )
     app = create_web_app(
         config=config,
@@ -1010,6 +1035,7 @@ def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_l
         ("usr_cloud_runtime", "cloud_chat"),
         ("usr_cloud_runtime", "cloud_chat"),
     ]
+    assert pool.connection.sessions[("usr_cloud_runtime", "cloud_chat")][5] == 0.25
     assert not (tmp_path / ".sessions").exists()
 
 
@@ -1347,7 +1373,7 @@ def test_web_static_context_status_ui_is_lightweight():
     assert 'id="logoutButton"' in index_response.text
     assert "本地知识库" not in index_response.text
     assert 'id="contextStatus"' in index_response.text
-    assert "Context 0%" in index_response.text
+    assert "Context --" in index_response.text
     assert '"/api/auth/me"' in app_response.text
     assert '"/api/auth/request-code"' in app_response.text
     assert '"/api/auth/verify-code"' in app_response.text
@@ -1357,6 +1383,9 @@ def test_web_static_context_status_ui_is_lightweight():
     assert "initializeApp().catch" not in app_response.text
     assert "loadRecentCards().catch" not in app_response.text
     assert "runtime_context_compaction_started" in app_response.text
+    assert "createTypingController" in app_response.text
+    assert "isMobileViewport()" in app_response.text
+    assert "setPaneCollapsed(\"right\", true)" in app_response.text
     assert "上下文超限，正在压缩上下文" in app_response.text
     assert "<br\\s*\\/?>" in app_response.text
     assert 'document.createElement("br")' in app_response.text

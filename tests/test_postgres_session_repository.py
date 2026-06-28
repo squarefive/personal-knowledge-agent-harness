@@ -16,7 +16,7 @@ from personal_knowledge_agent.postgres import (
 
 NOW = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
 LATER = NOW + timedelta(minutes=1)
-SESSION_ROW = ("chat_1", "初始标题", "已有 summary", "idle", None, NOW, LATER)
+SESSION_ROW = ("chat_1", "初始标题", "已有 summary", "idle", None, 0.18, NOW, LATER)
 
 
 class FakeCursor:
@@ -67,11 +67,12 @@ def test_create_session_writes_user_id_and_returns_lightweight_metadata() -> Non
     assert session.summary == "已有 summary"
     assert session.status == "idle"
     assert session.current_run_id is None
+    assert session.last_prompt_usage_ratio == 0.18
     assert session.created_at == NOW.isoformat()
     sql, params = connection.executed[0]
     assert "INSERT INTO conversation_sessions" in sql
     assert "session_id, user_id, title" in sql
-    assert "RETURNING session_id, title, summary, status, current_run_id, created_at, updated_at" in sql
+    assert "RETURNING session_id, title, summary, status, current_run_id, last_prompt_usage_ratio" in sql
     assert params == ("chat_1", "usr_1", "初始标题")
     assert connection.commit_count == 1
 
@@ -131,7 +132,7 @@ def test_rename_session_filters_by_user_id_and_hides_cross_user_miss() -> None:
 
 def test_rename_session_returns_user_scoped_row() -> None:
     connection = FakeConnection()
-    connection.next_row = ("chat_1", "新标题", None, "idle", None, NOW, LATER)
+    connection.next_row = ("chat_1", "新标题", None, "idle", None, None, NOW, LATER)
     repo = PostgresConversationSessionRepository(connection, "usr_1")
 
     renamed = repo.rename_session("chat_1", "新标题")
@@ -254,6 +255,24 @@ def test_update_summary_returns_false_for_cross_user_miss() -> None:
     assert repo.update_summary("chat_other", "summary") is False
 
 
+def test_update_prompt_usage_ratio_filters_by_user_id_and_validates_ratio() -> None:
+    connection = FakeConnection()
+    connection.next_rowcount = 1
+    repo = PostgresConversationSessionRepository(connection, "usr_1")
+
+    updated = repo.update_prompt_usage_ratio("chat_1", 0.42)
+
+    assert updated is True
+    sql, params = connection.executed[0]
+    assert "UPDATE conversation_sessions SET last_prompt_usage_ratio = %s, updated_at = now()" in sql
+    assert "WHERE user_id = %s AND session_id = %s" in sql
+    assert params == (0.42, "usr_1", "chat_1")
+    assert connection.commit_count == 1
+
+    with pytest.raises(ValueError, match="ratio must be between 0 and 1"):
+        repo.update_prompt_usage_ratio("chat_1", 1.5)
+
+
 def test_mark_running_and_idle_are_user_scoped_status_updates() -> None:
     connection = FakeConnection()
     connection.next_rowcount = 1
@@ -333,8 +352,8 @@ def test_postgres_metadata_adapter_loads_or_creates_and_updates_summary() -> Non
 def test_postgres_metadata_adapter_autotitles_first_user_message_with_user_scope() -> None:
     connection = FakeConnection()
     connection.rows_by_call = [
-        ("chat_1", None, None, "idle", None, NOW, NOW),
-        ("chat_1", "第一条用户消息", None, "idle", None, NOW, LATER),
+        ("chat_1", None, None, "idle", None, None, NOW, NOW),
+        ("chat_1", "第一条用户消息", None, "idle", None, None, NOW, LATER),
         (1,),
     ]
     repo = PostgresConversationSessionRepository(connection, "usr_1")

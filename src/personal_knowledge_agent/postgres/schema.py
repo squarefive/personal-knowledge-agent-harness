@@ -85,12 +85,14 @@ POSTGRES_SCHEMA_STATEMENTS: tuple[str, ...] = (
       summary TEXT,
       status TEXT NOT NULL DEFAULT 'idle',
       current_run_id TEXT,
+      last_prompt_usage_ratio DOUBLE PRECISION,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, session_id),
       CHECK (status IN ('idle', 'running'))
     )
     """,
+    "ALTER TABLE conversation_sessions ADD COLUMN IF NOT EXISTS last_prompt_usage_ratio DOUBLE PRECISION",
     """
     CREATE TABLE IF NOT EXISTS conversation_messages (
       message_id BIGSERIAL PRIMARY KEY,

@@ -20,6 +20,7 @@ class ConversationSessionRecord:
     summary: str | None
     status: str
     current_run_id: str | None
+    last_prompt_usage_ratio: float | None
     created_at: str
     updated_at: str
 
@@ -45,6 +46,7 @@ class PostgresConversationSessionRepository:
               summary,
               status,
               current_run_id,
+              last_prompt_usage_ratio,
               created_at,
               updated_at
             """,
@@ -59,6 +61,7 @@ class PostgresConversationSessionRepository:
                 summary=None,
                 status="idle",
                 current_run_id=None,
+                last_prompt_usage_ratio=None,
                 created_at="",
                 updated_at="",
             )
@@ -73,6 +76,7 @@ class PostgresConversationSessionRepository:
               summary,
               status,
               current_run_id,
+              last_prompt_usage_ratio,
               created_at,
               updated_at
             FROM conversation_sessions
@@ -98,6 +102,7 @@ class PostgresConversationSessionRepository:
               summary,
               status,
               current_run_id,
+              last_prompt_usage_ratio,
               created_at,
               updated_at
             """,
@@ -119,6 +124,7 @@ class PostgresConversationSessionRepository:
               summary,
               status,
               current_run_id,
+              last_prompt_usage_ratio,
               created_at,
               updated_at
             FROM conversation_sessions
@@ -223,6 +229,20 @@ class PostgresConversationSessionRepository:
         self._commit()
         return _rowcount(cursor) > 0
 
+    def update_prompt_usage_ratio(self, session_id: str, ratio: float | None) -> bool:
+        clean_session_id = _require_text("session_id", session_id)
+        clean_ratio = _optional_ratio("ratio", ratio)
+        cursor = self._connection.execute(
+            """
+            UPDATE conversation_sessions
+            SET last_prompt_usage_ratio = %s, updated_at = now()
+            WHERE user_id = %s AND session_id = %s
+            """,
+            (clean_ratio, self._user_id, clean_session_id),
+        )
+        self._commit()
+        return _rowcount(cursor) > 0
+
     def mark_running(self, session_id: str, *, run_id: str | None = None) -> bool:
         clean_session_id = _require_text("session_id", session_id)
         clean_run_id = _optional_text("run_id", run_id)
@@ -286,14 +306,19 @@ def _rowcount(cursor: object) -> int:
 
 
 def _row_to_session(row: object) -> ConversationSessionRecord:
+    legacy_tuple_row = not isinstance(row, dict) and hasattr(row, "__len__") and len(row) == 7  # type: ignore[arg-type]
+    usage_ratio = None if legacy_tuple_row else _optional_float(_row_value(row, 5, "last_prompt_usage_ratio"))
+    created_at_index = 5 if legacy_tuple_row else 6
+    updated_at_index = 6 if legacy_tuple_row else 7
     return ConversationSessionRecord(
         session_id=_row_value(row, 0, "session_id"),
         title=_row_value(row, 1, "title"),
         summary=_row_value(row, 2, "summary"),
         status=_row_value(row, 3, "status"),
         current_run_id=_row_value(row, 4, "current_run_id"),
-        created_at=_stringify_timestamp(_row_value(row, 5, "created_at")),
-        updated_at=_stringify_timestamp(_row_value(row, 6, "updated_at")),
+        last_prompt_usage_ratio=usage_ratio,
+        created_at=_stringify_timestamp(_row_value(row, created_at_index, "created_at")),
+        updated_at=_stringify_timestamp(_row_value(row, updated_at_index, "updated_at")),
     )
 
 
@@ -325,6 +350,21 @@ def _optional_text(name: str, value: str | None) -> str | None:
     if value is None:
         return None
     return _require_text(name, value)
+
+
+def _optional_ratio(name: str, value: float | None) -> float | None:
+    if value is None:
+        return None
+    ratio = float(value)
+    if ratio < 0 or ratio > 1:
+        raise ValueError(f"{name} must be between 0 and 1")
+    return ratio
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def _safe_limit(limit: int) -> int:

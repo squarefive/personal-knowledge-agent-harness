@@ -8,9 +8,13 @@ const state = {
   activeSessionId: null,
   selectedCardId: null,
   approvalDialogs: new Map(),
+  activeTypingController: null,
   leftCollapsed: getStoredBoolean("left_pane_collapsed", window.matchMedia("(max-width: 1080px)").matches),
   rightCollapsed: getStoredBoolean("right_pane_collapsed", window.matchMedia("(max-width: 760px)").matches),
 };
+
+const TYPING_INTERVAL_MS = 22;
+const TYPING_BURST_THRESHOLD = 80;
 
 const elements = {
   authGate: document.querySelector("#authGate"),
@@ -163,7 +167,12 @@ elements.refreshCardsButton.addEventListener("click", async () => {
   await loadRecentCards();
 });
 
-elements.closeCardDetailButton.addEventListener("click", closeCardDetail);
+elements.closeCardDetailButton.addEventListener("click", () => {
+  closeCardDetail();
+  if (isMobileViewport()) {
+    setPaneCollapsed("right", true);
+  }
+});
 
 async function bootApp() {
   setAuthStatus("正在检查登录状态。", "muted");
@@ -306,6 +315,7 @@ function showLogin(message = "", variant = "muted") {
 }
 
 function resetAuthenticatedState() {
+  stopActiveTyping();
   state.sessions = [];
   state.cards = [];
   state.activeSessionId = null;
@@ -392,10 +402,12 @@ async function loadSessions() {
 }
 
 async function activateSession(sessionId) {
+  stopActiveTyping();
   state.activeSessionId = sessionId;
   window.localStorage.setItem("active_session_id", sessionId);
   renderSessions(state.sessions);
   renderActiveSessionTitle();
+  renderContextForSession(sessionId);
   await loadSessionMessages(sessionId);
 }
 
@@ -404,6 +416,10 @@ async function loadSessionMessages(sessionId) {
   if (!result.ok) {
     resetMessages(result.message || "读取会话历史失败。");
     return;
+  }
+  if (result.session) {
+    mergeSession(result.session);
+    renderContextForSession(sessionId);
   }
   renderHistoryMessages(result.messages || []);
 }
@@ -452,11 +468,13 @@ function renderActiveSessionTitle() {
 }
 
 function resetMessages(message) {
+  stopActiveTyping();
   elements.messages.replaceChildren();
   appendEmptyWorkspace(message);
 }
 
 function renderHistoryMessages(messages) {
+  stopActiveTyping();
   elements.messages.replaceChildren();
   if (!messages.length) {
     resetMessages("你好。你可以录入一条 Q&A，也可以提问，我会基于知识库回答并列出来源。");
@@ -464,19 +482,20 @@ function renderHistoryMessages(messages) {
   }
   for (const message of messages) {
     if (message.role === "user") {
-      appendMessage("user", "你", message.content || "");
+      appendMessage("user", "你", message.content || "", { scroll: false });
       continue;
     }
     if (message.role === "assistant_run") {
       appendHistoryRunMessage(message);
       continue;
     }
-    const node = appendMessage("agent", "Agent", "");
+    const node = appendMessage("agent", "Agent", "", { scroll: false });
     renderMarkdown(node.querySelector(".message-body"), message.content || "");
   }
+  scrollMessagesToBottom();
 }
 
-function appendMessage(kind, role, body) {
+function appendMessage(kind, role, body, options = {}) {
   const message = document.createElement("article");
   message.className = `message ${kind}-message`;
 
@@ -490,13 +509,18 @@ function appendMessage(kind, role, body) {
 
   message.append(roleNode, bodyNode);
   elements.messages.append(message);
-  elements.messages.scrollTop = elements.messages.scrollHeight;
+  if (options.scroll !== false) {
+    scrollMessagesToBottom();
+  }
   return message;
 }
 
-function appendAgentRunMessage() {
+function appendAgentRunMessage(options = {}) {
   const message = document.createElement("article");
   message.className = "message agent-message run-message";
+  if (options.history) {
+    message.classList.add("history-run-message");
+  }
 
   const roleNode = document.createElement("div");
   roleNode.className = "message-role";
@@ -518,18 +542,24 @@ function appendAgentRunMessage() {
   message._answerText = "";
   message._turnDrafts = new Map();
   message._activeAnswerTurn = null;
+  message._typingController = options.history ? null : createTypingController(answer);
+  if (message._typingController) {
+    state.activeTypingController = message._typingController;
+  }
   elements.messages.append(message);
-  elements.messages.scrollTop = elements.messages.scrollHeight;
+  if (options.scroll !== false) {
+    scrollMessagesToBottom();
+  }
   return message;
 }
 
 function appendHistoryRunMessage(historyMessage) {
-  const message = appendAgentRunMessage();
+  const message = appendAgentRunMessage({ history: true, scroll: false });
   const steps = Array.isArray(historyMessage.steps) ? historyMessage.steps : [];
   for (const step of steps) {
     addStep(message, step);
   }
-  finishAnswer(message, historyMessage.answer || "");
+  finishAnswer(message, historyMessage.answer || "", { immediate: true });
   return message;
 }
 
@@ -569,9 +599,13 @@ async function streamChat(message, agentMessage) {
       renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
     }
   }
+  if (agentMessage._typingController) {
+    await agentMessage._typingController.whenIdle();
+  }
 }
 
 function renderAgentEvent(message, event) {
+  const shouldStickToBottom = isNearMessageBottom();
   switch (event.event_type) {
     case "user_input_received":
       addStep(message, "收到输入");
@@ -584,6 +618,7 @@ function renderAgentEvent(message, event) {
       break;
     case "prompt_usage_updated":
       updateContextStatus(event.prompt_usage_ratio);
+      rememberActiveSessionContext(event.prompt_usage_ratio);
       break;
     case "runtime_context_compaction_started":
       addStep(message, contextCompactionStartText(event));
@@ -623,7 +658,9 @@ function renderAgentEvent(message, event) {
     default:
       break;
   }
-  elements.messages.scrollTop = elements.messages.scrollHeight;
+  if (shouldStickToBottom) {
+    scrollMessagesToBottom();
+  }
 }
 
 function addStep(message, text) {
@@ -636,11 +673,157 @@ function addStep(message, text) {
 
 function updateContextStatus(promptUsageRatio) {
   const ratio = Number(promptUsageRatio);
-  const percentage = Number.isFinite(ratio) ? Math.max(0, Math.round(ratio * 100)) : 0;
+  if (!Number.isFinite(ratio)) {
+    elements.contextStatus.textContent = "Context --";
+    const emptyFill = document.querySelector(".context-fill");
+    if (emptyFill) {
+      emptyFill.style.width = "0%";
+    }
+    return;
+  }
+  const percentage = Math.max(0, Math.round(Math.min(1, ratio) * 100));
   elements.contextStatus.textContent = `Context ${percentage}%`;
   const fill = document.querySelector(".context-fill");
   if (fill) {
     fill.style.width = `${Math.min(100, percentage)}%`;
+  }
+}
+
+function renderContextForSession(sessionId) {
+  const session = state.sessions.find((candidate) => candidate.session_id === sessionId);
+  updateContextStatus(session?.last_prompt_usage_ratio ?? null);
+}
+
+function rememberActiveSessionContext(promptUsageRatio) {
+  const ratio = Number(promptUsageRatio);
+  const normalizedRatio = Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : null;
+  state.sessions = state.sessions.map((session) =>
+    session.session_id === state.activeSessionId
+      ? { ...session, last_prompt_usage_ratio: normalizedRatio }
+      : session
+  );
+}
+
+function mergeSession(session) {
+  const index = state.sessions.findIndex((candidate) => candidate.session_id === session.session_id);
+  if (index === -1) {
+    state.sessions = [session, ...state.sessions];
+    return;
+  }
+  state.sessions = state.sessions.map((candidate, candidateIndex) =>
+    candidateIndex === index ? { ...candidate, ...session } : candidate
+  );
+}
+
+function createTypingController(node) {
+  let visibleText = "";
+  let queue = "";
+  let timerId = null;
+  let finalAnswer = null;
+  let completeCallback = null;
+  let idleResolvers = [];
+
+  const resolveIdle = () => {
+    const resolvers = idleResolvers;
+    idleResolvers = [];
+    for (const resolve of resolvers) {
+      resolve();
+    }
+  };
+
+  const tick = () => {
+    if (!queue) {
+      timerId = null;
+      if (finalAnswer !== null) {
+        renderMarkdown(node, finalAnswer);
+        node.classList.remove("typing-caret");
+        const callback = completeCallback;
+        completeCallback = null;
+        if (callback) {
+          callback();
+        }
+        resolveIdle();
+      } else {
+        resolveIdle();
+      }
+      return;
+    }
+
+    const shouldStickToBottom = isNearMessageBottom();
+    const take = queue.length > TYPING_BURST_THRESHOLD ? 3 : 1;
+    visibleText += queue.slice(0, take);
+    queue = queue.slice(take);
+    node.textContent = visibleText;
+    node.classList.add("typing-caret");
+    if (shouldStickToBottom) {
+      scrollMessagesToBottom();
+    }
+    timerId = window.setTimeout(tick, TYPING_INTERVAL_MS);
+  };
+
+  const start = () => {
+    if (!timerId) {
+      tick();
+    }
+  };
+
+  return {
+    delta(text) {
+      if (!text) return;
+      queue += text;
+      start();
+    },
+    final(answer, onComplete) {
+      finalAnswer = answer;
+      completeCallback = onComplete;
+      const pendingText = visibleText + queue;
+      if (answer.startsWith(pendingText)) {
+        queue += answer.slice(pendingText.length);
+      } else if (answer.startsWith(visibleText)) {
+        queue = answer.slice(visibleText.length);
+      } else {
+        visibleText = "";
+        queue = answer;
+      }
+      start();
+    },
+    reset() {
+      if (timerId) {
+        window.clearTimeout(timerId);
+      }
+      visibleText = "";
+      queue = "";
+      timerId = null;
+      finalAnswer = null;
+      completeCallback = null;
+      node.classList.remove("typing-caret");
+      node.textContent = "";
+      resolveIdle();
+    },
+    stop() {
+      if (timerId) {
+        window.clearTimeout(timerId);
+      }
+      timerId = null;
+      node.classList.remove("typing-caret");
+      resolveIdle();
+    },
+    hasVisibleText() {
+      return Boolean(visibleText || queue);
+    },
+    whenIdle() {
+      if (!timerId) {
+        return Promise.resolve();
+      }
+      return new Promise((resolve) => idleResolvers.push(resolve));
+    },
+  };
+}
+
+function stopActiveTyping() {
+  if (state.activeTypingController) {
+    state.activeTypingController.stop();
+    state.activeTypingController = null;
   }
 }
 
@@ -662,20 +845,34 @@ function appendAnswerDelta(message, turn, text) {
   if (!text) return;
   const draft = getTurnDraft(message, turn);
   draft.text += text;
+  if (message._activeAnswerTurn === null) {
+    message._activeAnswerTurn = turn;
+  }
   if (message._activeAnswerTurn === turn) {
     message._answerText = draft.text;
-    message._answer.textContent = draft.text;
+    if (message._typingController) {
+      message._typingController.delta(text);
+    } else {
+      message._answer.textContent = draft.text;
+    }
     return;
   }
   draft.node.textContent = draft.text;
 }
 
-function finishAnswer(message, answer) {
-  if (!message._answerText || message._answerText !== answer) {
-    message._answerText = answer;
+function finishAnswer(message, answer, options = {}) {
+  message._answerText = answer;
+  if (options.immediate || !message._typingController) {
+    renderMarkdown(message._answer, message._answerText);
+    message.classList.add("run-complete");
+    return;
   }
-  renderMarkdown(message._answer, message._answerText);
-  message.classList.add("run-complete");
+  message._typingController.final(answer, () => {
+    message.classList.add("run-complete");
+    if (state.activeTypingController === message._typingController) {
+      state.activeTypingController = null;
+    }
+  });
 }
 
 function renderRunError(message, body) {
@@ -705,14 +902,27 @@ function finishLlmTurn(message, event) {
   if (toolCallsCount > 0) {
     addStep(message, `准备调用 ${toolCallsCount} 个工具`);
     if (draft && draft.text.trim()) {
+      draft.node.textContent = draft.text;
       draft.node.classList.add("draft-muted");
+    }
+    if (message._activeAnswerTurn === turn) {
+      if (message._typingController) {
+        message._typingController.reset();
+      }
+      message._answerText = "";
+      message._answer.textContent = "";
+      message._activeAnswerTurn = null;
     }
     return;
   }
   if (draft) {
     message._activeAnswerTurn = turn;
     message._answerText = draft.text;
-    message._answer.textContent = draft.text;
+    if (message._typingController && !message._typingController.hasVisibleText()) {
+      message._typingController.delta(draft.text);
+    } else if (!message._typingController) {
+      message._answer.textContent = draft.text;
+    }
     draft.node.remove();
   }
   addStep(message, "模型响应完成");
@@ -1366,6 +1576,19 @@ function markSelectedCard(cardId) {
     button.classList.toggle("is-selected", selected);
     button.setAttribute("aria-pressed", String(selected));
   }
+}
+
+function scrollMessagesToBottom() {
+  elements.messages.scrollTop = elements.messages.scrollHeight;
+}
+
+function isNearMessageBottom(threshold = 80) {
+  const distance = elements.messages.scrollHeight - elements.messages.clientHeight - elements.messages.scrollTop;
+  return distance <= threshold;
+}
+
+function isMobileViewport() {
+  return window.matchMedia("(max-width: 760px)").matches;
 }
 
 function addDetail(list, label, value, valueClass = "") {
