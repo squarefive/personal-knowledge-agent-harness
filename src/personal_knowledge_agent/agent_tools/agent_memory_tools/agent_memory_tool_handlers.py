@@ -1,20 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Protocol
 
 from ...agent_context.agent_profile_memory import (
-    AgentMemoryDocumentRepository,
-    AgentMemoryIndexRepository,
+    MemoryDocument,
+    MemoryIndex,
+    MemoryIndexEntry,
 )
+
+
+class MemoryIndexRepository(Protocol):
+    def load(self) -> MemoryIndex: ...
+
+
+class MemoryDocumentRepository(Protocol):
+    def read_by_entry(self, entry: MemoryIndexEntry) -> MemoryDocument: ...
 
 
 class AgentMemoryToolHandlers:
     def __init__(
         self,
         *,
-        memory_index_repository: AgentMemoryIndexRepository,
-        memory_document_repository: AgentMemoryDocumentRepository,
+        memory_index_repository: MemoryIndexRepository,
+        memory_document_repository: MemoryDocumentRepository,
     ):
         self.memory_index_repository = memory_index_repository
         self.memory_document_repository = memory_document_repository
@@ -83,7 +92,7 @@ AGENT_MEMORY_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_memory",
-            "description": "按 memory name 读取 Agent memory 全文。仅用于理解用户偏好、项目约束和协作上下文；不得把 memory 内容作为 Q&A 卡片来源或本地知识库事实依据。",
+            "description": "按 memory name 读取 Agent memory 全文。仅用于理解用户偏好、项目约束和协作上下文；不得把 memory 内容作为 Q&A 卡片来源或当前用户个人知识库事实依据。",
             "parameters": {
                 "type": "object",
                 "properties": {

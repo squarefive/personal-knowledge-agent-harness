@@ -3,16 +3,21 @@ import copy
 from personal_knowledge_agent.agent_runtime import AgentLoopRunner
 from personal_knowledge_agent.agent_context.agent_profile_memory import (
     AgentMemoryCandidateExtractor,
-    AgentMemoryDocumentRepository,
-    AgentMemoryIndexRepository,
+    MemoryDocument,
 )
-from personal_knowledge_agent.qa_data_access import QACardRepository
 from personal_knowledge_agent.llm_clients import LLMResponse, LLMUsage
 from personal_knowledge_agent.llm_clients.deepseek_chat_client import LLMContextLengthExceeded
 from personal_knowledge_agent.tool_runtime import ToolCall
-from personal_knowledge_agent.agent_context.conversation_sessions import RuntimeContextCompactor, ToolResultCompactor, ConversationSessionMetadataRepository, ConversationTranscriptRepository
 from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers
 from personal_knowledge_agent.tool_runtime import ToolDispatcher
+from tests.fakes import (
+    InMemoryMemoryStore,
+    InMemoryMetadataStore,
+    InMemoryQACardStore,
+    InMemoryRuntimeContextCompactor,
+    InMemoryToolResultCompactor,
+    InMemoryTranscript,
+)
 
 
 class FakeLLM:
@@ -49,15 +54,16 @@ class FakeSummarizer:
 
 
 def create_dispatcher(tmp_path, qa_tools):
+    memory_store = InMemoryMemoryStore()
     memory_tools = AgentMemoryToolHandlers(
-        memory_index_repository=AgentMemoryIndexRepository(tmp_path),
-        memory_document_repository=AgentMemoryDocumentRepository(tmp_path),
+        memory_index_repository=memory_store,
+        memory_document_repository=memory_store,
     )
     return ToolDispatcher(qa_tools, memory_tools)
 
 
 def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM(
@@ -115,7 +121,7 @@ def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
 
 
 def test_agent_loop_executes_full_library_duplicate_detection_once(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     store.save_card(
         question="DeepSeek API key 应该如何配置？",
         answer="把 DeepSeek API key 放到环境变量中。",
@@ -163,7 +169,7 @@ def test_agent_loop_executes_full_library_duplicate_detection_once(tmp_path):
 
 
 def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM([LLMResponse(text="本地知识库中没有找到足够依据。")])
@@ -185,7 +191,7 @@ def test_agent_loop_returns_final_answer_without_tool_call(tmp_path):
 
 
 def test_agent_loop_does_not_reuse_previous_turn_sources(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     fake_llm = FakeLLM(
         [
@@ -222,7 +228,7 @@ def test_agent_loop_does_not_reuse_previous_turn_sources(tmp_path):
 
 
 def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     saved = knowledge_tools.save_qa_card(
         {
             "question": "旧问题？",
@@ -262,7 +268,7 @@ def test_agent_loop_executes_dangerous_tool_after_approval(tmp_path):
 
 
 def test_agent_loop_executes_merge_tool_after_approval(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     first = knowledge_tools.save_qa_card(
         {
             "question": "问题一？",
@@ -319,7 +325,7 @@ def test_agent_loop_executes_merge_tool_after_approval(tmp_path):
 
 
 def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     saved = knowledge_tools.save_qa_card(
         {
             "question": "问题？",
@@ -359,7 +365,7 @@ def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
 
 
 def test_agent_loop_safe_tool_does_not_request_approval(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     approvals = []
     fake_llm = FakeLLM(
@@ -380,44 +386,28 @@ def test_agent_loop_safe_tool_does_not_request_approval(tmp_path):
 
 
 def test_agent_loop_injects_memory_context_using_recent_messages(tmp_path):
-    memory_dir = tmp_path / ".memory"
-    memory_dir.mkdir()
-    (memory_dir / "MEMORY.md").write_text(
-        "\n".join(
-            [
-                "# Memory Index",
-                "",
-                "| name | type | description | path |",
-                "|---|---|---|---|",
-                "| memory-design | project | Agent memory 管理设计 | .memory/memory-design.md |",
-            ]
-        ),
-        encoding="utf-8",
+    memory_store = InMemoryMemoryStore(
+        [
+            MemoryDocument(
+                name="memory-design",
+                type="project",
+                description="Agent memory 管理设计",
+                path="postgres://memory/memory-design",
+                updated_at="2026-05-31",
+                source_type="user_decision",
+                source_ref=None,
+                content="Q&A 知识库和 Agent memory 必须分开。",
+            )
+        ]
     )
-    (memory_dir / "memory-design.md").write_text(
-        "\n".join(
-            [
-                "---",
-                'name: "memory-design"',
-                'type: "project"',
-                'description: "Agent memory 管理设计"',
-                'updated_at: "2026-05-31"',
-                'source_type: "user_decision"',
-                "---",
-                "",
-                "Q&A 知识库和 Agent memory 必须分开。",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     fake_llm = FakeLLM([LLMResponse(text="继续。")])
     loop = AgentLoopRunner(
         llm=fake_llm,
         dispatcher=dispatcher,
-        memory_index_store=AgentMemoryIndexRepository(tmp_path),
-        memory_store=AgentMemoryDocumentRepository(tmp_path),
+        memory_index_store=memory_store,
+        memory_store=memory_store,
         messages=[{"role": "user", "content": "继续 Agent memory 管理设计，实现 turn-start memory 选择"}],
     )
 
@@ -430,42 +420,29 @@ def test_agent_loop_injects_memory_context_using_recent_messages(tmp_path):
 
 
 def test_agent_loop_injects_at_most_three_memory_document_contents(tmp_path):
-    memory_dir = tmp_path / ".memory"
-    memory_dir.mkdir()
-    index_lines = [
-        "# Memory Index",
-        "",
-        "| name | type | description | path |",
-        "|---|---|---|---|",
-    ]
-    for index in range(5):
-        name = f"memory-{index}"
-        index_lines.append(f"| {name} | project | memory compact 规则 {index} | .memory/{name}.md |")
-        (memory_dir / f"{name}.md").write_text(
-            "\n".join(
-                [
-                    "---",
-                    f'name: "{name}"',
-                    'type: "project"',
-                    f'description: "memory compact 规则 {index}"',
-                    'updated_at: "2026-06-20"',
-                    'source_type: "user_decision"',
-                    "---",
-                    "",
-                    f"正文内容 {index}",
-                ]
-            ),
-            encoding="utf-8",
-        )
-    (memory_dir / "MEMORY.md").write_text("\n".join(index_lines), encoding="utf-8")
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    memory_store = InMemoryMemoryStore(
+        [
+            MemoryDocument(
+                name=f"memory-{index}",
+                type="project",
+                description=f"memory compact 规则 {index}",
+                path=f"postgres://memory/{index}",
+                updated_at="2026-06-20",
+                source_type="user_decision",
+                source_ref=None,
+                content=f"正文内容 {index}",
+            )
+            for index in range(5)
+        ]
+    )
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     fake_llm = FakeLLM([LLMResponse(text="继续。")])
     loop = AgentLoopRunner(
         llm=fake_llm,
         dispatcher=dispatcher,
-        memory_index_store=AgentMemoryIndexRepository(tmp_path),
-        memory_store=AgentMemoryDocumentRepository(tmp_path),
+        memory_index_store=memory_store,
+        memory_store=memory_store,
     )
 
     loop.run("继续 memory compact 规则")
@@ -476,7 +453,7 @@ def test_agent_loop_injects_at_most_three_memory_document_contents(tmp_path):
 
 
 def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM(
@@ -496,7 +473,7 @@ def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path
     loop = AgentLoopRunner(
         llm=fake_llm,
         dispatcher=dispatcher,
-        context_compactor=ToolResultCompactor(tmp_path, threshold_chars=1),
+        context_compactor=InMemoryToolResultCompactor(threshold_chars=1),
         event_sink=events.append,
     )
 
@@ -505,17 +482,16 @@ def test_agent_loop_emits_context_compacted_event_for_large_tool_result(tmp_path
     compact_events = [event for event in events if event.event_type == "context_compacted"]
     assert len(compact_events) == 1
     record = compact_events[0].payload["compact_record"]
-    assert record["artifact_path"].startswith(".sessions/default/artifacts/")
+    assert record["artifact_path"].startswith("postgres://artifacts/")
     assert record["summary"]
     assert record["relevance"]
-    assert (tmp_path / record["artifact_path"]).exists()
 
 
 def test_agent_loop_persists_messages_to_transcript(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
-    transcript = ConversationTranscriptRepository(tmp_path)
-    metadata_store = ConversationSessionMetadataRepository(tmp_path, model="test-model")
+    transcript = InMemoryTranscript()
+    metadata_store = InMemoryMetadataStore(model="test-model")
     events = []
     fake_llm = FakeLLM([LLMResponse(text="第一轮回答。"), LLMResponse(text="第二轮回答。")])
     loop = AgentLoopRunner(
@@ -544,7 +520,7 @@ def test_agent_loop_persists_messages_to_transcript(tmp_path):
 
 
 def test_agent_loop_emits_memory_candidates(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     fake_llm = FakeLLM([LLMResponse(text="好的。")])
@@ -565,7 +541,7 @@ def test_agent_loop_emits_memory_candidates(tmp_path):
 
 
 def test_agent_loop_compacts_before_next_run_when_last_prompt_usage_exceeds_threshold(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     summarizer = FakeSummarizer(summary="压缩后的 summary")
@@ -578,8 +554,7 @@ def test_agent_loop_compacts_before_next_run_when_last_prompt_usage_exceeds_thre
     loop = AgentLoopRunner(
         llm=fake_llm,
         dispatcher=dispatcher,
-        runtime_context_compactor=RuntimeContextCompactor(
-            tmp_path,
+        runtime_context_compactor=InMemoryRuntimeContextCompactor(
             summarizer=summarizer,
             recent_messages_count=1,
         ),
@@ -617,7 +592,7 @@ def test_agent_loop_compacts_before_next_run_when_last_prompt_usage_exceeds_thre
 
 
 def test_agent_loop_compacts_and_retries_once_on_context_limit_error(tmp_path):
-    knowledge_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, knowledge_tools)
     events = []
     summarizer = FakeSummarizer(summary="retry summary")
@@ -630,8 +605,7 @@ def test_agent_loop_compacts_and_retries_once_on_context_limit_error(tmp_path):
     loop = AgentLoopRunner(
         llm=fake_llm,
         dispatcher=dispatcher,
-        runtime_context_compactor=RuntimeContextCompactor(
-            tmp_path,
+        runtime_context_compactor=InMemoryRuntimeContextCompactor(
             summarizer=summarizer,
             recent_messages_count=1,
         ),

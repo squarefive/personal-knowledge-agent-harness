@@ -5,11 +5,6 @@ from typing import Any, TextIO
 
 from ...agent_runtime import AgentEvent
 
-try:
-    from rich.console import Console
-except ImportError:  # pragma: no cover - dependency is declared, this keeps local imports resilient.
-    Console = None
-
 
 class CliEventRenderer:
     def __init__(self, *, stream: TextIO, max_text_length: int = 240):
@@ -17,8 +12,6 @@ class CliEventRenderer:
         self.max_text_length = max_text_length
         self._answer_parts: list[str] = []
         self._answer_open = False
-        use_rich = bool(getattr(stream, "isatty", lambda: False)())
-        self._console = Console(file=stream, force_terminal=True, markup=False) if Console and use_rich else None
 
     def render(self, event: AgentEvent) -> None:
         if event.event_type == "answer_delta":
@@ -59,9 +52,6 @@ class CliEventRenderer:
         self._write(f"\n-- {title}")
 
     def _write(self, text: Any) -> None:
-        if self._console is not None:
-            self._console.print(text)
-            return
         print(text, file=self.stream)
 
     def _write_raw(self, text: str, *, end: str = "") -> None:

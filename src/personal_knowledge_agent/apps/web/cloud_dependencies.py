@@ -111,11 +111,9 @@ class WebCloudDependencies:
     session_repository: PooledConversationSessionRepository
 
 
-def create_web_cloud_dependencies(config: AgentConfig) -> WebCloudDependencies | None:
+def create_web_cloud_dependencies(config: AgentConfig) -> WebCloudDependencies:
     if not config.database_url:
-        if config.cloud_only:
-            raise ValueError("DATABASE_URL is required when PKA_CLOUD_ONLY=true")
-        return None
+        raise ValueError("DATABASE_URL is required for cloud-only Web runtime")
     pool = create_postgres_pool(config.database_url)
     try:
         auth_service = AuthService(

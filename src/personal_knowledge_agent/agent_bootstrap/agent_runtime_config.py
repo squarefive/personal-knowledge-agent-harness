@@ -22,7 +22,6 @@ DEFAULT_QWEN_EMBEDDING_DIMENSIONS = 1024
 class AgentConfig:
     deepseek_api_key: str
     deepseek_model: str
-    knowledge_db_path: Path
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS_BY_MODEL[DEFAULT_DEEPSEEK_MODEL]
     database_url: str | None = None
     allowed_login_emails: tuple[str, ...] = DEFAULT_ALLOWED_LOGIN_EMAILS
@@ -38,8 +37,6 @@ class AgentConfig:
     qwen_embedding_base_url: str = DEFAULT_QWEN_EMBEDDING_BASE_URL
     qwen_embedding_model: str = DEFAULT_QWEN_EMBEDDING_MODEL
     qwen_embedding_dimensions: int = DEFAULT_QWEN_EMBEDDING_DIMENSIONS
-    qdrant_path: Path = Path(".knowledge/qdrant")
-    qdrant_collection: str = "qa_cards"
 
 
 def load_config(env_path: str | Path = ".env") -> AgentConfig:
@@ -54,13 +51,11 @@ def load_config(env_path: str | Path = ".env") -> AgentConfig:
             str(_context_window_tokens_for_model(model)),
         )
     )
-    db_path = Path(os.environ.get("KNOWLEDGE_DB_PATH", ".knowledge/knowledge.db"))
     embedding_dimensions = int(os.environ.get("QWEN_EMBEDDING_DIMENSIONS", str(DEFAULT_QWEN_EMBEDDING_DIMENSIONS)))
     return AgentConfig(
         deepseek_api_key=api_key,
         deepseek_model=model,
         context_window_tokens=context_window_tokens,
-        knowledge_db_path=db_path,
         database_url=read_secret("DATABASE_URL"),
         allowed_login_emails=_parse_allowed_login_emails(os.environ.get("ALLOWED_LOGIN_EMAILS")),
         smtp_host=os.environ.get("SMTP_HOST"),
@@ -78,8 +73,6 @@ def load_config(env_path: str | Path = ".env") -> AgentConfig:
         ),
         qwen_embedding_model=os.environ.get("QWEN_EMBEDDING_MODEL", DEFAULT_QWEN_EMBEDDING_MODEL),
         qwen_embedding_dimensions=embedding_dimensions,
-        qdrant_path=Path(os.environ.get("QDRANT_PATH", ".knowledge/qdrant")),
-        qdrant_collection=os.environ.get("QDRANT_COLLECTION", "qa_cards"),
     )
 
 

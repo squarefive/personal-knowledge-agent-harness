@@ -45,7 +45,7 @@ def test_extract_dedupes_existing_memory_names():
                 name=candidates[0].name,
                 type="user",
                 description="existing",
-                path=".memory/existing.md",
+                path="postgres://memory/existing",
             )
         ]
     )

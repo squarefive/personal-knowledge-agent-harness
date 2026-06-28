@@ -16,23 +16,23 @@ last_updated: "2026-06-28"
 | `src/personal_knowledge_agent/agent_bootstrap/` | Agent 运行配置和跨模块组件装配。 |
 | `src/personal_knowledge_agent/agent_runtime/` | Agent loop 运行时，包括 LLM 调用、tool call、最终回答、来源证据和事件发射。 |
 | `src/personal_knowledge_agent/agent_context/` | Agent 每轮上下文，包括 prompt、conversation session、Agent profile memory 和 tool result compact。 |
-| `src/personal_knowledge_agent/agent_context/conversation_sessions/` | `.sessions/` transcript、metadata、summary 和 artifact 管理。 |
-| `src/personal_knowledge_agent/agent_context/agent_profile_memory/` | `.memory/` Agent profile memory 读取和 memory candidate 提取。 |
+| `src/personal_knowledge_agent/agent_context/conversation_sessions/` | 会话 transcript、metadata、summary 和 artifact 适配；cloud-only runtime 应由 PostgreSQL session adapter 提供持久化。 |
+| `src/personal_knowledge_agent/agent_context/agent_profile_memory/` | Agent profile memory 读取和 memory candidate 提取接口；cloud-only runtime 应由 PostgreSQL user-preference memory 提供持久化。 |
 | `src/personal_knowledge_agent/agent_tools/` | LLM 可调用工具 adapter。 |
 | `src/personal_knowledge_agent/agent_tools/qa_knowledge_tools/` | Q&A 知识工具 handler。 |
 | `src/personal_knowledge_agent/agent_tools/agent_memory_tools/` | Agent memory 读取工具 handler。 |
 | `src/personal_knowledge_agent/agent_tools/todo_tools/` | Todo 待办工具 handler。 |
-| `src/personal_knowledge_agent/qa_data_access/` | 旧默认路径的 Q&A card SQLite 和 Qdrant 数据访问。 |
-| `src/personal_knowledge_agent/todo_data_access/` | Todo 待办项的 SQLite 数据访问。 |
+| `src/personal_knowledge_agent/qa_data_access/` | Q&A tool 共享数据模型和遗留查重逻辑；不提供 cloud-only runtime 数据源。 |
+| `src/personal_knowledge_agent/todo_data_access/` | Todo tool 共享数据模型；不提供 cloud-only runtime 数据源。 |
 | `src/personal_knowledge_agent/auth/` | 邮箱验证码登录的认证核心服务和仓储协议。 |
-| `src/personal_knowledge_agent/postgres/` | PostgreSQL 连接池和基础 schema 初始化。 |
+| `src/personal_knowledge_agent/postgres/` | cloud-only runtime 的 PostgreSQL / pgvector 连接、schema、仓储和 session adapter。 |
 | `src/personal_knowledge_agent/tool_runtime/` | 通用 tool dispatcher。 |
 | `src/personal_knowledge_agent/llm_clients/` | LLM provider client。 |
 | `src/personal_knowledge_agent/mail/` | SMTP 邮件发送 adapter。 |
 | `src/personal_knowledge_agent/security/` | secrets 读取、token hash 和日志敏感键脱敏工具。 |
 | `src/personal_knowledge_agent/agent_observability/` | Agent 运行事件日志等可观测性适配。 |
-| `src/personal_knowledge_agent/apps/cli/` | CLI app 入口和事件渲染。 |
-| `src/personal_knowledge_agent/apps/web/` | 本地 Web app、Web 入口和静态资源。 |
+| `src/personal_knowledge_agent/apps/cli/` | 旧 CLI app 入口和事件渲染；不属于稳定 cloud-only runtime 入口。 |
+| `src/personal_knowledge_agent/apps/web/` | cloud-only Web app、认证入口、Web Runtime 和静态资源。 |
 | `docs/` | 项目文档目录。 |
 | `docs/agents/` | Agent 稳定设计边界文档目录；当前边界文档为 `cloud-qa-knowledge-agent.md`。 |
 | `docs/architecture/` | 代码地图等架构说明文档目录。 |
@@ -48,22 +48,22 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/`
 
-模块作用：提供 Python 包和 CLI 公共入口。
+模块作用：提供 Python 包入口和历史 CLI 转发入口。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 标记 Python 包。 |
-| `__main__.py` | CLI 根入口薄转发，供 `python -m personal_knowledge_agent` 和 `pka` 使用。 |
+| `__main__.py` | 历史 CLI 根入口薄转发；不作为稳定 cloud-only runtime 入口。 |
 
 ### Root Deployment
 
 模块目录：项目根目录
 
-模块作用：提供容器镜像构建入口。
+模块作用：提供 cloud-only Web 服务容器镜像构建入口。
 
 | 文件 | 作用 |
 |---|---|
-| `Dockerfile` | 构建运行 Web app 的生产容器镜像，设置 `PYTHONPATH=/app/src` 并使用 `python -m personal_knowledge_agent web --host 0.0.0.0 --port 8787 --no-open` 启动。 |
+| `Dockerfile` | 构建运行 cloud-only Web app 的生产容器镜像，设置 `PYTHONPATH=/app/src` 并启动 Web 服务。 |
 
 ### Agent Bootstrap
 
@@ -112,13 +112,13 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/agent_context/conversation_sessions/`
 
-模块作用：管理 `.sessions/` 会话恢复数据。
+模块作用：提供会话恢复、summary 和 compact 的接口与文件型遗留实现；cloud-only runtime 持久化应使用 PostgreSQL session adapter。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 conversation session 组件。 |
-| `conversation_transcript_repository.py` | 追加和读取 `.sessions/<session_id>/transcript.jsonl`。 |
-| `conversation_session_metadata_repository.py` | 读写 `.sessions/<session_id>/metadata.json`。 |
+| `conversation_transcript_repository.py` | 文件型 transcript repository 遗留实现；不作为 cloud-only runtime 持久化来源。 |
+| `conversation_session_metadata_repository.py` | 文件型 metadata repository 遗留实现；不作为 cloud-only runtime 持久化来源。 |
 | `conversation_session_restorer.py` | 从 transcript 或 summary 恢复 runtime messages。 |
 | `conversation_session_summarizer.py` | 长 transcript 自动总结和失败降级。 |
 | `tool_result_compactor.py` | 大工具结果落盘和 compact record 生成。 |
@@ -128,13 +128,13 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/agent_context/agent_profile_memory/`
 
-模块作用：读取 Agent profile memory 并生成候选记忆。
+模块作用：提供 Agent profile memory 读取接口并生成候选记忆；cloud-only runtime 的长期偏好记忆应来自 PostgreSQL。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent profile memory 组件。 |
-| `agent_memory_index_repository.py` | 读取和校验 `.memory/MEMORY.md`。 |
-| `agent_memory_document_repository.py` | 读取和校验 `.memory/*.md`。 |
+| `agent_memory_index_repository.py` | 文件型 memory index repository 遗留实现；不作为 cloud-only runtime 长期记忆来源。 |
+| `agent_memory_document_repository.py` | 文件型 memory document repository 遗留实现；不作为 cloud-only runtime 长期记忆来源。 |
 | `agent_memory_candidate_extractor.py` | 从 turn 结果中提取 memory candidates。 |
 | `agent_memory_turn_finalizer.py` | turn-end memory candidate 事件收尾。 |
 | `agent_memory_models.py` | 定义 memory index、document 和 candidate 数据结构。 |
@@ -156,27 +156,24 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/qa_data_access/`
 
-模块作用：管理 Q&A card 的 SQLite 事实库和 Qdrant 语义索引。
+模块作用：保存 Q&A tool 共享数据模型和遗留查重逻辑；不提供 SQLite / Qdrant runtime fallback。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Q&A 数据访问组件。 |
 | `qa_card_models.py` | 定义 Q&A card、关键词检索结果和语义检索命中数据结构。 |
-| `qa_card_repository.py` | 初始化和读写 SQLite `qa_cards` 表。 |
-| `qa_card_semantic_index.py` | 封装 DashScope embedding 和 Qdrant local mode 语义索引。 |
-| `duplicate_detection.py` | 提供本地 Q&A 全库重复检测服务，负责候选召回、相似度打分和重复组构建。 |
+| `duplicate_detection.py` | 旧 Q&A 重复检测服务，负责候选召回、相似度打分和重复组构建。 |
 
 ### Todo Data Access
 
 模块目录：`src/personal_knowledge_agent/todo_data_access/`
 
-模块作用：管理 todo 待办项的 SQLite 事实表。
+模块作用：保存 Todo tool 共享数据模型；不提供 SQLite runtime fallback。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 todo 数据访问组件。 |
 | `todo_models.py` | 定义 todo 待办项数据结构。 |
-| `todo_repository.py` | 初始化和读写 SQLite `todo_items` 表。 |
 
 ### Auth
 
@@ -194,7 +191,7 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/postgres/`
 
-模块作用：提供云端化 PostgreSQL 基础设施，不接入现有 SQLite / Qdrant repository。
+模块作用：提供 cloud-only runtime 的 PostgreSQL / pgvector 基础设施，不以 SQLite / Qdrant 作为 runtime fallback。
 
 | 文件 | 作用 |
 |---|---|
@@ -274,12 +271,12 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/apps/`
 
-模块作用：提供 CLI 和 Web app 入口。
+模块作用：提供历史 CLI 入口和 cloud-only Web app 入口。
 
 | 文件 | 作用 |
 |---|---|
-| `cli/cli_main.py` | CLI 持续交互入口和 `pka web` 子命令分发。 |
-| `cli/cli_event_renderer.py` | CLI 事件渲染和长文本截断。 |
+| `cli/cli_main.py` | 历史 CLI 持续交互入口和 `pka web` 子命令分发；不属于稳定 cloud-only runtime 入口。 |
+| `cli/cli_event_renderer.py` | 历史 CLI 事件渲染和长文本截断。 |
 | `web/web_app.py` | 创建 FastAPI app，提供流式聊天、session 管理和卡片浏览 API。 |
 | `web/cloud_dependencies.py` | 装配 Web 云端依赖，包括 PostgreSQL pool、AuthService、SMTP 邮件发送、用户绑定工具 factory 和会话仓储 facade。 |
 | `web/web_main.py` | Web Runtime 启动入口。 |
@@ -291,12 +288,12 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/web/`
 
-模块作用：保留公开的 `python -m personal_knowledge_agent.web` 启动方式，不承载业务实现。
+模块作用：保留公开 Web 启动转发包，不承载业务实现。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 标记 Web 启动包。 |
-| `__main__.py` | 转发到 `apps/web/web_main.py`。 |
+| `__main__.py` | 转发到 `apps/web/web_main.py`；稳定 runtime 语义以 cloud-only Web 服务为准。 |
 
 ### Docs
 
@@ -335,7 +332,6 @@ last_updated: "2026-06-28"
 
 | 文件 | 作用 |
 |---|---|
-| `backfill-qa-categories.py` | 为历史 Q&A 卡片生成 category 并重建 category 约束。 |
 | `check-agents-md-format.py` | 检查 `AGENTS.md` 的入口文档规约。 |
 | `check-agent-doc-format.py` | 检查 Agent 开发上下文模板、具体 Agent 文档格式和文档篇幅告警。 |
 | `check-codebase-map-format.py` | 检查代码地图模板和实际代码地图格式。 |
@@ -343,7 +339,7 @@ last_updated: "2026-06-28"
 | `init-postgres-schema.py` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串并初始化 PostgreSQL schema。 |
 | `backup-postgres.sh` | 从 `DATABASE_URL` / `DATABASE_URL_FILE` 读取连接串，执行 `pg_dump | gzip` 并保留最近 N 份备份。 |
 | `backup-postgres-compose.sh` | 在单机 Docker Compose 部署中通过 `postgres` 容器执行 `pg_dump | gzip`，避免数据库暴露到宿主机端口。 |
-| `migrate-sqlite-qa-to-postgres.py` | 将旧 SQLite `qa_cards` 迁移到指定邮箱对应的 PostgreSQL 用户，不迁移 session、todo、memory 或 Qdrant。 |
+| `migrate-sqlite-qa-to-postgres.py` | 将旧 SQLite `qa_cards` 作为一次性来源迁移到指定邮箱对应的 PostgreSQL 用户，不迁移 session、todo、memory 或 Qdrant。 |
 | `rebuild-postgres-qa-embeddings.py` | 为指定邮箱用户的 PostgreSQL Q&A 卡片重建 pgvector embedding。 |
 
 ### Tests
@@ -358,9 +354,6 @@ last_updated: "2026-06-28"
 | `test_agent_loop.py` | 覆盖 Agent loop 的工具调用、权限、消息和最终回答流程。 |
 | `test_tools.py` | 覆盖 Agent tool handler 和 tool dispatcher。 |
 | `test_todo_tools.py` | 覆盖 todo tool handler 和 tool dispatcher 集成。 |
-| `test_sqlite_store.py` | 覆盖 Q&A card repository。 |
-| `test_todo_store.py` | 覆盖 todo repository。 |
-| `test_qa_semantic_index.py` | 覆盖 Q&A semantic index。 |
 | `test_config.py` | 覆盖运行配置和 secret 文件读取。 |
 | `test_security.py` | 覆盖 secret 读取、token hash 和敏感键脱敏。 |
 | `test_auth_service.py` | 覆盖邮箱验证码登录核心服务。 |
@@ -372,11 +365,10 @@ last_updated: "2026-06-28"
 | `test_init_postgres_schema.py` | 覆盖 PostgreSQL schema 初始化脚本的 `DATABASE_URL` / `DATABASE_URL_FILE` 读取和初始化调用。 |
 | `test_postgres_session_repository.py` | 覆盖 PostgreSQL conversation session repository 的用户隔离、消息 JSONB 和状态更新。 |
 | `test_postgres_todo_repository.py` | 覆盖 PostgreSQL todo repository 的用户隔离、状态校验和参数化 SQL。 |
-| `test_migrate_sqlite_qa_to_postgres.py` | 覆盖 SQLite Q&A 到 PostgreSQL 迁移脚本的 CLI、用户查找、字段解析、dry-run 和 upsert SQL。 |
+| `test_migrate_sqlite_qa_to_postgres.py` | 覆盖旧 SQLite Q&A 一次性迁移到 PostgreSQL 脚本的 CLI、用户查找、字段解析、dry-run 和 upsert SQL。 |
 | `test_rebuild_postgres_qa_embeddings.py` | 覆盖 PostgreSQL Q&A embedding 重建脚本的用户定位、成功和失败续跑。 |
 | `test_check_agents_md_format.py` | 覆盖 `AGENTS.md` 规约检查脚本。 |
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |
 | `test_web_app.py` | 覆盖 Web API、SSE 聊天、session 隔离和卡片接口。 |
 | `test_web_cloud_dependencies.py` | 覆盖 Web 云端依赖装配和 pool 生命周期。 |
-| `test_cli.py` | 覆盖 CLI 输入循环、退出、错误处理和审批交互。 |
 | `test_*.py` | 其他测试覆盖配置、日志、session、memory、source evidence 和 LLM client。 |

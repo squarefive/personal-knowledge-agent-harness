@@ -1,13 +1,42 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any
+from typing import Any, Protocol
 
-from ...todo_data_access import TodoItem, TodoRepository
+from ...todo_data_access import TodoItem
+
+
+class TodoStore(Protocol):
+    def create_todo(
+        self,
+        *,
+        title: str,
+        notes: str | None = None,
+        due_at: str | None = None,
+    ) -> TodoItem: ...
+
+    def list_todos(
+        self,
+        *,
+        query: str | None = None,
+        status: str | None = "open",
+        limit: int = 20,
+    ) -> list[TodoItem]: ...
+
+    def update_todo(
+        self,
+        todo_id: str,
+        *,
+        title: str | None = None,
+        notes: str | None = None,
+        status: str | None = None,
+        due_at: str | None = None,
+        clear_due_at: bool = False,
+    ) -> TodoItem | None: ...
 
 
 class TodoToolHandlers:
-    def __init__(self, store: TodoRepository):
+    def __init__(self, store: TodoStore):
         self.store = store
 
     def create_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -103,7 +132,7 @@ TODO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "create_todo",
-            "description": "保存一条本地 todo 待办项。当用户明确要求记录之后要做的行动项、任务或待办时使用；本工具会写入 SQLite todo_items。",
+            "description": "保存当前用户的一条 todo 待办项。当用户明确要求记录之后要做的行动项、任务或待办时使用；本工具会写入服务端事实库。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -129,7 +158,7 @@ TODO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_todos",
-            "description": "查询本地 todo 待办项。当用户要求查看、搜索或核对本地 todo 列表时使用；默认只返回 open 待办。",
+            "description": "查询当前用户 todo 待办项。当用户要求查看、搜索或核对当前用户 todo 列表时使用；默认只返回 open 待办。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -155,7 +184,7 @@ TODO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_todo",
-            "description": "更新一条本地 todo 待办项。当用户明确要求修改待办标题、备注、截止时间或状态时使用；需要真实 todo_id。",
+            "description": "更新当前用户的一条 todo 待办项。当用户明确要求修改待办标题、备注、截止时间或状态时使用；需要真实 todo_id。",
             "parameters": {
                 "type": "object",
                 "properties": {

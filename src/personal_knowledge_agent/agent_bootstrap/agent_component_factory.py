@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from ..agent_context.agent_profile_memory import (
@@ -14,16 +13,12 @@ from ..agent_context.conversation_sessions import (
     ConversationSessionRestorer,
     ConversationSessionSummarizer,
     ConversationTranscriptRepository,
-    RuntimeContextCompactor,
-    ToolResultCompactor,
 )
 from ..agent_runtime import AgentEvent, AgentLoopRunner
 from ..agent_tools.agent_memory_tools import AgentMemoryToolHandlers
 from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 from ..agent_tools.todo_tools import TodoToolHandlers
 from ..llm_clients import DeepSeekChatClient
-from ..qa_data_access import QACardRepository, QACardSemanticIndex
-from ..todo_data_access import TodoRepository
 from ..tool_runtime import ApprovalRequest, ToolDispatcher
 from .agent_runtime_config import AgentConfig
 
@@ -65,39 +60,24 @@ def create_agent_components(
     memory_index_store: Any | None = None,
     memory_store: Any | None = None,
 ) -> AgentComponents:
-    store = qa_store or QACardRepository(config.knowledge_db_path)
-    resolved_todo_store = todo_store or TodoRepository(config.knowledge_db_path)
-    workspace_root = Path.cwd()
+    store = _required_component(qa_store, "qa_store")
+    resolved_todo_store = _required_component(todo_store, "todo_store")
     llm = DeepSeekChatClient(
         api_key=config.deepseek_api_key,
         model=config.deepseek_model,
         llm_provider_user_id=llm_provider_user_id,
     )
-    resolved_transcript = transcript or ConversationTranscriptRepository(workspace_root, session_id=session_id)
-    resolved_metadata_store = metadata_store or ConversationSessionMetadataRepository(
-        workspace_root,
-        session_id=session_id,
-        model=config.deepseek_model,
-    )
+    resolved_transcript = _required_component(transcript, "transcript")
+    resolved_metadata_store = _required_component(metadata_store, "metadata_store")
     summarizer = ConversationSessionSummarizer(llm)
     restore_result = ConversationSessionRestorer(
         transcript=resolved_transcript,
         metadata_store=resolved_metadata_store,
         summarizer=summarizer,
     ).restore()
-    metadata = resolved_metadata_store.load_or_create()
-    resolved_memory_index_store = memory_index_store or AgentMemoryIndexRepository(workspace_root)
-    resolved_memory_store = memory_store or AgentMemoryDocumentRepository(workspace_root)
-    resolved_semantic_index = semantic_index
-    if resolved_semantic_index is None and enable_semantic_index:
-        resolved_semantic_index = QACardSemanticIndex(
-            dashscope_api_key=config.dashscope_api_key,
-            embedding_base_url=config.qwen_embedding_base_url,
-            embedding_model=config.qwen_embedding_model,
-            embedding_dimensions=config.qwen_embedding_dimensions,
-            qdrant_path=config.qdrant_path,
-            collection_name=config.qdrant_collection,
-        )
+    resolved_memory_index_store = _required_component(memory_index_store, "memory_index_store")
+    resolved_memory_store = _required_component(memory_store, "memory_store")
+    resolved_semantic_index = semantic_index if enable_semantic_index else None
     tools = QAKnowledgeToolHandlers(store, semantic_index=resolved_semantic_index)
     todo_tools = TodoToolHandlers(resolved_todo_store)
     memory_tools = AgentMemoryToolHandlers(
@@ -108,12 +88,6 @@ def create_agent_components(
     resolved_runtime_context_compactor = runtime_context_compactor
     if resolved_runtime_context_compactor is None and runtime_context_compactor_factory is not None:
         resolved_runtime_context_compactor = runtime_context_compactor_factory(summarizer)
-    if resolved_runtime_context_compactor is None:
-        resolved_runtime_context_compactor = RuntimeContextCompactor(
-            workspace_root,
-            summarizer=summarizer,
-            session_id=session_id,
-        )
     agent = AgentLoopRunner(
         llm=llm,
         dispatcher=dispatcher,
@@ -122,11 +96,7 @@ def create_agent_components(
         messages=restore_result.messages,
         transcript=resolved_transcript,
         metadata_store=resolved_metadata_store,
-        context_compactor=(
-            context_compactor
-            if context_compactor is not None
-            else ToolResultCompactor(workspace_root, artifacts_dir=metadata.artifacts_dir)
-        ),
+        context_compactor=context_compactor,
         runtime_context_compactor=resolved_runtime_context_compactor,
         session_summary=restore_result.summary,
         context_window_tokens=config.context_window_tokens,
@@ -149,3 +119,9 @@ def create_agent(
         approval_callback=approval_callback,
         session_id=session_id,
     ).agent
+
+
+def _required_component(component: Any | None, name: str) -> Any:
+    if component is None:
+        raise ValueError(f"{name} is required for cloud-only Agent runtime")
+    return component

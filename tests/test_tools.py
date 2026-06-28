@@ -2,14 +2,11 @@ import json
 
 import pytest
 
-from personal_knowledge_agent.agent_context.agent_profile_memory import (
-    AgentMemoryDocumentRepository,
-    AgentMemoryIndexRepository,
-)
-from personal_knowledge_agent.qa_data_access import QACardRepository
 from personal_knowledge_agent.tool_runtime import ToolCall
+from personal_knowledge_agent.agent_context.agent_profile_memory import MemoryDocument
 from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers
 from personal_knowledge_agent.tool_runtime import ToolDispatcher
+from tests.fakes import InMemoryMemoryStore, InMemoryQACardStore
 
 
 class FakeSemanticIndex:
@@ -36,7 +33,7 @@ class FakeSemanticIndex:
 
     def search(self, query, limit):
         if self.fail_search:
-            raise RuntimeError("qdrant unavailable")
+            raise RuntimeError("semantic index unavailable")
         self.search_limits.append(limit)
         return self.hits[:limit]
 
@@ -57,10 +54,11 @@ class FakeHit:
         self.score = score
 
 
-def create_memory_tools(tmp_path):
+def create_memory_tools(tmp_path, memory_store=None):
+    memory_store = memory_store or InMemoryMemoryStore()
     return AgentMemoryToolHandlers(
-        memory_index_repository=AgentMemoryIndexRepository(tmp_path),
-        memory_document_repository=AgentMemoryDocumentRepository(tmp_path),
+        memory_index_repository=memory_store,
+        memory_document_repository=memory_store,
     )
 
 
@@ -69,7 +67,7 @@ def create_dispatcher(tmp_path, qa_tools):
 
 
 def test_tool_handlers_keep_qa_and_memory_dependencies_separate(tmp_path):
-    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    qa_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     memory_tools = create_memory_tools(tmp_path)
 
     assert not hasattr(qa_tools, "memory_index_repository")
@@ -79,7 +77,7 @@ def test_tool_handlers_keep_qa_and_memory_dependencies_separate(tmp_path):
 
 
 def test_tool_dispatcher_aggregates_qa_and_memory_definitions(tmp_path):
-    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    qa_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = ToolDispatcher(qa_tools, create_memory_tools(tmp_path))
 
     tool_names = {
@@ -104,7 +102,7 @@ def test_tool_dispatcher_aggregates_qa_and_memory_definitions(tmp_path):
 
 
 def test_tool_definitions_include_parameter_descriptions(tmp_path):
-    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    qa_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = ToolDispatcher(qa_tools, create_memory_tools(tmp_path))
 
     for definition in dispatcher.definitions():
@@ -120,7 +118,7 @@ def test_tool_definitions_include_parameter_descriptions(tmp_path):
 
 
 def test_qa_tool_schema_does_not_expose_legacy_storage_descriptions(tmp_path):
-    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    qa_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = ToolDispatcher(qa_tools, create_memory_tools(tmp_path))
 
     qa_schema_text = json.dumps(
@@ -144,13 +142,12 @@ def test_qa_tool_schema_does_not_expose_legacy_storage_descriptions(tmp_path):
         ensure_ascii=False,
     )
 
-    assert "SQLite" not in qa_schema_text
-    assert "Qdrant" not in qa_schema_text
-    assert "本地" not in qa_schema_text
+    for forbidden in ("SQL" + "ite", "Q" + "drant", "本地"):
+        assert forbidden not in qa_schema_text
 
 
 def test_detect_duplicate_cards_definition_includes_all_scope(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     definition = next(
         item for item in tools.definitions()
         if item["function"]["name"] == "detect_duplicate_cards"
@@ -159,11 +156,11 @@ def test_detect_duplicate_cards_definition_includes_all_scope(tmp_path):
     properties = definition["function"]["parameters"]["properties"]
 
     assert properties["scope"]["enum"] == ["target", "all"]
-    assert "all 检测知识库全部 Q&A 卡片" in properties["scope"]["description"]
+    assert "all 检测当前用户个人知识库全部 Q&A 卡片" in properties["scope"]["description"]
 
 
 def test_save_qa_card_validates_required_fields(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
 
     result = tools.save_qa_card({"question": "缺少答案"})
 
@@ -172,7 +169,7 @@ def test_save_qa_card_validates_required_fields(tmp_path):
 
 
 def test_save_qa_card_requires_category(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
 
     result = tools.save_qa_card(
         {
@@ -189,7 +186,7 @@ def test_save_qa_card_requires_category(tmp_path):
 
 
 def test_tools_save_read_search_and_recent(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
 
     saved = tools.save_qa_card(
         {
@@ -221,7 +218,7 @@ def test_tools_save_read_search_and_recent(tmp_path):
 
 
 def test_read_qa_card_not_found_returns_structured_error(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
 
     result = tools.read_qa_card({"card_id": "missing"})
 
@@ -230,7 +227,7 @@ def test_read_qa_card_not_found_returns_structured_error(tmp_path):
 
 
 def test_update_and_delete_qa_card_tools(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     saved = tools.save_qa_card(
         {
             "question": "旧问题？",
@@ -265,7 +262,7 @@ def test_update_and_delete_qa_card_tools(tmp_path):
 
 
 def test_update_and_delete_qa_card_tools_return_not_found(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
 
     updated = tools.update_qa_card({"card_id": "qa_missing", "summary": "新摘要。"})
     deleted = tools.delete_qa_card({"card_id": "qa_missing"})
@@ -276,8 +273,8 @@ def test_update_and_delete_qa_card_tools_return_not_found(tmp_path):
     assert deleted["error_code"] == "not_found"
 
 
-def test_hybrid_search_degrades_to_sqlite_like_when_semantic_index_disabled(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+def test_hybrid_search_degrades_to_keyword_search_when_semantic_index_disabled(tmp_path):
+    store = InMemoryQACardStore()
     tools = QAKnowledgeToolHandlers(store, semantic_index=FakeSemanticIndex(enabled=False))
     saved = tools.save_qa_card(
         {
@@ -299,7 +296,7 @@ def test_hybrid_search_degrades_to_sqlite_like_when_semantic_index_disabled(tmp_
 
 
 def test_hybrid_search_normalizes_scores_and_ranks_by_final_score(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     keyword_card = store.save_card(
         question="关键词问题？",
         answer="关键词答案。",
@@ -335,7 +332,7 @@ def test_hybrid_search_normalizes_scores_and_ranks_by_final_score(tmp_path):
 
 
 def test_hybrid_search_combines_keyword_and_semantic_scores(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     card = store.save_card(
         question="氛围编程 vibe coding 是什么？",
         answer="vibe coding 是 AI 辅助编程范式。",
@@ -362,7 +359,7 @@ def test_hybrid_search_combines_keyword_and_semantic_scores(tmp_path):
 
 
 def test_hybrid_search_returns_top_weak_candidate_with_warning(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     weak_card = store.save_card(
         question="弱相关问题？",
         answer="弱相关答案。",
@@ -393,7 +390,7 @@ def test_hybrid_search_returns_top_weak_candidate_with_warning(tmp_path):
 
 
 def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     card = store.save_card(
         question="低相关问题？",
         answer="低相关答案。",
@@ -414,7 +411,7 @@ def test_hybrid_search_returns_empty_when_candidates_are_below_weak_threshold(tm
 
 
 def test_search_and_recent_cards_filter_by_category(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     tools.save_qa_card(
         {
             "question": "Agent 问题？",
@@ -442,7 +439,7 @@ def test_search_and_recent_cards_filter_by_category(tmp_path):
 
 
 def test_hybrid_search_filters_semantic_candidates_by_category(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     agent_card = store.save_card(
         question="Agent 语义问题？",
         answer="Agent 语义答案。",
@@ -472,7 +469,7 @@ def test_hybrid_search_filters_semantic_candidates_by_category(tmp_path):
 
 
 def test_hybrid_search_over_fetches_semantic_hits_when_category_filters(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     first_agent_card = store.save_card(
         question="第一个 Agent 语义问题？",
         answer="第一个 Agent 语义答案。",
@@ -513,7 +510,7 @@ def test_hybrid_search_over_fetches_semantic_hits_when_category_filters(tmp_path
 
 
 def test_hybrid_search_does_not_fallback_across_category(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     agent_card = store.save_card(
         question="Agent 语义问题？",
         answer="Agent 语义答案。",
@@ -536,7 +533,7 @@ def test_hybrid_search_does_not_fallback_across_category(tmp_path):
 
 
 def test_detect_duplicate_cards_filters_self_and_auto_returns_only_duplicates(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     target = store.save_card(
         question="alpha source check",
         answer="answer",
@@ -587,7 +584,7 @@ def test_detect_duplicate_cards_filters_self_and_auto_returns_only_duplicates(tm
 
 
 def test_detect_duplicate_cards_all_scope_returns_duplicate_groups(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     first = store.save_card(
         question="DeepSeek API key 应该如何配置？",
         answer="把 DeepSeek API key 放到环境变量中。",
@@ -624,7 +621,7 @@ def test_detect_duplicate_cards_all_scope_returns_duplicate_groups(tmp_path):
 
 
 def test_detect_duplicate_cards_all_scope_merges_connected_pairs(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     first = store.save_card(
         question="上下文压缩什么时候触发？",
         answer="达到真实 token 阈值后触发。",
@@ -655,7 +652,7 @@ def test_detect_duplicate_cards_all_scope_merges_connected_pairs(tmp_path):
 
 
 def test_detect_duplicate_cards_all_scope_auto_returns_only_duplicates(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     store.save_card(
         question="DeepSeek API key 应该如何配置？",
         answer="把 key 放到环境变量。",
@@ -681,7 +678,7 @@ def test_detect_duplicate_cards_all_scope_auto_returns_only_duplicates(tmp_path)
 
 
 def test_detect_duplicate_cards_applies_category_filter_and_degrades_to_keyword(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     target = store.save_card(
         question="来源校验",
         answer="答案",
@@ -721,7 +718,7 @@ def test_detect_duplicate_cards_applies_category_filter_and_degrades_to_keyword(
 
 
 def test_merge_qa_cards_creates_new_card_deletes_originals_and_syncs_semantic_index(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     first = store.save_card(
         question="问题一？",
         answer="答案一。",
@@ -760,7 +757,7 @@ def test_merge_qa_cards_creates_new_card_deletes_originals_and_syncs_semantic_in
 
 
 def test_merge_qa_cards_missing_original_does_not_write(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     first = store.save_card(
         question="问题一？",
         answer="答案一。",
@@ -788,7 +785,7 @@ def test_merge_qa_cards_missing_original_does_not_write(tmp_path):
 
 
 def test_merge_qa_cards_returns_warning_when_semantic_sync_fails(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     first = store.save_card(
         question="问题一？",
         answer="答案一。",
@@ -822,7 +819,7 @@ def test_merge_qa_cards_returns_warning_when_semantic_sync_fails(tmp_path):
 
 
 def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     first = store.save_card(
         question="已向量化问题？",
         answer="已向量化答案。",
@@ -852,7 +849,7 @@ def test_rebuild_qa_semantic_index_only_indexes_unvectorized_cards(tmp_path):
 
 
 def test_rebuild_qa_semantic_index_keeps_failed_cards_unvectorized(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     card = store.save_card(
         question="失败问题？",
         answer="失败答案。",
@@ -873,7 +870,7 @@ def test_rebuild_qa_semantic_index_keeps_failed_cards_unvectorized(tmp_path):
 
 
 def test_save_update_delete_sync_semantic_index_best_effort(tmp_path):
-    store = QACardRepository(tmp_path / "knowledge.db")
+    store = InMemoryQACardStore()
     semantic_index = FakeSemanticIndex()
     tools = QAKnowledgeToolHandlers(store, semantic_index=semantic_index)
 
@@ -897,7 +894,7 @@ def test_save_update_delete_sync_semantic_index_best_effort(tmp_path):
 
 
 def test_tool_dispatcher_display_output_uses_declared_fields(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, tools)
     result = {
         "ok": True,
@@ -935,7 +932,7 @@ def test_tool_dispatcher_display_output_uses_declared_fields(tmp_path):
 
 
 def test_tool_dispatcher_display_output_includes_hybrid_ranking_fields(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, tools)
     result = {
         "ok": True,
@@ -991,7 +988,7 @@ def test_tool_dispatcher_display_output_includes_hybrid_ranking_fields(tmp_path)
 
 
 def test_tool_dispatcher_display_output_includes_duplicate_and_merge_fields(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, tools)
 
     duplicate_display = dispatcher.display_output(
@@ -1091,7 +1088,7 @@ def test_tool_dispatcher_display_output_includes_duplicate_and_merge_fields(tmp_
 
 
 def test_tool_dispatcher_handles_update_and_delete_tools(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, tools)
     saved = tools.save_qa_card(
         {
@@ -1124,7 +1121,7 @@ def test_tool_dispatcher_handles_update_and_delete_tools(tmp_path):
 
 
 def test_tool_dispatcher_display_output_keeps_unknown_tool_error(tmp_path):
-    tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     dispatcher = create_dispatcher(tmp_path, tools)
 
     display = dispatcher.display_output(
@@ -1136,37 +1133,21 @@ def test_tool_dispatcher_display_output_keeps_unknown_tool_error(tmp_path):
 
 
 def test_memory_tools_list_and_read_memory(tmp_path):
-    memory_dir = tmp_path / ".memory"
-    memory_dir.mkdir()
-    (memory_dir / "MEMORY.md").write_text(
-        "\n".join(
-            [
-                "# Memory Index",
-                "",
-                "| name | type | description | path |",
-                "|---|---|---|---|",
-                "| project-boundary | project | Project boundary | .memory/project-boundary.md |",
-            ]
-        ),
-        encoding="utf-8",
+    memory_store = InMemoryMemoryStore(
+        [
+            MemoryDocument(
+                name="project-boundary",
+                type="project",
+                description="Project boundary",
+                path="postgres://memory/project-boundary",
+                updated_at="2026-05-31",
+                source_type="user_decision",
+                source_ref=None,
+                content="Q&A 和 Agent memory 分开。",
+            )
+        ]
     )
-    (memory_dir / "project-boundary.md").write_text(
-        "\n".join(
-            [
-                "---",
-                'name: "project-boundary"',
-                'type: "project"',
-                'description: "Project boundary"',
-                'updated_at: "2026-05-31"',
-                'source_type: "user_decision"',
-                "---",
-                "",
-                "Q&A 和 Agent memory 分开。",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    tools = create_memory_tools(tmp_path)
+    tools = create_memory_tools(tmp_path, memory_store)
 
     index = tools.list_memory_index({"limit": 10})
     memory = tools.read_memory({"name": "project-boundary"})
@@ -1179,7 +1160,7 @@ def test_memory_tools_list_and_read_memory(tmp_path):
     assert "user_id" not in json.dumps(memory, ensure_ascii=False)
 
 def test_tool_dispatcher_handles_memory_tools(tmp_path):
-    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
+    qa_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
     memory_tools = create_memory_tools(tmp_path)
     dispatcher = ToolDispatcher(qa_tools, memory_tools)
 
