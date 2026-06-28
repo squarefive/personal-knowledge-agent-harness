@@ -44,6 +44,19 @@ MIN_CARD_LIMIT = 1
 MAX_CARD_LIMIT = 50
 MERGE_TOOL_NAME = "merge_qa_cards"
 AUTH_COOKIE_NAME = "pka_session"
+TOOL_DISPLAY_NAMES = {
+    "hybrid_search_qa_cards": "搜索知识库",
+    "search_qa_cards": "搜索知识库",
+    "save_qa_card": "保存知识卡片",
+    "read_qa_card": "读取知识卡片",
+    "list_recent_cards": "读取最近卡片",
+    "update_qa_card": "更新知识卡片",
+    "delete_qa_card": "删除知识卡片",
+    "merge_qa_cards": "合并知识卡片",
+    "create_todo": "保存待办",
+    "list_todos": "查询待办",
+    "update_todo": "更新待办",
+}
 
 
 class ChatAgent(Protocol):
@@ -828,22 +841,135 @@ def _cloud_session_payload(record: Any) -> dict[str, Any]:
 
 def _cloud_display_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     display_messages: list[dict[str, Any]] = []
+    pending_run: dict[str, Any] | None = None
+    tool_names_by_call_id: dict[str, str] = {}
+
+    def flush_pending_run() -> None:
+        nonlocal pending_run
+        if pending_run is None:
+            return
+        display_messages.append(pending_run)
+        pending_run = None
+
     for index, message in enumerate(messages, start=1):
         role = message.get("role")
         content = message.get("content")
-        if role not in {"user", "assistant"} or not isinstance(content, str):
+
+        if role == "user":
+            flush_pending_run()
+            if not isinstance(content, str):
+                continue
+            display_messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "created_at": str(message.get("created_at", "")),
+                    "event_id": index,
+                }
+            )
             continue
-        if role == "assistant" and (message.get("tool_calls") or message.get("tool_call_id")):
+
+        tool_calls = message.get("tool_calls")
+        if role == "assistant" and isinstance(tool_calls, list) and tool_calls:
+            if pending_run is None:
+                pending_run = _new_cloud_display_run(message, index)
+            pending_run["steps"].append(f"准备调用 {len(tool_calls)} 个工具")
+            for tool_call in tool_calls:
+                call_id = _tool_call_id(tool_call)
+                tool_name = _tool_call_name(tool_call)
+                if call_id and tool_name:
+                    tool_names_by_call_id[call_id] = tool_name
             continue
-        display_messages.append(
-            {
-                "role": role,
-                "content": content,
-                "created_at": str(message.get("created_at", "")),
-                "event_id": index,
-            }
-        )
+
+        if role == "tool":
+            if pending_run is None:
+                continue
+            tool_call_id = message.get("tool_call_id")
+            tool_name = tool_names_by_call_id.get(tool_call_id) if isinstance(tool_call_id, str) else None
+            pending_run["steps"].append(_summarize_cloud_tool_result(tool_name, content))
+            continue
+
+        if role == "assistant" and isinstance(content, str):
+            if pending_run is not None:
+                pending_run["answer"] = content
+                flush_pending_run()
+                continue
+            display_messages.append(
+                {
+                    "role": role,
+                    "content": content,
+                    "created_at": str(message.get("created_at", "")),
+                    "event_id": index,
+                }
+            )
+
+    flush_pending_run()
     return display_messages
+
+
+def _new_cloud_display_run(message: dict[str, Any], index: int) -> dict[str, Any]:
+    return {
+        "role": "assistant_run",
+        "steps": [],
+        "answer": "",
+        "created_at": str(message.get("created_at", "")),
+        "event_id": index,
+    }
+
+
+def _tool_call_id(tool_call: Any) -> str | None:
+    if not isinstance(tool_call, dict):
+        return None
+    value = tool_call.get("id")
+    return value if isinstance(value, str) else None
+
+
+def _tool_call_name(tool_call: Any) -> str | None:
+    if not isinstance(tool_call, dict):
+        return None
+    function = tool_call.get("function")
+    if not isinstance(function, dict):
+        return None
+    name = function.get("name")
+    return name if isinstance(name, str) else None
+
+
+def _summarize_cloud_tool_result(tool_name: str | None, content: Any) -> str:
+    output = _parse_cloud_tool_output(content)
+    if output.get("error_code") == "permission_denied":
+        return "操作未执行"
+    if output.get("ok") is False:
+        return f"{_cloud_tool_display_name(tool_name)}失败"
+    cards = output.get("cards")
+    if isinstance(cards, list):
+        return f"找到 {len(cards)} 条记录" if cards else "未找到相关记录"
+    todos = output.get("todos")
+    if isinstance(todos, list):
+        return f"找到 {len(todos)} 条待办" if todos else "未找到待办"
+    todo = output.get("todo")
+    if isinstance(todo, dict) and todo.get("todo_id"):
+        return "待办已保存" if todo.get("status") == "open" else "待办已更新"
+    if output.get("card_id"):
+        return "知识卡片已保存"
+    return f"{_cloud_tool_display_name(tool_name)}完成"
+
+
+def _parse_cloud_tool_output(content: Any) -> dict[str, Any]:
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str):
+        return {}
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _cloud_tool_display_name(tool_name: str | None) -> str:
+    if tool_name is None:
+        return "调用工具"
+    return TOOL_DISPLAY_NAMES.get(tool_name, "调用工具")
 
 
 def _record_value(record: Any, key: str, default: Any) -> Any:
