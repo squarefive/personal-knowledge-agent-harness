@@ -17,10 +17,10 @@ def test_build_system_prompt_keeps_base_rules():
     assert "# 写操作与权限" in prompt
     assert "# 记忆边界" in prompt
     assert "# 能力边界" in prompt
-    assert "你是一个本地个人 Q&A 知识库 Agent" in prompt
+    assert "你是一个云端个人 Q&A 知识库 Agent" in prompt
     assert "选择工具和构造参数时，以 tools 中的 name、description、parameters 和 required 字段为准" in prompt
     assert "不得把模型推测、外部知识或未确认内容伪装成用户提供的 Q&A" in prompt
-    assert "当用户要求基于本地知识库、已保存 Q&A、历史记录或来源回答时" in prompt
+    assert "当用户要求基于当前用户个人知识库、已保存 Q&A、历史记录或来源回答时" in prompt
     assert "必须取得足以支撑回答的完整工具证据" in prompt
     assert "scope=all" not in prompt
     assert "hybrid_search_qa_cards" not in prompt
@@ -45,14 +45,14 @@ def test_build_system_prompt_injects_memory_index():
                     name="project-boundary",
                     type="project",
                     description="Project boundary",
-                    path=".memory/project-boundary.md",
+                    path="postgres://memory/project-boundary",
                 )
             ]
         )
     )
 
     assert "可用 Agent memory 索引" in prompt
-    assert "project-boundary (project): Project boundary [.memory/project-boundary.md]" in prompt
+    assert "project-boundary (project): Project boundary [postgres://memory/project-boundary]" in prompt
 
 
 def test_build_system_prompt_injects_selected_memories():
@@ -62,7 +62,7 @@ def test_build_system_prompt_injects_selected_memories():
                 name="project-boundary",
                 type="project",
                 description="Project boundary",
-                path=".memory/project-boundary.md",
+                path="postgres://memory/project-boundary",
                 updated_at="2026-05-31",
                 source_type="user_decision",
                 source_ref=None,

@@ -22,8 +22,8 @@ last_updated: "2026-06-28"
 | `src/personal_knowledge_agent/agent_tools/qa_knowledge_tools/` | Q&A 知识工具 handler。 |
 | `src/personal_knowledge_agent/agent_tools/agent_memory_tools/` | Agent memory 读取工具 handler。 |
 | `src/personal_knowledge_agent/agent_tools/todo_tools/` | Todo 待办工具 handler。 |
-| `src/personal_knowledge_agent/qa_data_access/` | 旧 Q&A SQLite / Qdrant 数据访问代码；仅作为 Q&A 一次性迁移来源或遗留参考，不是 cloud-only runtime fallback。 |
-| `src/personal_knowledge_agent/todo_data_access/` | 旧 todo SQLite 数据访问代码；不属于 cloud-only runtime 数据源。 |
+| `src/personal_knowledge_agent/qa_data_access/` | Q&A tool 共享数据模型和遗留查重逻辑；不提供 cloud-only runtime 数据源。 |
+| `src/personal_knowledge_agent/todo_data_access/` | Todo tool 共享数据模型；不提供 cloud-only runtime 数据源。 |
 | `src/personal_knowledge_agent/auth/` | 邮箱验证码登录的认证核心服务和仓储协议。 |
 | `src/personal_knowledge_agent/postgres/` | cloud-only runtime 的 PostgreSQL / pgvector 连接、schema、仓储和 session adapter。 |
 | `src/personal_knowledge_agent/tool_runtime/` | 通用 tool dispatcher。 |
@@ -156,27 +156,24 @@ last_updated: "2026-06-28"
 
 模块目录：`src/personal_knowledge_agent/qa_data_access/`
 
-模块作用：保存旧 Q&A SQLite / Qdrant 数据访问代码；仅作为 Q&A 一次性迁移来源或遗留参考，不是 cloud-only runtime fallback。
+模块作用：保存 Q&A tool 共享数据模型和遗留查重逻辑；不提供 SQLite / Qdrant runtime fallback。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Q&A 数据访问组件。 |
 | `qa_card_models.py` | 定义 Q&A card、关键词检索结果和语义检索命中数据结构。 |
-| `qa_card_repository.py` | 旧 SQLite `qa_cards` repository；仅用于迁移来源读取或遗留参考。 |
-| `qa_card_semantic_index.py` | 旧 Qdrant local mode 语义索引 adapter；不作为 cloud-only runtime 索引。 |
 | `duplicate_detection.py` | 旧 Q&A 重复检测服务，负责候选召回、相似度打分和重复组构建。 |
 
 ### Todo Data Access
 
 模块目录：`src/personal_knowledge_agent/todo_data_access/`
 
-模块作用：保存旧 todo SQLite 数据访问代码；不属于 cloud-only runtime 数据源。
+模块作用：保存 Todo tool 共享数据模型；不提供 SQLite runtime fallback。
 
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 todo 数据访问组件。 |
 | `todo_models.py` | 定义 todo 待办项数据结构。 |
-| `todo_repository.py` | 旧 SQLite `todo_items` repository；不作为 cloud-only runtime todo 事实源。 |
 
 ### Auth
 
@@ -335,7 +332,6 @@ last_updated: "2026-06-28"
 
 | 文件 | 作用 |
 |---|---|
-| `backfill-qa-categories.py` | 为历史 Q&A 卡片生成 category 并重建 category 约束。 |
 | `check-agents-md-format.py` | 检查 `AGENTS.md` 的入口文档规约。 |
 | `check-agent-doc-format.py` | 检查 Agent 开发上下文模板、具体 Agent 文档格式和文档篇幅告警。 |
 | `check-codebase-map-format.py` | 检查代码地图模板和实际代码地图格式。 |
@@ -358,9 +354,6 @@ last_updated: "2026-06-28"
 | `test_agent_loop.py` | 覆盖 Agent loop 的工具调用、权限、消息和最终回答流程。 |
 | `test_tools.py` | 覆盖 Agent tool handler 和 tool dispatcher。 |
 | `test_todo_tools.py` | 覆盖 todo tool handler 和 tool dispatcher 集成。 |
-| `test_sqlite_store.py` | 覆盖 Q&A card repository。 |
-| `test_todo_store.py` | 覆盖 todo repository。 |
-| `test_qa_semantic_index.py` | 覆盖 Q&A semantic index。 |
 | `test_config.py` | 覆盖运行配置和 secret 文件读取。 |
 | `test_security.py` | 覆盖 secret 读取、token hash 和敏感键脱敏。 |
 | `test_auth_service.py` | 覆盖邮箱验证码登录核心服务。 |
@@ -378,5 +371,4 @@ last_updated: "2026-06-28"
 | `test_check_agent_doc_format.py` | 覆盖 Agent 文档格式检查脚本。 |
 | `test_web_app.py` | 覆盖 Web API、SSE 聊天、session 隔离和卡片接口。 |
 | `test_web_cloud_dependencies.py` | 覆盖 Web 云端依赖装配和 pool 生命周期。 |
-| `test_cli.py` | 覆盖历史 CLI 输入循环、退出、错误处理和审批交互。 |
 | `test_*.py` | 其他测试覆盖配置、日志、session、memory、source evidence 和 LLM client。 |

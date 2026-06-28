@@ -38,3 +38,11 @@ class SessionRestoreResult:
     mode: str
     summary: str | None = None
     warning: str | None = None
+
+
+@dataclass(frozen=True)
+class RuntimeCompactionResult:
+    messages: list[dict[str, Any]]
+    session_summary: str
+    mode: str
+    warning: str | None = None

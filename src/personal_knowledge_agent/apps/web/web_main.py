@@ -14,7 +14,7 @@ from .web_app import create_web_app
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Start the local Personal Knowledge Agent Web UI.")
+    parser = argparse.ArgumentParser(description="Start the cloud-only Personal Knowledge Agent Web UI.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     parser.add_argument("--no-open", action="store_true", help="Do not open the browser automatically.")
@@ -27,12 +27,10 @@ def main(argv: list[str] | None = None) -> int:
         cloud_dependencies = create_web_cloud_dependencies(config)
         app = create_web_app(
             config=config,
-            auth_service=cloud_dependencies.auth_service if cloud_dependencies is not None else None,
-            email_sender=cloud_dependencies.email_sender if cloud_dependencies is not None else None,
-            user_tool_factory=cloud_dependencies.user_tool_factory if cloud_dependencies is not None else None,
-            cloud_session_repository=(
-                cloud_dependencies.session_repository if cloud_dependencies is not None else None
-            ),
+            auth_service=cloud_dependencies.auth_service,
+            email_sender=cloud_dependencies.email_sender,
+            user_tool_factory=cloud_dependencies.user_tool_factory,
+            cloud_session_repository=cloud_dependencies.session_repository,
             event_logger=event_logger,
         )
 
@@ -46,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     url = f"http://{args.host}:{args.port}"
-    print(f"本地 Q&A 知识库 Web UI 已启动：{url}")
+    print(f"云端个人 Q&A 知识库 Web UI 已启动：{url}")
     if not args.no_open:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
 

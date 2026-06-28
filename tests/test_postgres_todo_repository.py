@@ -174,7 +174,7 @@ def test_update_todo_clear_due_at_sets_due_at_to_null() -> None:
     assert params[-2:] == ("usr_1", "todo_1")
 
 
-def test_update_todo_due_at_empty_string_clears_due_at_like_sqlite_repository() -> None:
+def test_update_todo_due_at_empty_string_clears_due_at() -> None:
     due_row = {**_todo_dict(TODO_ROW), "due_at": LATER}
     cleared_row = {**due_row, "due_at": None}
     connection = FakeConnection()

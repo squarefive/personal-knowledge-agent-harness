@@ -77,6 +77,7 @@ class FakeTools:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.store = SimpleNamespace(user_id=user_id)
+        self.semantic_index = None
 
     def list_recent_cards(self, arguments):
         return {
@@ -360,8 +361,18 @@ class MultiUserAuthService(FakeAuthService):
 
 
 def make_client(agent=None, tools=None):
-    app = create_web_app(agent=agent or FakeAgent(), tools=tools or FakeTools())
-    return TestClient(app)
+    auth_service = FakeAuthService()
+    app = create_web_app(
+        agent=agent or FakeAgent(),
+        tools=tools or FakeTools(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+        user_tool_factory=FakeCloudUserToolFactory(),
+        cloud_session_repository=FakeCloudSessionRepository(),
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+    return client
 
 
 def make_auth_client(agent=None, tools=None):
@@ -371,9 +382,24 @@ def make_auth_client(agent=None, tools=None):
         tools=tools or FakeTools(),
         auth_service=auth_service,
         email_sender=FakeEmailSender(),
+        user_tool_factory=FakeCloudUserToolFactory(),
+        cloud_session_repository=FakeCloudSessionRepository(),
     )
     client = TestClient(app)
     return client, auth_service
+
+
+def make_authed_app_and_client(**kwargs):
+    app = create_web_app(
+        auth_service=kwargs.pop("auth_service", FakeAuthService()),
+        email_sender=kwargs.pop("email_sender", FakeEmailSender()),
+        user_tool_factory=kwargs.pop("user_tool_factory", FakeCloudUserToolFactory()),
+        cloud_session_repository=kwargs.pop("cloud_session_repository", FakeCloudSessionRepository()),
+        **kwargs,
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+    return app, client
 
 
 def read_sse_events(response):
@@ -539,7 +565,7 @@ def test_auth_logout_revokes_cookie_token_and_clears_cookie():
 
 
 def test_auth_endpoints_return_configuration_error_without_auth_service():
-    client = make_client()
+    client = TestClient(create_web_app(agent=FakeAgent(), tools=FakeTools()))
 
     request_response = client.post("/api/auth/request-code", json={"email": "1033795760@qq.com"})
     verify_response = client.post("/api/auth/verify-code", json={"email": "1033795760@qq.com", "code": "123456"})
@@ -551,7 +577,7 @@ def test_auth_endpoints_return_configuration_error_without_auth_service():
     assert verify_response.json()["error_code"] == "auth_not_configured"
     assert me_response.json()["error_code"] == "auth_not_configured"
     assert logout_response.json()["error_code"] == "auth_not_configured"
-    assert cards_response.json()["ok"] is True
+    assert cards_response.json()["error_code"] == "not_authenticated"
 
 
 def test_chat_stream_returns_agent_answer():
@@ -625,7 +651,7 @@ def test_authenticated_business_apis_keep_existing_chat_cards_and_sessions_behav
     assert created_response.json()["ok"] is True
     assert listed_response.json()["sessions"][0]["session_id"] == session_id
     assert renamed_response.json()["session"]["title"] == "新标题"
-    assert messages_response.json()["messages"] == []
+    assert [message["role"] for message in messages_response.json()["messages"]] == ["user", "assistant"]
     assert agent.inputs == ["你好"]
     assert auth_service.authenticated_tokens == ["plain-session-token"] * 8
 
@@ -787,7 +813,7 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
                 "qa_user_id": qa_store.user_id,
                 "todo_user_id": todo_store.user_id,
                 "llm_provider_user_id": llm_provider_user_id,
-                "enable_semantic_index": enable_semantic_index,
+                    "semantic_index": semantic_index,
                 "transcript": type(transcript).__name__,
                 "metadata_store": type(metadata_store).__name__,
                 "context_compactor": type(context_compactor).__name__,
@@ -803,7 +829,6 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
     config = AgentConfig(
         deepseek_api_key="test-key",
         deepseek_model="test-model",
-        knowledge_db_path=tmp_path / "knowledge.db",
     )
     tool_factory = FakeCloudUserToolFactory()
     app = create_web_app(
@@ -830,7 +855,7 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
             "qa_user_id": "usr_a",
             "todo_user_id": "usr_a",
             "llm_provider_user_id": "llm_a",
-            "enable_semantic_index": False,
+                "semantic_index": None,
             "transcript": "PostgresConversationTranscriptAdapter",
             "metadata_store": "PostgresSessionMetadataAdapter",
             "context_compactor": "InMemoryToolResultCompactor",
@@ -843,7 +868,7 @@ def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_p
             "qa_user_id": "usr_b",
             "todo_user_id": "usr_b",
             "llm_provider_user_id": "llm_b",
-            "enable_semantic_index": False,
+                "semantic_index": None,
             "transcript": "PostgresConversationTranscriptAdapter",
             "metadata_store": "PostgresSessionMetadataAdapter",
             "context_compactor": "InMemoryToolResultCompactor",
@@ -963,7 +988,6 @@ def test_authenticated_cloud_chat_stream_uses_postgres_session_runtime_without_l
     config = AgentConfig(
         deepseek_api_key="test-key",
         deepseek_model="test-model",
-        knowledge_db_path=tmp_path / "knowledge.db",
     )
     app = create_web_app(
         config=config,
@@ -998,8 +1022,7 @@ def test_chat_route_is_removed():
 
 
 def test_web_runtime_approves_pending_tool_permission(tmp_path, monkeypatch):
-    app = create_web_app(agent=FakeAgent(), tools=FakeTools())
-    client = TestClient(app)
+    app, client = make_authed_app_and_client(agent=FakeAgent(), tools=FakeTools())
     manager = app.state.approval_manager
     thread, events, result_holder = start_pending_approval(manager, approval_request())
     requested = next_approval_event(events, "permission_requested")
@@ -1024,8 +1047,7 @@ def test_web_runtime_approves_pending_tool_permission(tmp_path, monkeypatch):
 
 
 def test_web_runtime_denies_pending_tool_permission(tmp_path, monkeypatch):
-    app = create_web_app(agent=FakeAgent(), tools=FakeTools())
-    client = TestClient(app)
+    app, client = make_authed_app_and_client(agent=FakeAgent(), tools=FakeTools())
     manager = app.state.approval_manager
     thread, events, result_holder = start_pending_approval(manager, approval_request())
     requested = next_approval_event(events, "permission_requested")
@@ -1124,7 +1146,7 @@ def test_chat_stream_publishes_and_logs_web_approval_events(tmp_path, monkeypatc
 
     captured = {}
 
-    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default", **kwargs):
         agent = ApprovalAgent(approval_callback)
         captured["agent"] = agent
         return type("Components", (), {"agent": agent, "tools": FakeTools()})()
@@ -1136,10 +1158,8 @@ def test_chat_stream_publishes_and_logs_web_approval_events(tmp_path, monkeypatc
     config = AgentConfig(
         deepseek_api_key="test-key",
         deepseek_model="test-model",
-        knowledge_db_path=tmp_path / "knowledge.db",
     )
-    app = create_web_app(config=config, event_logger=event_logger)
-    client = TestClient(app)
+    app, client = make_authed_app_and_client(config=config, event_logger=event_logger)
     result = {}
 
     def send_message():
@@ -1220,7 +1240,7 @@ def test_chat_stream_does_not_cache_answer_delta(tmp_path, monkeypatch):
             )
             return "你好"
 
-    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default", **kwargs):
         return type("Components", (), {"agent": EventAgent(event_sink), "tools": FakeTools()})()
 
     import personal_knowledge_agent.apps.web.web_app as app_module
@@ -1229,10 +1249,8 @@ def test_chat_stream_does_not_cache_answer_delta(tmp_path, monkeypatch):
     config = AgentConfig(
         deepseek_api_key="test-key",
         deepseek_model="test-model",
-        knowledge_db_path=tmp_path / "knowledge.db",
     )
-    app = create_web_app(config=config)
-    client = TestClient(app)
+    app, client = make_authed_app_and_client(config=config)
 
     response = client.post("/api/chat/stream", json={"message": "你好"})
 
@@ -1281,7 +1299,7 @@ def test_chat_stream_forwards_context_compaction_events(tmp_path, monkeypatch):
             self.sink(AgentEvent(run_id="run_1", event_type="final_answer_generated", payload={"answer": "完成"}))
             return "完成"
 
-    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default"):
+    def fake_create_agent_components(config, event_sink=None, approval_callback=None, session_id="default", **kwargs):
         return type("Components", (), {"agent": EventAgent(event_sink), "tools": FakeTools()})()
 
     import personal_knowledge_agent.apps.web.web_app as app_module
@@ -1290,10 +1308,8 @@ def test_chat_stream_forwards_context_compaction_events(tmp_path, monkeypatch):
     config = AgentConfig(
         deepseek_api_key="test-key",
         deepseek_model="test-model",
-        knowledge_db_path=tmp_path / "knowledge.db",
     )
-    app = create_web_app(config=config)
-    client = TestClient(app)
+    app, client = make_authed_app_and_client(config=config)
 
     response = client.post("/api/chat/stream", json={"message": "你好"})
 
@@ -1466,50 +1482,6 @@ def test_read_card_preserves_tool_error():
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert response.json()["error_code"] == "not_found"
-
-
-def test_create_and_list_sessions(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    client = make_client()
-
-    created = client.post("/api/sessions")
-    listed = client.get("/api/sessions")
-
-    assert created.status_code == 200
-    assert created.json()["ok"] is True
-    assert created.json()["session"]["title"] == "新会话"
-    assert listed.json()["sessions"][0]["session_id"] == created.json()["session"]["session_id"]
-
-
-def test_rename_session(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    client = make_client()
-    session_id = client.post("/api/sessions").json()["session"]["session_id"]
-
-    response = client.patch(f"/api/sessions/{session_id}", json={"title": "  新标题  "})
-
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert response.json()["session"]["title"] == "新标题"
-    assert response.json()["session"]["title_source"] == "user"
-
-
-def test_read_session_messages_returns_display_messages(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    client = make_client()
-    session_id = client.post("/api/sessions").json()["session"]["session_id"]
-
-    from personal_knowledge_agent.agent_context.conversation_sessions import ConversationTranscriptRepository
-
-    transcript = ConversationTranscriptRepository(tmp_path, session_id=session_id)
-    transcript.append_message({"role": "user", "content": "你好"})
-    transcript.append_message({"role": "assistant", "content": "你好。"})
-
-    response = client.get(f"/api/sessions/{session_id}/messages")
-
-    assert response.status_code == 200
-    assert response.json()["ok"] is True
-    assert [message["role"] for message in response.json()["messages"]] == ["user", "assistant"]
 
 
 def test_chat_stream_accepts_session_id():

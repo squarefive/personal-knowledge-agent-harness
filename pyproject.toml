@@ -1,15 +1,12 @@
 [project]
 name = "personal-knowledge-agent-harness"
 version = "0.1.0"
-description = "Local Q&A knowledge agent harness"
+description = "Cloud Q&A knowledge agent harness"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
   "httpx>=0.27.0",
   "python-dotenv>=1.0.0",
-  "prompt-toolkit>=3.0.0",
-  "qdrant-client>=1.11.0",
-  "rich>=13.7.0",
   "uvicorn>=0.30.0",
   "psycopg[binary,pool]>=3.2.0",
 ]

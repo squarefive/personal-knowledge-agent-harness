@@ -1,22 +1,18 @@
-from personal_knowledge_agent.agent_context.agent_profile_memory import (
-    AgentMemoryDocumentRepository,
-    AgentMemoryIndexRepository,
-)
 from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers, TodoToolHandlers
-from personal_knowledge_agent.qa_data_access import QACardRepository
-from personal_knowledge_agent.todo_data_access import TodoRepository
 from personal_knowledge_agent.tool_runtime import ToolCall, ToolDispatcher
+from tests.fakes import InMemoryMemoryStore, InMemoryQACardStore, InMemoryTodoStore
 
 
 def create_memory_tools(tmp_path):
+    memory_store = InMemoryMemoryStore()
     return AgentMemoryToolHandlers(
-        memory_index_repository=AgentMemoryIndexRepository(tmp_path),
-        memory_document_repository=AgentMemoryDocumentRepository(tmp_path),
+        memory_index_repository=memory_store,
+        memory_document_repository=memory_store,
     )
 
 
 def test_todo_tool_definitions_describe_usage_and_parameters(tmp_path):
-    tools = TodoToolHandlers(TodoRepository(tmp_path / "knowledge.db"))
+    tools = TodoToolHandlers(InMemoryTodoStore())
     definitions = tools.definitions()
     names = [definition["function"]["name"] for definition in definitions]
 
@@ -36,7 +32,7 @@ def test_todo_tool_definitions_describe_usage_and_parameters(tmp_path):
 
 
 def test_todo_tools_create_list_and_update(tmp_path):
-    tools = TodoToolHandlers(TodoRepository(tmp_path / "knowledge.db"))
+    tools = TodoToolHandlers(InMemoryTodoStore())
 
     created = tools.create_todo(
         {
@@ -64,7 +60,7 @@ def test_todo_tools_create_list_and_update(tmp_path):
 
 
 def test_todo_tools_return_structured_errors(tmp_path):
-    tools = TodoToolHandlers(TodoRepository(tmp_path / "knowledge.db"))
+    tools = TodoToolHandlers(InMemoryTodoStore())
 
     missing_title = tools.create_todo({"notes": "缺少标题"})
     missing_todo = tools.update_todo({"todo_id": "todo_missing", "status": "done"})
@@ -79,8 +75,8 @@ def test_todo_tools_return_structured_errors(tmp_path):
 
 
 def test_tool_dispatcher_registers_todo_tools(tmp_path):
-    qa_tools = QAKnowledgeToolHandlers(QACardRepository(tmp_path / "knowledge.db"))
-    todo_tools = TodoToolHandlers(TodoRepository(tmp_path / "knowledge.db"))
+    qa_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
+    todo_tools = TodoToolHandlers(InMemoryTodoStore())
     dispatcher = ToolDispatcher(qa_tools, create_memory_tools(tmp_path), todo_tools=todo_tools)
 
     tool_names = {

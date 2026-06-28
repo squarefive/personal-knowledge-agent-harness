@@ -17,8 +17,6 @@ from pydantic import BaseModel
 
 from ...agent_bootstrap import AgentConfig, create_agent_components, load_config
 from ...agent_context.conversation_sessions import (
-    ConversationSessionMetadataRepository,
-    ConversationTranscriptRepository,
     SessionMetadata,
     validate_session_id,
 )
@@ -31,7 +29,7 @@ from ...postgres import (
     PostgresRuntimeContextCompactor,
     PostgresSessionMetadataAdapter,
 )
-from ...tool_runtime import ApprovalRequest, default_approval_callback
+from ...tool_runtime import ApprovalRequest
 from .cloud_dependencies import CloudUserToolFactory
 
 SESSION_ID_SUFFIX_CHARS = 12
@@ -340,7 +338,6 @@ def create_web_app(
     runners: dict[tuple[str | None, str], WebSessionRunner] = {}
     runners_lock = threading.Lock()
     approval_manager = WebApprovalManager(timeout_seconds=APPROVAL_TIMEOUT_SECONDS)
-    workspace_root = Path.cwd()
 
     def request_web_approval(runner: WebSessionRunner, request: ApprovalRequest) -> bool:
         return approval_manager.request_approval(
@@ -361,7 +358,7 @@ def create_web_app(
         pka_session: str | None,
     ) -> AuthenticatedSessionDependency | dict[str, Any] | None:
         if auth_service is None:
-            return None
+            return _business_authentication_error()
         if not pka_session:
             return _business_authentication_error()
         try:
@@ -404,39 +401,44 @@ def create_web_app(
                     "approval_callback": make_approval_callback(placeholder),
                     "session_id": safe_session_id,
                 }
-                if cloud_tools is not None and auth_session is not None:
-                    session_repository = PostgresConversationSessionRepository(
-                        persistent_connection,
-                        auth_session.user_id,
-                    )
-                    component_kwargs.update(
-                        {
-                            "qa_store": cloud_tools.tools.store,
-                            "todo_store": cloud_tools.todo_tools.store,
-                            "llm_provider_user_id": auth_session.llm_provider_user_id,
-                            "enable_semantic_index": False,
-                            "transcript": PostgresConversationTranscriptAdapter(
-                                session_repository,
+                if cloud_tools is None or auth_session is None or persistent_connection is None:
+                    raise RuntimeError("cloud Agent dependencies are not configured")
+                session_repository = PostgresConversationSessionRepository(
+                    persistent_connection,
+                    auth_session.user_id,
+                )
+                component_kwargs.update(
+                    {
+                        "qa_store": cloud_tools.tools.store,
+                        "todo_store": cloud_tools.todo_tools.store,
+                        "llm_provider_user_id": auth_session.llm_provider_user_id,
+                        "semantic_index": cloud_tools.tools.semantic_index,
+                        "transcript": PostgresConversationTranscriptAdapter(
+                            session_repository,
+                            safe_session_id,
+                        ),
+                        "metadata_store": PostgresSessionMetadataAdapter(
+                            session_repository,
+                            safe_session_id,
+                            model=resolved_config.deepseek_model,
+                        ),
+                        "context_compactor": InMemoryToolResultCompactor(),
+                        "memory_index_store": cloud_tools.memory_index_store,
+                        "memory_store": cloud_tools.memory_store,
+                        "runtime_context_compactor_factory": (
+                            lambda summarizer, repository=session_repository: PostgresRuntimeContextCompactor(
+                                repository,
                                 safe_session_id,
-                            ),
-                            "metadata_store": PostgresSessionMetadataAdapter(
-                                session_repository,
-                                safe_session_id,
-                                model=resolved_config.deepseek_model,
-                            ),
-                            "context_compactor": InMemoryToolResultCompactor(),
-                            "memory_index_store": cloud_tools.memory_index_store,
-                            "memory_store": cloud_tools.memory_store,
-                            "runtime_context_compactor_factory": (
-                                lambda summarizer, repository=session_repository: PostgresRuntimeContextCompactor(
-                                    repository,
-                                    safe_session_id,
-                                    summarizer=summarizer,
-                                )
-                            ),
-                        }
-                    )
-                components = create_agent_components(resolved_config, **component_kwargs)
+                                summarizer=summarizer,
+                            )
+                        ),
+                    }
+                )
+                try:
+                    components = create_agent_components(resolved_config, **component_kwargs)
+                except Exception:
+                    close_persistent_cloud_tools(cloud_tools, persistent_connection)
+                    raise
                 placeholder.agent = components.agent
                 if persistent_connection is not None:
                     placeholder.close_callback = (
@@ -449,31 +451,14 @@ def create_web_app(
             runners[runner_key] = runner
             return runner
 
-    def get_card_tools(auth_session: AuthenticatedSessionDependency | None) -> CardTools:
-        if user_tool_factory is not None and auth_session is not None:
-            raise RuntimeError("cloud card tools must be opened with call_card_tools")
-        if tools is None:
-            raise RuntimeError("card tools are not configured")
-        return tools
-
     def call_card_tools(
         auth_session: AuthenticatedSessionDependency | None,
         callback: Callable[[CardTools], dict[str, Any]],
     ) -> dict[str, Any]:
-        if user_tool_factory is not None and auth_session is not None:
-            with user_tool_factory.open_tools(auth_session.user_id) as scoped_tools:
-                return callback(scoped_tools.tools)
-        return callback(get_card_tools(auth_session))
-
-    def use_cloud_session_repository(auth_session: AuthenticatedSessionDependency | None) -> bool:
-        return cloud_session_repository is not None and auth_session is not None
-
-    if tools is None and user_tool_factory is None:
-        tools = create_agent_components(
-            resolved_config,
-            approval_callback=default_approval_callback,
-            session_id="default",
-        ).tools
+        if user_tool_factory is None or auth_session is None:
+            raise RuntimeError("cloud card tools are not configured")
+        with user_tool_factory.open_tools(auth_session.user_id) as scoped_tools:
+            return callback(scoped_tools.tools)
 
     app = FastAPI(title="Personal Knowledge Agent")
     app.state.agent_events = events
@@ -577,25 +562,20 @@ def create_web_app(
         if _is_auth_error(auth_session):
             return auth_session
         session_id = f"session_{uuid.uuid4().hex[:SESSION_ID_SUFFIX_CHARS]}"
-        if use_cloud_session_repository(auth_session):
-            record = cloud_session_repository.create_session(auth_session.user_id, session_id=session_id)
-            return {"ok": True, "session": _cloud_session_payload(record)}
-        metadata = ConversationSessionMetadataRepository(
-            workspace_root,
-            session_id=session_id,
-        ).load_or_create()
-        return {"ok": True, "session": _metadata_payload(metadata)}
+        if cloud_session_repository is None:
+            return _error("session_store_not_configured", "cloud session repository is not configured")
+        record = cloud_session_repository.create_session(auth_session.user_id, session_id=session_id)
+        return {"ok": True, "session": _cloud_session_payload(record)}
 
     @app.get("/api/sessions")
     def list_sessions(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
         auth_session = authenticate_business_session(pka_session)
         if _is_auth_error(auth_session):
             return auth_session
-        if use_cloud_session_repository(auth_session):
-            sessions = cloud_session_repository.list_sessions(auth_session.user_id)
-            return {"ok": True, "sessions": [_cloud_session_payload(session) for session in sessions]}
-        sessions = ConversationSessionMetadataRepository(workspace_root).list_sessions()
-        return {"ok": True, "sessions": [_metadata_payload(metadata) for metadata in sessions]}
+        if cloud_session_repository is None:
+            return _error("session_store_not_configured", "cloud session repository is not configured")
+        sessions = cloud_session_repository.list_sessions(auth_session.user_id)
+        return {"ok": True, "sessions": [_cloud_session_payload(session) for session in sessions]}
 
     @app.patch("/api/sessions/{session_id}")
     def rename_session(
@@ -607,16 +587,12 @@ def create_web_app(
         if _is_auth_error(auth_session):
             return auth_session
         try:
-            if use_cloud_session_repository(auth_session):
-                record = cloud_session_repository.rename_session(auth_session.user_id, session_id, request.title)
-                if record is None:
-                    return _error("session_not_found", "session not found")
-                return {"ok": True, "session": _cloud_session_payload(record)}
-            metadata = ConversationSessionMetadataRepository(
-                workspace_root,
-                session_id=session_id,
-            ).rename_session(request.title)
-            return {"ok": True, "session": _metadata_payload(metadata)}
+            if cloud_session_repository is None:
+                return _error("session_store_not_configured", "cloud session repository is not configured")
+            record = cloud_session_repository.rename_session(auth_session.user_id, session_id, request.title)
+            if record is None:
+                return _error("session_not_found", "session not found")
+            return {"ok": True, "session": _cloud_session_payload(record)}
         except Exception as exc:
             return _error("session_rename_error", str(exc))
 
@@ -629,11 +605,10 @@ def create_web_app(
         if _is_auth_error(auth_session):
             return auth_session
         try:
-            if use_cloud_session_repository(auth_session):
-                messages = cloud_session_repository.load_messages(auth_session.user_id, session_id)
-                return {"ok": True, "messages": _cloud_display_messages(messages)}
-            transcript = ConversationTranscriptRepository(workspace_root, session_id=session_id)
-            return {"ok": True, "messages": transcript.load_display_messages()}
+            if cloud_session_repository is None:
+                return _error("session_store_not_configured", "cloud session repository is not configured")
+            messages = cloud_session_repository.load_messages(auth_session.user_id, session_id)
+            return {"ok": True, "messages": _cloud_display_messages(messages)}
         except Exception as exc:
             return _error("session_read_error", str(exc))
 

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Protocol
 
-from ...qa_data_access import QACard, QACardRepository, QACardSemanticIndex
+from ...qa_data_access import QACard, SearchResult, SemanticSearchHit
 from ...qa_data_access.duplicate_detection import DuplicateDetectionService, DuplicateGroup
 
 KEYWORD_SCORE_WEIGHT = 0.4
@@ -19,6 +19,62 @@ DUPLICATE_SEMANTIC_THRESHOLD = 0.88
 DUPLICATE_SCORE_THRESHOLD = 0.82
 POSSIBLE_DUPLICATE_SCORE_THRESHOLD = 0.70
 POSSIBLE_CROSS_CATEGORY_SEMANTIC_THRESHOLD = 0.93
+
+
+class QACardStore(Protocol):
+    def save_card(
+        self,
+        *,
+        question: str,
+        answer: str,
+        summary: str,
+        keywords: list[str],
+        category: str,
+    ) -> QACard: ...
+
+    def search_cards(
+        self,
+        query: str,
+        limit: int = 5,
+        category: str | None = None,
+    ) -> list[SearchResult]: ...
+
+    def read_card(self, card_id: str) -> QACard | None: ...
+
+    def update_card(
+        self,
+        card_id: str,
+        *,
+        question: str | None = None,
+        answer: str | None = None,
+        summary: str | None = None,
+        keywords: list[str] | None = None,
+        category: str | None = None,
+    ) -> QACard | None: ...
+
+    def delete_card(self, card_id: str) -> bool: ...
+
+    def list_recent_cards(self, limit: int = 10, category: str | None = None) -> list[QACard]: ...
+
+    def list_all_cards(self, category: str | None = None) -> list[QACard]: ...
+
+    def list_unvectorized_cards(self, limit: int | None = None) -> list[QACard]: ...
+
+    def read_cards_by_ids(self, card_ids: list[str], category: str | None = None) -> list[QACard]: ...
+
+    def mark_card_vectorized(self, card_id: str) -> bool: ...
+
+    def validate_category(self, category: str) -> str: ...
+
+
+class QASemanticIndex(Protocol):
+    def is_enabled(self) -> bool: ...
+
+    def search(self, query: str, limit: int) -> list[SemanticSearchHit]: ...
+
+    def upsert_card(self, card: QACard) -> None: ...
+
+    def delete_card(self, card_id: str) -> None: ...
 
 
 @dataclass
@@ -55,9 +111,9 @@ class DuplicateCandidate:
 class QAKnowledgeToolHandlers:
     def __init__(
         self,
-        store: QACardRepository,
+        store: QACardStore,
         *,
-        semantic_index: QACardSemanticIndex | None = None,
+        semantic_index: QASemanticIndex | None = None,
     ):
         self.store = store
         self.semantic_index = semantic_index
@@ -112,7 +168,7 @@ class QAKnowledgeToolHandlers:
             semantic_hits = []
             semantic_degraded = False
             if self.semantic_index is None or not self.semantic_index.is_enabled():
-                warning = "语义检索未启用，已降级为关键词检索。"
+                warning = "语义召回未启用，已降级为关键词检索。"
                 semantic_degraded = True
             else:
                 try:
@@ -312,7 +368,7 @@ class QAKnowledgeToolHandlers:
             warning: str | None = None
             semantic_hits = []
             if self.semantic_index is None or not self.semantic_index.is_enabled():
-                warning = "语义检索未启用，已降级为关键词查重。"
+                warning = "语义召回未启用，已降级为关键词查重。"
             else:
                 try:
                     semantic_hits = self.semantic_index.search(query, limit=over_fetch_limit)
@@ -760,7 +816,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "save_qa_card",
-            "description": "保存一条 Q&A 知识卡片。仅在用户明确提供 Q&A 并表达保存意图时使用；本工具会写入服务端事实库，并在语义索引启用时同步向量索引。",
+            "description": "保存当前用户的一条 Q&A 知识卡片。仅在用户明确提供 Q&A 并表达保存意图时使用；本工具会写入服务端事实库，并在语义索引启用时同步 pgvector 向量索引。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -795,7 +851,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_qa_cards",
-            "description": "使用关键词检索 Q&A 知识卡片，作为基础检索和降级兜底。返回候选摘要，不是完整回答依据；需要回答时继续读取完整卡片。",
+            "description": "使用关键词检索当前用户的 Q&A 知识卡片，作为基础检索和降级兜底。返回候选摘要，不是完整回答依据；需要回答时继续读取完整卡片。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -821,7 +877,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "hybrid_search_qa_cards",
-            "description": "默认 Q&A 检索工具。用于用户要求基于知识库、已保存 Q&A、历史记录或来源回答时；返回候选摘要和排序信息，不是完整回答依据。",
+            "description": "默认 Q&A 检索工具。用于用户要求基于当前用户个人知识库、已保存 Q&A、历史记录或来源回答时；返回候选摘要和排序信息，不是完整回答依据。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -847,7 +903,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "read_qa_card",
-            "description": "按 card_id 读取完整 Q&A 知识卡片。用于把检索、最近列表或保存结果中的真实 card_id 转换为完整回答依据。",
+            "description": "按 card_id 读取当前用户可访问的完整 Q&A 知识卡片。用于把检索、最近列表或保存结果中的真实 card_id 转换为完整回答依据。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -865,7 +921,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "update_qa_card",
-            "description": "更新一条 Q&A 知识卡片。仅当用户明确要求修改某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
+            "description": "更新当前用户的一条 Q&A 知识卡片。仅当用户明确要求修改某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -904,7 +960,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "delete_qa_card",
-            "description": "物理删除一条 Q&A 知识卡片。仅当用户明确要求删除某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
+            "description": "物理删除当前用户的一条 Q&A 知识卡片。仅当用户明确要求删除某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -922,7 +978,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_recent_cards",
-            "description": "列出最近保存的 Q&A 知识卡片。用于查看最近卡片、浏览知识库或选择要读取、更新、删除的卡片；返回摘要，不是完整回答依据。",
+            "description": "列出当前用户最近保存的 Q&A 知识卡片。用于查看最近卡片、浏览知识库或选择要读取、更新、删除的卡片；返回摘要，不是完整回答依据。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -943,14 +999,14 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "detect_duplicate_cards",
-            "description": "检测疑似重复的 Q&A 知识卡片，只返回 duplicate 或 possible_duplicate 候选。用户主动查重、整理或合并时使用 mode=manual；保存或更新后的低打扰检测使用 mode=auto，且不得自动合并。",
+            "description": "检测当前用户疑似重复的 Q&A 知识卡片，只返回 duplicate 或 possible_duplicate 候选。用户主动查重、整理或合并时使用 mode=manual；保存或更新后的低打扰检测使用 mode=auto，且不得自动合并。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "scope": {
                         "type": "string",
                         "enum": ["target", "all"],
-                        "description": "target 检测指定卡片或文本；all 检测知识库全部 Q&A 卡片。",
+                        "description": "target 检测指定卡片或文本；all 检测当前用户个人知识库全部 Q&A 卡片。",
                     },
                     "card_id": {
                         "type": "string",
@@ -982,7 +1038,7 @@ QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "merge_qa_cards",
-            "description": "合并多张 Q&A 知识卡片：创建一张新卡片，并物理删除原卡片。仅当用户明确要求合并且已确认合并草案时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
+            "description": "合并当前用户的多张 Q&A 知识卡片：创建一张新卡片，并物理删除原卡片。仅当用户明确要求合并且已确认合并草案时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
             "parameters": {
                 "type": "object",
                 "properties": {

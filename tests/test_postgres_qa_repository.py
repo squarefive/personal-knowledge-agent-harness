@@ -451,7 +451,7 @@ def test_mark_card_vectorized_returns_false_for_missing_or_cross_user_card() -> 
     assert connection.commit_count == 1
 
 
-def test_validate_category_matches_sqlite_repository_rules() -> None:
+def test_validate_category_rejects_fallback_categories() -> None:
     assert PostgresQACardRepository.validate_category(" Agent 开发 ") == "Agent 开发"
 
     with pytest.raises(ValueError, match="fallback category"):

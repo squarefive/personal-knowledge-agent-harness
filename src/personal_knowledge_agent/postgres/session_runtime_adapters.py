@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from ..agent_context.conversation_sessions import CompactRecord, RuntimeCompactionResult, SessionMetadata, utc_now
-from ..agent_context.conversation_sessions.conversation_session_metadata_repository import DEFAULT_SESSION_TITLE
-from ..agent_context.conversation_sessions.runtime_context_compactor import (
+from ..agent_context.conversation_sessions.session_utils import (
+    DEFAULT_SESSION_TITLE,
     _recent_messages,
     _recovery_notice,
+    _summary,
     _summary_input,
 )
-from ..agent_context.conversation_sessions.tool_result_compactor import _summary
 from .session_repository import ConversationSessionRecord, PostgresConversationSessionRepository
 
 DEFAULT_TOOL_RESULT_THRESHOLD_CHARS = 8000

@@ -6,6 +6,7 @@ from .conversation_session_metadata_repository import ConversationSessionMetadat
 from .conversation_session_models import SessionRestoreResult
 from .conversation_session_summarizer import ConversationSessionSummarizer
 from .conversation_transcript_repository import ConversationTranscriptRepository
+from .session_utils import _recent_messages, _recovery_notice
 
 
 class ConversationSessionRestorer:
@@ -56,7 +57,7 @@ class ConversationSessionRestorer:
         return self._fallback(messages, "summarizer is not configured")
 
     def _fallback(self, messages: list[dict], error: str) -> SessionRestoreResult:
-        notice = _recovery_notice(error, self.first_messages_count, self.recent_messages_count)
+        notice = _recovery_notice(error, self.recent_messages_count, first_count=self.first_messages_count)
         restored = _recent_messages(messages, self.recent_messages_count)
         self.metadata_store.update_counts(
             event_count=self.transcript.event_count(),
@@ -71,22 +72,3 @@ class ConversationSessionRestorer:
 
 def _estimated_chars(messages: list[dict]) -> int:
     return len(json.dumps(messages, ensure_ascii=False))
-
-
-def _recent_messages(messages: list[dict], count: int) -> list[dict]:
-    if count <= 0:
-        return []
-    return messages[-count:]
-
-
-def _recovery_notice(error: str, first_count: int, recent_count: int) -> str:
-    return "\n".join(
-        [
-            "[Session recovery notice]",
-            "",
-            "之前的 transcript 超过上下文预算，但自动总结失败。",
-            f"当前上下文只恢复最初 {first_count} 条消息和最近 {recent_count} 条消息。",
-            "中间对话可能缺失；必要时可查看 transcript.jsonl。",
-            f"summary_error: {error}",
-        ]
-    )
