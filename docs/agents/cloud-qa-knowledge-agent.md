@@ -3,7 +3,7 @@ module: "cloud-qa-knowledge-agent"
 title: "云端个人 Q&A 知识库"
 language: "Python"
 agent_type: "Tool-Using Agent / RAG Agent"
-last_updated: "2026-06-27"
+last_updated: "2026-06-28"
 ---
 
 # 云端个人 Q&A 知识库 Agent 开发上下文
@@ -29,22 +29,23 @@ last_updated: "2026-06-27"
 ## 1. Agent 定位与能力边界
 
 - **背景**:
-  本项目从本地个人 Q&A 知识库升级为单用户云端知识库服务。云端化目标是让同一个知识资产闭环通过账号访问、服务端持久化和用户级隔离运行，同时继续保持可追溯回答和诚实拒答。
+  本项目当前 runtime 是 cloud-only Web 服务。旧本地个人 Q&A 知识库只作为历史来源和 Q&A 一次性迁移输入，不再作为运行时降级路径。云端化目标是让同一个知识资产闭环通过账号访问、服务端持久化和用户级隔离运行，同时继续保持可追溯回答和诚实拒答。
 
 - **核心价值**:
   通过账号化 Web 服务，把用户录入的 Q&A、todo、session 和用户偏好记忆安全隔离地保存在云端 PostgreSQL / pgvector 中，并让 Agent 只基于授权用户的数据回答。
 
 - **Agent 角色**:
-  本 Agent 是云端个人 Q&A 知识库 Agent，负责理解用户意图、调用声明工具读写知识和任务数据、基于证据回答；账号注册、登录、验证码、会话身份和权限校验由 Web / Auth / Service 层负责。
+  本 Agent 是 cloud-only 云端个人 Q&A 知识库 Agent，负责理解用户意图、调用声明工具读写知识和任务数据、基于证据回答；账号注册、登录、验证码、会话身份和权限校验由 Web / Auth / Service 层负责。
 
 - **核心目标**:
-  1. 支持云端账号化访问，但当前只允许 `1033795760@qq.com` 登录和使用。
-  2. 使用邮箱验证码登录，不做密码登录，不做 magic link。
-  3. 使用 PostgreSQL 作为事实库，使用 pgvector 保存 Q&A 语义向量。
-  4. 在 Q&A、todo、session 和 user-preference memory 上执行用户隔离。
-  5. Tool schema 不向模型暴露 `user_id`，用户身份由服务端上下文注入。
-  6. DeepSeek 请求只使用非隐私、不可反推出邮箱的 `llm_provider_user_id`。
-  7. 基于本轮真实工具结果回答并引用来源；依据不足时明确拒答。
+  1. 只提供 cloud-only Web runtime，不提供 CLI、本地 Web、SQLite / Qdrant、`.sessions/` 或 `.memory/` runtime fallback。
+  2. 支持云端账号化访问，但当前只允许 `1033795760@qq.com` 登录和使用。
+  3. 使用邮箱验证码登录，不做密码登录，不做 magic link。
+  4. 使用 PostgreSQL 作为事实库，使用 pgvector 保存 Q&A 语义向量。
+  5. 所有 Q&A、todo、session 和 user-preference memory 业务读写必须经过认证用户上下文并执行用户隔离。
+  6. Tool schema 不向模型暴露 `user_id`，用户身份由服务端上下文注入。
+  7. DeepSeek 请求只使用非隐私、不可反推出邮箱的 `llm_provider_user_id`。
+  8. 基于本轮真实工具结果回答并引用来源；依据不足时明确拒答。
 
 - **包含能力**:
   1. 录入、检索、读取、更新、删除、列出、查重和合并当前用户的 Q&A 卡片。
@@ -53,7 +54,7 @@ last_updated: "2026-06-27"
   4. 恢复当前用户的 conversation session，并在同一 session 内防止并发重入。
   5. 读取当前用户的 user-preference memory，用于协作偏好和长期行为约束。
   6. 生成 memory candidate 事件；是否写入长期偏好记忆必须走服务端确认边界。
-  7. 通过 Web Runtime 提供聊天、session 历史和 Q&A 卡片浏览能力。
+  7. 通过已认证 cloud-only Web Runtime 提供聊天、session 历史和 Q&A 卡片浏览能力。
 
 - **不包含能力**:
   1. Agent loop 不承载账号系统、验证码发送、登录态签发或用户准入判断。
@@ -63,15 +64,18 @@ last_updated: "2026-06-27"
   5. HTTP 只允许作为临时部署阶段；长期对外访问必须切换到 HTTPS。
   6. 不引入 Redis、KMS、多副本运行、管理后台或复杂迁移框架作为当前边界。
   7. 旧 SQLite 迁移只迁 Q&A；不迁旧 `.sessions/`、Qdrant、todo 或本地 memory 数据。
-  8. 不做 Markdown Wiki、文件监听、自动索引、周报、日报或多 Agent。
+  8. 旧 SQLite、Qdrant、`.sessions/` 和 `.memory/` 不作为 PostgreSQL / pgvector 不可用时的 runtime fallback。
+  9. CLI 和旧本地 Web 入口不属于稳定 runtime 边界。
+  10. 不做 Markdown Wiki、文件监听、自动索引、周报、日报或多 Agent。
 
 - **行为约束**:
   1. 所有业务数据读写必须带服务端解析出的当前用户身份，并在 Repository / Service 层执行隔离。
-  2. LLM 只能看到业务所需内容和工具 schema，不得看到服务端 `user_id` 或登录凭据。
-  3. 工具返回的 `card_id`、`todo_id`、`session_id` 必须限定在当前用户可访问范围内。
-  4. 声称基于知识库回答、引用 `card_id` 或展示来源区块时，必须有本轮真实工具证据。
-  5. Todo、session、user-preference memory、compact summary 和 LLM 临时输出不得作为 Q&A 回答事实来源。
-  6. 高风险 Q&A 操作必须经过 permission gate；服务端身份校验不得由模型决定。
+  2. Repository / Service 层的业务读写必须使用 PostgreSQL / pgvector，不得回退到旧 SQLite、Qdrant 或文件型 session / memory。
+  3. LLM 只能看到业务所需内容和工具 schema，不得看到服务端 `user_id` 或登录凭据。
+  4. 工具返回的 `card_id`、`todo_id`、`session_id` 必须限定在当前用户可访问范围内。
+  5. 声称基于知识库回答、引用 `card_id` 或展示来源区块时，必须有本轮真实工具证据。
+  6. Todo、session、user-preference memory、compact summary 和 LLM 临时输出不得作为 Q&A 回答事实来源。
+  7. 高风险 Q&A 操作必须经过 permission gate；服务端身份校验不得由模型决定。
 
 ---
 
@@ -111,6 +115,7 @@ last_updated: "2026-06-27"
 - **Storage / External API 职责**:
   - PostgreSQL 保存用户、Q&A、todo、session、user-preference memory、验证码和运行元数据。
   - pgvector 保存 Q&A 语义向量；权威 Q&A 文本仍在 PostgreSQL 事实表中。
+  - 旧 SQLite 只作为 Q&A 一次性迁移来源，不参与 cloud-only runtime 读写。
   - DeepSeek 负责主 LLM 调用，调用时只传非隐私 `llm_provider_user_id`。
   - 邮件服务只用于发送验证码，不进入 Agent loop。
   - 生产 secrets 必须来自部署环境或受控 secret 注入，不使用生产明文 `.env`。
@@ -120,7 +125,8 @@ last_updated: "2026-06-27"
   2. LLM 输出不得被视为已持久化事实。
   3. 工具不得绕过服务端用户上下文或权限规则执行高风险操作。
   4. Web Runtime 不得绕过 AgentLoop、Tools 或 Service 执行业务动作。
-  5. 未在本文档声明的核心依赖不得擅自引入。
+  5. CLI、本地 Web、SQLite / Qdrant、`.sessions/` 或 `.memory/` 不得作为 cloud-only runtime fallback。
+  6. 未在本文档声明的核心依赖不得擅自引入。
 
 - **核心文件 / 目录**:
 
@@ -130,8 +136,9 @@ last_updated: "2026-06-27"
 | `src/personal_knowledge_agent/agent_runtime/` | Agent loop、LLM 调用、tool call、最终回答、来源校验和事件发射。 |
 | `src/personal_knowledge_agent/agent_context/` | Prompt、memory、session transcript、summary 和 compact 管理。 |
 | `src/personal_knowledge_agent/agent_tools/` | LLM 可调用工具 adapter。 |
-| `src/personal_knowledge_agent/qa_data_access/` | 当前代码中的 Q&A 数据访问模块；云端化后职责迁移为 PostgreSQL / pgvector Q&A 访问。 |
-| `src/personal_knowledge_agent/todo_data_access/` | 当前代码中的 todo 数据访问模块；云端化后职责迁移为 PostgreSQL todo 访问。 |
+| `src/personal_knowledge_agent/postgres/` | cloud-only runtime 的 PostgreSQL / pgvector 数据访问、schema 和 session adapter。 |
+| `src/personal_knowledge_agent/qa_data_access/` | 旧 SQLite / Qdrant Q&A 模块；只可作为 Q&A 一次性迁移来源或遗留代码参考，不是 runtime fallback。 |
+| `src/personal_knowledge_agent/todo_data_access/` | 旧 SQLite todo 模块；不属于 cloud-only runtime 数据源。 |
 | `src/personal_knowledge_agent/tool_runtime/` | Tool dispatcher、tool model 和权限策略。 |
 | `src/personal_knowledge_agent/llm_clients/` | LLM provider client。 |
 | `src/personal_knowledge_agent/apps/web/` | Web Runtime 和静态 UI。 |
@@ -293,6 +300,7 @@ last_updated: "2026-06-27"
   2. PostgreSQL todo 表是 todo 事实源。
   3. PostgreSQL session 表是当前用户会话恢复来源。
   4. PostgreSQL user-preference memory 表是 Agent 协作偏好来源。
+  5. 旧 `.sessions/` 和 `.memory/` 文件不是 cloud-only runtime 的 session 或 memory 来源。
 
 - **不得作为长期记忆的内容**:
   1. LLM 临时输出。
@@ -374,7 +382,7 @@ last_updated: "2026-06-27"
 
 ### 5.6 旧数据迁移
 
-1. 只迁移旧 SQLite 中的 Q&A 卡片。
+1. 只迁移旧 SQLite 中的 Q&A 卡片；SQLite 不是迁移后的 runtime fallback。
 2. 为迁入卡片绑定当前唯一允许用户。
 3. 为迁入 Q&A 生成或重建 pgvector 语义向量。
 4. 不迁移旧 `.sessions/`、Qdrant、todo 或本地 memory。
@@ -500,6 +508,7 @@ last_updated: "2026-06-27"
   5. DeepSeek 只接收非隐私 `llm_provider_user_id`。
   6. 生产 secrets 不使用明文 `.env`。
   7. 旧数据迁移范围仅限 Q&A。
+  8. CLI、本地 Web、SQLite / Qdrant、`.sessions/` 和 `.memory/` 不承担 runtime 职责。
 
 ---
 
@@ -510,3 +519,4 @@ last_updated: "2026-06-27"
 | `2026-05-30` | 新增本地个人 Q&A 知识库 Agent 开发上下文 | 锁定第一版 Agent 设计边界和实现验收依据 | `TBD` |
 | `2026-06-26` | 补充本地 todo 工具和数据边界 | 支持聊天内待办保存、查询和更新闭环 | `TBD` |
 | `2026-06-27` | 将 Agent 边界改名并压缩为云端个人 Q&A 知识库边界 | 锁定云端账号化、用户隔离、PostgreSQL / pgvector 和迁移范围 | `TBD` |
+| `2026-06-28` | 锁定 cloud-only Web runtime 边界 | 明确 PostgreSQL / pgvector 是唯一业务 runtime，旧本地存储只作 Q&A 一次性迁移来源 | `TBD` |
