@@ -696,6 +696,67 @@ def test_authenticated_session_apis_use_cloud_repository_and_do_not_touch_local_
     assert not (tmp_path / ".sessions").exists()
 
 
+def test_authenticated_session_messages_restore_cloud_tool_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    auth_service = FakeAuthService(user_id="usr_history", llm_provider_user_id="llm_history")
+    session_repository = FakeCloudSessionRepository()
+    session_id = "history-session"
+    session_repository.messages[("usr_history", session_id)] = [
+        {"role": "user", "content": "Agent 有几种模式？", "created_at": "2026-06-27T01:02:00+00:00"},
+        {
+            "role": "assistant",
+            "content": "",
+            "created_at": "2026-06-27T01:02:01+00:00",
+            "tool_calls": [
+                {
+                    "id": "call_search",
+                    "type": "function",
+                    "function": {"name": "hybrid_search_qa_cards", "arguments": "{\"query\":\"Agent 模式\"}"},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_search",
+            "content": json.dumps({"ok": True, "cards": [{"card_id": "qa_1"}]}),
+        },
+        {
+            "role": "assistant",
+            "content": "Agent 常见模式包括 ReAct、Plan and Execute、Reflection。",
+            "created_at": "2026-06-27T01:02:03+00:00",
+        },
+    ]
+    app = create_web_app(
+        agent=FakeAgent(),
+        tools=FakeTools(),
+        auth_service=auth_service,
+        email_sender=FakeEmailSender(),
+        cloud_session_repository=session_repository,
+    )
+    client = TestClient(app)
+    client.cookies.set("pka_session", "plain-session-token")
+
+    response = client.get(f"/api/sessions/{session_id}/messages")
+
+    assert response.json()["messages"] == [
+        {
+            "role": "user",
+            "content": "Agent 有几种模式？",
+            "created_at": "2026-06-27T01:02:00+00:00",
+            "event_id": 1,
+        },
+        {
+            "role": "assistant_run",
+            "steps": ["准备调用 1 个工具", "找到 1 条记录"],
+            "answer": "Agent 常见模式包括 ReAct、Plan and Execute、Reflection。",
+            "created_at": "2026-06-27T01:02:01+00:00",
+            "event_id": 2,
+        },
+    ]
+    assert session_repository.loaded_calls == [("usr_history", session_id)]
+    assert not (tmp_path / ".sessions").exists()
+
+
 def test_cloud_chat_runner_cache_is_scoped_by_user_and_passes_user_context(tmp_path, monkeypatch):
     import personal_knowledge_agent.apps.web.web_app as app_module
 

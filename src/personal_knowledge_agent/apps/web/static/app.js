@@ -467,6 +467,10 @@ function renderHistoryMessages(messages) {
       appendMessage("user", "你", message.content || "");
       continue;
     }
+    if (message.role === "assistant_run") {
+      appendHistoryRunMessage(message);
+      continue;
+    }
     const node = appendMessage("agent", "Agent", "");
     renderMarkdown(node.querySelector(".message-body"), message.content || "");
   }
@@ -516,6 +520,16 @@ function appendAgentRunMessage() {
   message._activeAnswerTurn = null;
   elements.messages.append(message);
   elements.messages.scrollTop = elements.messages.scrollHeight;
+  return message;
+}
+
+function appendHistoryRunMessage(historyMessage) {
+  const message = appendAgentRunMessage();
+  const steps = Array.isArray(historyMessage.steps) ? historyMessage.steps : [];
+  for (const step of steps) {
+    addStep(message, step);
+  }
+  finishAnswer(message, historyMessage.answer || "");
   return message;
 }
 
