@@ -282,6 +282,7 @@ last_updated: "2026-06-28"
 7. JSONL 或结构化运行日志写入。
 8. memory candidate 生成事件。
 9. Web session 管理和 SSE 事件分发。
+10. 最近一次 prompt usage ratio 记录和 Web Context UI 展示。
 
 ---
 
@@ -374,11 +375,12 @@ last_updated: "2026-06-28"
 2. 后端检查同一用户同一 session 是否已有运行中的 Agent run。
 3. Runtime 从当前用户当前 session 恢复 messages 或 summary + recent messages。
 4. LLM usage 达到阈值或上下文超限时执行 runtime compact。
-5. turn 结束后释放 session run 锁并记录结果。
+5. LLM 返回 usage 后，Web Runtime 将最近一次 prompt usage ratio 记录到当前用户当前 session metadata，用于刷新后恢复 Context UI 展示。
+6. turn 结束后释放 session run 锁并记录结果。
 
-- **成功条件**: 单个 session 同时只有一个运行中的 Agent run，恢复后的上下文足以继续对话。
+- **成功条件**: 单个 session 同时只有一个运行中的 Agent run，恢复后的上下文足以继续对话，刷新后可展示当前 session 最近一次真实 prompt usage ratio。
 - **失败条件**: session 非法、跨用户 session、重复提交、summary 生成失败或 compact 失败。
-- **用户可见反馈**: 对重复提交返回明确忙碌状态；恢复或 compact 降级不得解释为知识库缺少依据。
+- **用户可见反馈**: 对重复提交返回明确忙碌状态；恢复或 compact 降级不得解释为知识库缺少依据；无 usage 记录时 Context UI 应展示未知状态而不是伪造 0%。
 
 ### 5.6 旧数据迁移
 
@@ -428,7 +430,7 @@ last_updated: "2026-06-28"
 | 数据 | 必须隔离字段 | 说明 |
 |---|---|---|
 | todo | `user_id`, `todo_id` | 保存 title、notes、status、due_at、created_at、updated_at。 |
-| session | `user_id`, `session_id` | 保存 session metadata、transcript / messages、summary、运行状态和更新时间。 |
+| session | `user_id`, `session_id` | 保存 session metadata、transcript / messages、summary、运行状态、最近一次 prompt usage ratio 和更新时间。 |
 | user-preference memory | `user_id`, memory id | 保存协作偏好、长期行为约束和可读摘要，不作为 Q&A 事实来源。 |
 
 ### 6.4 数据约束
@@ -437,9 +439,10 @@ last_updated: "2026-06-28"
 2. PostgreSQL Q&A 表是 Q&A 事实源；pgvector 只负责语义召回。
 3. Todo 不得作为 Q&A 回答来源证据。
 4. Session summary 和 compact record 只用于上下文恢复，不是长期事实。
-5. 更新卡片不要求保存历史版本；删除卡片是当前用户范围内的删除。
-6. 旧 SQLite 迁移只迁 Q&A，不迁旧 session、Qdrant、todo 或本地 memory。
-7. 当前阶段不引入 Redis、KMS、多副本运行、管理后台或复杂迁移框架。
+5. Session 最近一次 prompt usage ratio 只用于 Web Context UI 展示和上下文压缩状态感知，不是 Q&A 事实来源。
+6. 更新卡片不要求保存历史版本；删除卡片是当前用户范围内的删除。
+7. 旧 SQLite 迁移只迁 Q&A，不迁旧 session、Qdrant、todo 或本地 memory。
+8. 当前阶段不引入 Redis、KMS、多副本运行、管理后台或复杂迁移框架。
 
 ---
 
@@ -481,7 +484,8 @@ last_updated: "2026-06-28"
   4. Hybrid 检索覆盖 PostgreSQL 关键词检索、pgvector 召回、合并排序和降级。
   5. DeepSeek client 覆盖 `llm_provider_user_id` 使用非隐私标识。
   6. Session run guard 覆盖同一用户同一 session 防重入。
-  7. Secrets 配置覆盖生产环境不依赖明文 `.env`。
+  7. Session metadata 覆盖最近一次 prompt usage ratio 的用户隔离写入和读取。
+  8. Secrets 配置覆盖生产环境不依赖明文 `.env`。
 
 - **集成测试**:
   1. 邮箱验证码登录成功后可启动 Web chat。
@@ -490,7 +494,8 @@ last_updated: "2026-06-28"
   4. Agent 最终回答只引用本轮当前用户工具证据。
   5. Todo、session、memory 与 Q&A 来源证据保持分离。
   6. 同一 session 并发请求只允许一个 Agent run 执行。
-  7. 旧 SQLite Q&A 迁移后可在 PostgreSQL / pgvector 中检索。
+  7. Web session 恢复后可展示当前 session 最近一次真实 prompt usage ratio；无记录时展示未知状态。
+  8. 旧 SQLite Q&A 迁移后可在 PostgreSQL / pgvector 中检索。
 
 - **回归测试**:
   1. Tool schema 和 DeepSeek payload 不包含 `user_id`、邮箱验证码、SMTP secret 或数据库凭据。
