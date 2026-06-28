@@ -1,8 +1,6 @@
 services:
   app:
-    build:
-      context: ..
-      dockerfile: Dockerfile
+    image: ghcr.io/squarefive/personal-knowledge-agent-harness:${APP_IMAGE_TAG:-latest}
     user: "0:0"
     environment:
       PKA_CLOUD_ONLY: "true"
