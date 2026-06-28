@@ -82,6 +82,13 @@ For this single-host Compose deployment, run PostgreSQL backups through the `pos
 sudo scripts/backup-postgres-compose.sh --output-dir deploy/backups --keep 7
 ```
 
+Automatic deployments run the backup as the SSH deployment user. Make sure that user can write `deploy/backups/`:
+
+```bash
+sudo chown -R ubuntu:ubuntu /opt/personal-knowledge-agent/deploy/backups
+chmod 750 /opt/personal-knowledge-agent/deploy/backups
+```
+
 ## CI/CD
 
 Production app images are built by GitHub Actions and pushed to GitHub Container Registry:
@@ -107,6 +114,8 @@ Configure these GitHub Actions repository secrets before enabling automatic depl
 - `PROD_USER`: SSH user, for example `ubuntu`.
 - `PROD_DEPLOY_DIR`: server deployment directory, for example `/opt/personal-knowledge-agent`.
 - `PROD_SSH_KEY`: private SSH key used by GitHub Actions to log in to the server.
+
+The `PROD_USER` must be able to run Docker Compose and write `deploy/backups/` in the deployment directory.
 
 Application runtime secrets must stay on the server under `deploy/secrets/`. Do not add DeepSeek, DashScope, SMTP, PostgreSQL, or session secrets to GitHub Actions unless a future workflow explicitly needs them.
 
