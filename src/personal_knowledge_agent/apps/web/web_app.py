@@ -90,7 +90,11 @@ class SessionRepositoryDependency(Protocol):
 
     def rename_session(self, user_id: str, session_id: str, title: str) -> Any | None: ...
 
+    def get_session(self, user_id: str, session_id: str) -> Any | None: ...
+
     def load_messages(self, user_id: str, session_id: str) -> list[dict[str, Any]]: ...
+
+    def update_prompt_usage_ratio(self, user_id: str, session_id: str, ratio: float | None) -> bool: ...
 
 
 class AuthenticatedSessionDependency(Protocol):
@@ -289,12 +293,14 @@ class WebSessionRunner:
         events: list[dict[str, Any]],
         event_logger: AgentEventJsonlLogger | None = None,
         close_callback: Callable[[], None] | None = None,
+        prompt_usage_callback: Callable[[float | None], None] | None = None,
     ):
         self.session_id = session_id
         self.agent = agent
         self.events = events
         self.event_logger = event_logger
         self.close_callback = close_callback
+        self.prompt_usage_callback = prompt_usage_callback
         self.lock = threading.Lock()
         self.active_event_queue: queue.Queue[dict[str, Any] | object] | None = None
         self.active_event_queue_lock = threading.Lock()
@@ -310,6 +316,11 @@ class WebSessionRunner:
             self.events.append(event)
             if self.event_logger is not None:
                 self.event_logger.write(log_event or _agent_event_from_dict(event))
+        if event.get("event_type") == "prompt_usage_updated" and self.prompt_usage_callback is not None:
+            try:
+                self.prompt_usage_callback(_event_ratio(event.get("prompt_usage_ratio")))
+            except Exception:
+                pass
         return self.put_event(event)
 
     def put_event(self, event: dict[str, Any]) -> bool:
@@ -406,6 +417,12 @@ def create_web_app(
                 session_repository = PostgresConversationSessionRepository(
                     persistent_connection,
                     auth_session.user_id,
+                )
+                placeholder.prompt_usage_callback = (
+                    lambda ratio, repository=session_repository: repository.update_prompt_usage_ratio(
+                        safe_session_id,
+                        ratio,
+                    )
                 )
                 component_kwargs.update(
                     {
@@ -608,7 +625,11 @@ def create_web_app(
             if cloud_session_repository is None:
                 return _error("session_store_not_configured", "cloud session repository is not configured")
             messages = cloud_session_repository.load_messages(auth_session.user_id, session_id)
-            return {"ok": True, "messages": _cloud_display_messages(messages)}
+            session = cloud_session_repository.get_session(auth_session.user_id, session_id)
+            payload: dict[str, Any] = {"ok": True, "messages": _cloud_display_messages(messages)}
+            if session is not None:
+                payload["session"] = _cloud_session_payload(session)
+            return payload
         except Exception as exc:
             return _error("session_read_error", str(exc))
 
@@ -810,6 +831,9 @@ def _cloud_session_payload(record: Any) -> dict[str, Any]:
             artifacts_dir="",
             title=title if isinstance(title, str) and title else "新会话",
             title_source="user" if isinstance(title, str) and title else "auto",
+            last_prompt_usage_ratio=_optional_prompt_usage_ratio(
+                _record_value(record, "last_prompt_usage_ratio", None),
+            ),
         )
     )
 
@@ -951,6 +975,23 @@ def _record_value(record: Any, key: str, default: Any) -> Any:
     if isinstance(record, dict):
         return record.get(key, default)
     return getattr(record, key, default)
+
+
+def _event_ratio(value: Any) -> float | None:
+    if value is None:
+        return None
+    ratio = float(value)
+    if ratio < 0:
+        return 0.0
+    if ratio > 1:
+        return 1.0
+    return ratio
+
+
+def _optional_prompt_usage_ratio(value: Any) -> float | None:
+    if value is None:
+        return None
+    return _event_ratio(value)
 
 
 def _event_error(error_code: str, message: str) -> dict[str, Any]:

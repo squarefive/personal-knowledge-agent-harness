@@ -135,6 +135,7 @@ class PostgresSessionMetadataAdapter:
             event_count=count,
             message_count=count,
             summary_status="valid" if record.summary else "none",
+            last_prompt_usage_ratio=record.last_prompt_usage_ratio,
         )
 
 

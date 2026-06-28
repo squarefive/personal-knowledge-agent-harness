@@ -708,6 +708,23 @@ h3 {
   min-height: 20px;
 }
 
+.answer-body.typing-caret::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.16em;
+  background: var(--accent-strong);
+  animation: typing-caret-blink 0.9s step-end infinite;
+}
+
+@keyframes typing-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 .drafts {
   display: grid;
   gap: 4px;
@@ -1786,13 +1803,13 @@ h3 {
 .context-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  width: 18%;
+  width: 0;
   background: var(--accent-strong);
   border-radius: inherit;
 }
 
 .messages {
-  align-content: center;
+  align-content: start;
   background: #f7f5ef;
 }
 

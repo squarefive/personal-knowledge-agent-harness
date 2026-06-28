@@ -22,6 +22,7 @@ class SessionMetadata:
     summary_attempts: int = 0
     last_restore_mode: str = "full"
     summary_error: str | None = None
+    last_prompt_usage_ratio: float | None = None
 
 
 @dataclass(frozen=True)

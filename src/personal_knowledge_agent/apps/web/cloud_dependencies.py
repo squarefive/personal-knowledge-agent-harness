@@ -210,9 +210,17 @@ class PooledConversationSessionRepository:
         with self._repository(user_id) as repository:
             return repository.rename_session(session_id, title)
 
+    def get_session(self, user_id: str, session_id: str) -> Any | None:
+        with self._repository(user_id) as repository:
+            return repository.get_session(session_id)
+
     def load_messages(self, user_id: str, session_id: str) -> list[dict[str, Any]]:
         with self._repository(user_id) as repository:
             return repository.load_messages(session_id)
+
+    def update_prompt_usage_ratio(self, user_id: str, session_id: str, ratio: float | None) -> bool:
+        with self._repository(user_id) as repository:
+            return repository.update_prompt_usage_ratio(session_id, ratio)
 
     @contextmanager
     def _repository(self, user_id: str) -> Iterator[PostgresConversationSessionRepository]:
