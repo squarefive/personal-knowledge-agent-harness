@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/squarefive/personal-knowledge-agent-harness:${APP_IMAGE_TAG:-latest}
+    image: ${APP_IMAGE_NAME:?APP_IMAGE_NAME is required}:${APP_IMAGE_TAG:-latest}
     user: "0:0"
     environment:
       PKA_CLOUD_ONLY: "true"
