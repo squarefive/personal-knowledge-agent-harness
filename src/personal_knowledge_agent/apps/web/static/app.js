@@ -15,6 +15,40 @@ const state = {
 
 const TYPING_INTERVAL_MS = 22;
 const TYPING_BURST_THRESHOLD = 80;
+const FRONTEND_TRACE_ID = `page_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 8)}`;
+const FRONTEND_START_MS = performance.now();
+
+frontendLog("app.loaded", {
+  ready_state: document.readyState,
+  visibility: document.visibilityState,
+});
+
+document.addEventListener("readystatechange", () => {
+  frontendLog("document.ready_state", { ready_state: document.readyState });
+});
+
+window.addEventListener("load", () => {
+  frontendLog("window.load", { duration_ms: elapsedSince(FRONTEND_START_MS) });
+  logResourceTiming("styles.css");
+  logResourceTiming("app.js");
+});
+
+window.addEventListener("visibilitychange", () => {
+  frontendLog("page.visibility", { visibility: document.visibilityState });
+});
+
+window.addEventListener("error", (event) => {
+  frontendError("window.error", {
+    message: event.message,
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+  });
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  frontendError("promise.unhandled_rejection", { message: errorMessage(event.reason) });
+});
 
 const elements = {
   authGate: document.querySelector("#authGate"),
@@ -100,7 +134,16 @@ elements.toggleCardsButton.addEventListener("click", () => {
 elements.chatForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const message = elements.messageInput.value.trim();
-  if (!message || state.busy || !state.activeSessionId) return;
+  if (!message || state.busy || !state.activeSessionId) {
+    frontendLog("chat.submit.skipped", {
+      reason: !message ? "empty_message" : state.busy ? "busy" : "missing_session",
+      busy: state.busy,
+      session_id: state.activeSessionId || "",
+    });
+    return;
+  }
+  const startedAt = performance.now();
+  frontendLog("chat.submit.start", { session_id: state.activeSessionId });
 
   appendMessage("user", "你", message);
   const agentMessage = appendAgentRunMessage();
@@ -112,16 +155,28 @@ elements.chatForm.addEventListener("submit", async (event) => {
     await loadSessions();
     renderActiveSessionTitle();
     await loadRecentCards();
+    frontendLog("chat.submit.done", {
+      session_id: state.activeSessionId || "",
+      duration_ms: elapsedSince(startedAt),
+    });
   } catch (error) {
     clearOpenApprovalDialogs("cancelled");
     renderRunError(agentMessage, String(error));
+    frontendError("chat.submit.error", {
+      session_id: state.activeSessionId || "",
+      duration_ms: elapsedSince(startedAt),
+      message: errorMessage(error),
+    });
   } finally {
     setBusy(false, "个人知识库已就绪");
   }
 });
 
 elements.newSessionButton.addEventListener("click", async () => {
-  if (state.busy) return;
+  if (state.busy) {
+    frontendLog("session.create.skipped", { reason: "busy" });
+    return;
+  }
   const session = await createSession();
   await activateSession(session.session_id);
 });
@@ -175,10 +230,13 @@ elements.closeCardDetailButton.addEventListener("click", () => {
 });
 
 async function bootApp() {
+  const startedAt = performance.now();
+  frontendLog("boot.start");
   setAuthStatus("正在检查登录状态。", "muted");
   const result = await getJson("/api/auth/me", {}, { allowAuthError: true });
   if (result.ok) {
     await enterAuthenticatedApp(result.user);
+    frontendLog("boot.done", { authenticated: true, duration_ms: elapsedSince(startedAt) });
     return;
   }
   const message =
@@ -186,9 +244,16 @@ async function bootApp() {
       ? ""
       : resultMessage(result, "认证服务暂时不可用。");
   showLogin(message, message ? "error" : "muted");
+  frontendLog("boot.done", {
+    authenticated: false,
+    error_code: result.error_code || "",
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 async function enterAuthenticatedApp(user) {
+  const startedAt = performance.now();
+  frontendLog("app.enter_authenticated.start");
   state.authUser = user || null;
   elements.currentUserEmail.textContent = state.authUser?.email || "已登录";
   stopResendTimer();
@@ -198,12 +263,20 @@ async function enterAuthenticatedApp(user) {
   await initializeApp();
   await loadRecentCards();
   setBusy(false, "个人知识库已就绪");
+  frontendLog("app.enter_authenticated.done", {
+    sessions_count: state.sessions.length,
+    cards_count: state.cards.length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 async function requestLoginCode() {
+  const startedAt = performance.now();
+  frontendLog("auth.request_code.start");
   const email = elements.authEmailInput.value.trim();
   if (!email) {
     setAuthStatus("请输入邮箱。", "error");
+    frontendLog("auth.request_code.invalid", { reason: "missing_email" });
     return;
   }
   elements.requestCodeButton.disabled = true;
@@ -213,22 +286,32 @@ async function requestLoginCode() {
     elements.requestCodeButton.disabled = false;
     setLoginCodeSent(false);
     setAuthStatus(resultMessage(result, "验证码发送失败。"), "error");
+    frontendLog("auth.request_code.done", {
+      ok: false,
+      error_code: result.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   setLoginCodeSent(true);
   elements.authCodeInput.focus();
   startResendTimer();
+  frontendLog("auth.request_code.done", { ok: true, duration_ms: elapsedSince(startedAt) });
 }
 
 async function verifyLoginCode() {
+  const startedAt = performance.now();
+  frontendLog("auth.verify_code.start");
   const email = elements.authEmailInput.value.trim();
   const code = elements.authCodeInput.value.trim();
   if (!email) {
     setAuthStatus("请输入邮箱。", "error");
+    frontendLog("auth.verify_code.invalid", { reason: "missing_email" });
     return;
   }
   if (!/^\d{6}$/.test(code)) {
     setAuthStatus("请输入 6 位验证码。", "error");
+    frontendLog("auth.verify_code.invalid", { reason: "invalid_code_format" });
     return;
   }
   elements.authSubmitButton.disabled = true;
@@ -237,15 +320,26 @@ async function verifyLoginCode() {
   if (!result.ok) {
     elements.authSubmitButton.disabled = false;
     setAuthStatus(resultMessage(result, "验证码无效或已过期。"), "error");
+    frontendLog("auth.verify_code.done", {
+      ok: false,
+      error_code: result.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   stopResendTimer();
   setAuthStatus("登录成功，正在载入知识库。", "success");
   await enterAuthenticatedApp(result.user);
+  frontendLog("auth.verify_code.done", { ok: true, duration_ms: elapsedSince(startedAt) });
 }
 
 async function logout() {
-  if (state.busy) return;
+  if (state.busy) {
+    frontendLog("auth.logout.skipped", { reason: "busy" });
+    return;
+  }
+  const startedAt = performance.now();
+  frontendLog("auth.logout.start");
   elements.logoutButton.disabled = true;
   try {
     await postJson("/api/auth/logout", {}, { allowAuthError: true });
@@ -254,6 +348,7 @@ async function logout() {
     clearOpenApprovalDialogs("cancelled");
     resetAuthenticatedState();
     showLogin("已退出登录。", "muted");
+    frontendLog("auth.logout.done", { duration_ms: elapsedSince(startedAt) });
   }
 }
 
@@ -270,16 +365,42 @@ async function postJson(url, body, options = {}) {
 }
 
 async function getJson(url, init = {}, options = {}) {
-  const response = await fetch(url, { credentials: "same-origin", ...init });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+  const method = (init.method || "GET").toUpperCase();
+  const startedAt = performance.now();
+  frontendLog("api.start", { method, url });
+  try {
+    const response = await fetch(url, { credentials: "same-origin", ...init });
+    frontendLog("api.response", {
+      method,
+      url,
+      status: response.status,
+      duration_ms: elapsedSince(startedAt),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const result = await response.json();
+    frontendLog("api.done", {
+      method,
+      url,
+      ok: result?.ok !== false,
+      error_code: result?.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
+    if (!options.allowAuthError && isNotAuthenticated(result)) {
+      showLogin("登录状态已失效，请重新登录。", "error");
+      throw new Error("not_authenticated");
+    }
+    return result;
+  } catch (error) {
+    frontendError("api.error", {
+      method,
+      url,
+      duration_ms: elapsedSince(startedAt),
+      message: errorMessage(error),
+    });
+    throw error;
   }
-  const result = await response.json();
-  if (!options.allowAuthError && isNotAuthenticated(result)) {
-    showLogin("登录状态已失效，请重新登录。", "error");
-    throw new Error("not_authenticated");
-  }
-  return result;
 }
 
 function isNotAuthenticated(result) {
@@ -366,42 +487,80 @@ function stopResendTimer() {
 }
 
 async function initializeApp() {
+  const startedAt = performance.now();
+  frontendLog("app.initialize.start");
   await loadSessions();
   const savedSessionId = window.localStorage.getItem("active_session_id");
   const savedSession = state.sessions.find((session) => session.session_id === savedSessionId);
   if (savedSession) {
     await activateSession(savedSession.session_id);
+    frontendLog("app.initialize.done", {
+      source: "saved_session",
+      session_id: savedSession.session_id,
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   if (state.sessions.length > 0) {
     await activateSession(state.sessions[0].session_id);
+    frontendLog("app.initialize.done", {
+      source: "first_session",
+      session_id: state.sessions[0].session_id,
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   const session = await createSession();
   await activateSession(session.session_id);
+  frontendLog("app.initialize.done", {
+    source: "created_session",
+    session_id: session.session_id,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 async function createSession() {
+  const startedAt = performance.now();
+  frontendLog("session.create.start");
   const result = await postJson("/api/sessions");
   if (!result.ok) {
     throw new Error(result.message || "创建会话失败");
   }
   await loadSessions();
+  frontendLog("session.create.done", {
+    session_id: result.session?.session_id || "",
+    duration_ms: elapsedSince(startedAt),
+  });
   return result.session;
 }
 
 async function loadSessions() {
+  const startedAt = performance.now();
+  frontendLog("sessions.load.start");
   const result = await getJson("/api/sessions");
   if (!result.ok) {
     elements.sessionStatus.textContent = result.message || "读取失败";
     renderSessions([]);
+    frontendLog("sessions.load.done", {
+      ok: false,
+      error_code: result.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   state.sessions = result.sessions || [];
   renderSessions(state.sessions);
+  frontendLog("sessions.load.done", {
+    ok: true,
+    count: state.sessions.length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 async function activateSession(sessionId) {
+  const startedAt = performance.now();
+  const collapseMobilePane = isMobileViewport() && !state.leftCollapsed;
+  frontendLog("session.activate.start", { session_id: sessionId });
   stopActiveTyping();
   state.activeSessionId = sessionId;
   window.localStorage.setItem("active_session_id", sessionId);
@@ -409,12 +568,28 @@ async function activateSession(sessionId) {
   renderActiveSessionTitle();
   renderContextForSession(sessionId);
   await loadSessionMessages(sessionId);
+  if (collapseMobilePane) {
+    setPaneCollapsed("left", true);
+  }
+  frontendLog("session.activate.done", {
+    session_id: sessionId,
+    mobile_left_collapsed: collapseMobilePane,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 async function loadSessionMessages(sessionId) {
+  const startedAt = performance.now();
+  frontendLog("session.messages.load.start", { session_id: sessionId });
   const result = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
   if (!result.ok) {
     resetMessages(result.message || "读取会话历史失败。");
+    frontendLog("session.messages.load.done", {
+      ok: false,
+      session_id: sessionId,
+      error_code: result.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   if (result.session) {
@@ -422,6 +597,12 @@ async function loadSessionMessages(sessionId) {
     renderContextForSession(sessionId);
   }
   renderHistoryMessages(result.messages || []);
+  frontendLog("session.messages.load.done", {
+    ok: true,
+    session_id: sessionId,
+    count: (result.messages || []).length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 function renderSessions(sessions) {
@@ -441,8 +622,18 @@ function renderSessions(sessions) {
     button.dataset.sessionId = session.session_id;
     button.classList.toggle("is-active", session.session_id === state.activeSessionId);
     button.addEventListener("click", () => {
+      frontendLog("session.row.click", {
+        session_id: session.session_id,
+        busy: state.busy,
+      });
       if (!state.busy) {
-        activateSession(session.session_id).catch((error) => setBusy(false, String(error)));
+        activateSession(session.session_id).catch((error) => {
+          frontendError("session.activate.error", {
+            session_id: session.session_id,
+            message: errorMessage(error),
+          });
+          setBusy(false, String(error));
+        });
       }
     });
 
@@ -474,10 +665,15 @@ function resetMessages(message) {
 }
 
 function renderHistoryMessages(messages) {
+  const startedAt = performance.now();
   stopActiveTyping();
   elements.messages.replaceChildren();
   if (!messages.length) {
     resetMessages("你好。你可以录入一条 Q&A，也可以提问，我会基于知识库回答并列出来源。");
+    frontendLog("session.messages.render.done", {
+      count: 0,
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   for (const message of messages) {
@@ -493,6 +689,10 @@ function renderHistoryMessages(messages) {
     renderMarkdown(node.querySelector(".message-body"), message.content || "");
   }
   scrollMessagesToBottom();
+  frontendLog("session.messages.render.done", {
+    count: messages.length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 function appendMessage(kind, role, body, options = {}) {
@@ -564,47 +764,79 @@ function appendHistoryRunMessage(historyMessage) {
 }
 
 async function streamChat(message, agentMessage) {
-  const response = await fetch("/api/chat/stream", {
-    method: "POST",
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: state.activeSessionId, message }),
-  });
-  if (!response.ok || !response.body) {
-    throw new Error(`HTTP ${response.status}`);
-  }
+  const startedAt = performance.now();
+  const streamStats = {
+    startedAt,
+    eventCount: 0,
+    firstEvent: false,
+    firstDelta: false,
+    finalAnswer: false,
+  };
+  agentMessage._streamStats = streamStats;
+  frontendLog("chat.stream.start", { session_id: state.activeSessionId || "" });
+  try {
+    const response = await fetch("/api/chat/stream", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: state.activeSessionId, message }),
+    });
+    frontendLog("chat.stream.open", {
+      session_id: state.activeSessionId || "",
+      status: response.status,
+      duration_ms: elapsedSince(startedAt),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`HTTP ${response.status}`);
+    }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const events = buffer.split("\n\n");
-    buffer = events.pop() || "";
-    for (const rawEvent of events) {
-      const dataLine = rawEvent
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+      for (const rawEvent of events) {
+        const dataLine = rawEvent
+          .split("\n")
+          .find((line) => line.startsWith("data:"));
+        if (!dataLine) continue;
+        renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+      }
+    }
+    if (buffer.trim()) {
+      const dataLine = buffer
         .split("\n")
         .find((line) => line.startsWith("data:"));
-      if (!dataLine) continue;
-      renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+      if (dataLine) {
+        renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+      }
     }
-  }
-  if (buffer.trim()) {
-    const dataLine = buffer
-      .split("\n")
-      .find((line) => line.startsWith("data:"));
-    if (dataLine) {
-      renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+    if (agentMessage._typingController) {
+      await agentMessage._typingController.whenIdle();
     }
-  }
-  if (agentMessage._typingController) {
-    await agentMessage._typingController.whenIdle();
+    frontendLog("chat.stream.done", {
+      session_id: state.activeSessionId || "",
+      count: streamStats.eventCount,
+      final_answer: streamStats.finalAnswer,
+      duration_ms: elapsedSince(startedAt),
+    });
+  } catch (error) {
+    frontendError("chat.stream.error", {
+      session_id: state.activeSessionId || "",
+      count: streamStats.eventCount,
+      duration_ms: elapsedSince(startedAt),
+      message: errorMessage(error),
+    });
+    throw error;
   }
 }
 
 function renderAgentEvent(message, event) {
+  recordStreamEvent(message, event);
   const shouldStickToBottom = isNearMessageBottom();
   switch (event.event_type) {
     case "user_input_received":
@@ -959,6 +1191,11 @@ function addToolStep(message, event) {
 function showApprovalDialog(message, event) {
   const summary = event.summary || {};
   const approvalId = event.approval_id || "";
+  frontendLog("approval.requested", {
+    approval_id: approvalId,
+    tool_name: summary.tool_name || "",
+    timeout_seconds: event.timeout_seconds || 0,
+  });
   const statusStep = addApprovalStatusStep(message, "Agent 请求高风险操作确认");
   const overlay = document.createElement("section");
   overlay.className = "approval-overlay";
@@ -1069,18 +1306,44 @@ function appendApprovalRow(container, label, value, extraClass = "") {
 async function submitApproval(dialog, decision) {
   const approvalId = dialog.dataset.approvalId;
   if (!approvalId) return;
+  const startedAt = performance.now();
+  frontendLog("approval.submit.start", { approval_id: approvalId, decision });
   setApprovalDialogState(dialog, decision === "approve" ? "submitting-approve" : "submitting-deny");
   try {
     const result = await postJson(`/api/approvals/${encodeURIComponent(approvalId)}`, { decision });
     if (!result.ok) {
       setApprovalDialogState(dialog, "submit-error", result.message || "确认提交失败");
+      frontendLog("approval.submit.done", {
+        ok: false,
+        approval_id: approvalId,
+        decision,
+        error_code: result.error_code || "",
+        duration_ms: elapsedSince(startedAt),
+      });
+      return;
     }
+    frontendLog("approval.submit.done", {
+      ok: true,
+      approval_id: approvalId,
+      decision,
+      duration_ms: elapsedSince(startedAt),
+    });
   } catch (error) {
     setApprovalDialogState(dialog, "submit-error", String(error));
+    frontendError("approval.submit.error", {
+      approval_id: approvalId,
+      decision,
+      duration_ms: elapsedSince(startedAt),
+      message: errorMessage(error),
+    });
   }
 }
 
 function resolveApprovalDialog(event) {
+  frontendLog("approval.resolve", {
+    approval_id: event.approval_id || "",
+    status: event.status || "",
+  });
   const record = state.approvalDialogs.get(event.approval_id);
   if (!record) return;
   const status = event.status || "denied";
@@ -1091,6 +1354,10 @@ function resolveApprovalDialog(event) {
 }
 
 function clearOpenApprovalDialogs(status) {
+  frontendLog("approval.clear_open", {
+    status,
+    count: state.approvalDialogs.size,
+  });
   for (const [approvalId, record] of state.approvalDialogs.entries()) {
     setApprovalDialogState(record.dialog, status);
     updateApprovalStatusStep(record.statusStep, approvalResultText(status), status);
@@ -1188,6 +1455,7 @@ function summarizeToolResult(event) {
 }
 
 function renderMarkdown(container, markdown) {
+  const startedAt = performance.now();
   container.classList.add("markdown-body");
   container.replaceChildren();
   const lines = markdown.split(/\r?\n/);
@@ -1247,6 +1515,10 @@ function renderMarkdown(container, markdown) {
     appendInlineMarkdown(paragraph, paragraphLines.join("\n"), { preserveBreaks: true });
     container.append(paragraph);
   }
+  frontendLog("markdown.render.done", {
+    length: markdown.length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 function renderMarkdownTable(lines) {
@@ -1313,20 +1585,35 @@ function setBusy(busy, text) {
   state.busy = busy;
   elements.sendButton.disabled = busy;
   elements.statusText.textContent = text;
+  frontendLog("ui.busy", { busy, message: text });
 }
 
 async function loadRecentCards() {
+  const startedAt = performance.now();
+  frontendLog("cards.recent.load.start");
   elements.cardsTitle.textContent = "保存记录";
   setCardsLoading(true);
   const result = await getJson("/api/cards/recent?limit=10").finally(() => setCardsLoading(false));
   if (!result.ok) {
     renderCards([], result.message || "读取最近卡片失败。");
+    frontendLog("cards.recent.load.done", {
+      ok: false,
+      error_code: result.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   renderCards(result.cards || []);
+  frontendLog("cards.recent.load.done", {
+    ok: true,
+    count: (result.cards || []).length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 async function searchCards(query) {
+  const startedAt = performance.now();
+  frontendLog("cards.search.start");
   elements.cardsTitle.textContent = "检索结果";
   setCardsLoading(true);
   const result = await getJson(`/api/cards/search?q=${encodeURIComponent(query)}&limit=10`).finally(() =>
@@ -1334,12 +1621,23 @@ async function searchCards(query) {
   );
   if (!result.ok) {
     renderCards([], result.message || "搜索失败。");
+    frontendLog("cards.search.done", {
+      ok: false,
+      error_code: result.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   renderCards(result.cards || []);
+  frontendLog("cards.search.done", {
+    ok: true,
+    count: (result.cards || []).length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 function renderCards(cards, emptyText = "还没有知识卡片。保存一条 Q&A 后会显示在这里。") {
+  const startedAt = performance.now();
   state.cards = cards;
   if (!cards.some((card) => card.card_id === state.selectedCardId)) {
     closeCardDetail();
@@ -1355,6 +1653,10 @@ function renderCards(cards, emptyText = "还没有知识卡片。保存一条 Q&
     text.textContent = emptyText;
     empty.append(text);
     elements.cardsList.append(empty);
+    frontendLog("cards.render.done", {
+      count: 0,
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
 
@@ -1392,10 +1694,16 @@ function renderCards(cards, emptyText = "还没有知识卡片。保存一条 Q&
     button.append(rowIcon, content);
     elements.cardsList.append(button);
   }
+  frontendLog("cards.render.done", {
+    count: cards.length,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 async function loadCardDetail(cardId) {
   if (!cardId) return;
+  const startedAt = performance.now();
+  frontendLog("card.detail.load.start", { card_id: cardId });
   state.selectedCardId = cardId;
   openCardDetail();
   markSelectedCard(cardId);
@@ -1403,9 +1711,20 @@ async function loadCardDetail(cardId) {
   if (!result.ok) {
     elements.cardDetail.className = "card-detail empty-state";
     elements.cardDetail.textContent = result.message || "读取卡片详情失败。";
+    frontendLog("card.detail.load.done", {
+      ok: false,
+      card_id: cardId,
+      error_code: result.error_code || "",
+      duration_ms: elapsedSince(startedAt),
+    });
     return;
   }
   renderCardDetail(result.card);
+  frontendLog("card.detail.load.done", {
+    ok: true,
+    card_id: cardId,
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 function openCardDetail() {
@@ -1421,6 +1740,7 @@ function closeCardDetail() {
 }
 
 function renderCardDetail(card) {
+  const startedAt = performance.now();
   elements.cardDetail.className = "card-detail";
   const keywords = Array.isArray(card.keywords) ? card.keywords.join(", ") : "";
   elements.cardDetail.innerHTML = "";
@@ -1481,6 +1801,10 @@ function renderCardDetail(card) {
 
   cardBody.append(questionBlock, summaryBlock, answerBlock, metaGrid, sources);
   elements.cardDetail.append(cardBody);
+  frontendLog("card.detail.render.done", {
+    card_id: card.card_id || "",
+    duration_ms: elapsedSince(startedAt),
+  });
 }
 
 function formatTimestamp(value, options = {}) {
@@ -1543,6 +1867,12 @@ function setPaneCollapsed(side, collapsed) {
     window.localStorage.setItem("right_pane_collapsed", String(collapsed));
   }
   applyPaneState();
+  frontendLog("ui.pane_collapsed", {
+    side,
+    collapsed,
+    left_collapsed: state.leftCollapsed,
+    right_collapsed: state.rightCollapsed,
+  });
 }
 
 function applyPaneState() {
@@ -1664,6 +1994,82 @@ function sourceRow(name, detail, score) {
   return row;
 }
 
+function frontendLog(event, fields = {}) {
+  console.info("[pka]", diagnosticEvent(event, fields));
+}
+
+function frontendError(event, fields = {}) {
+  console.error("[pka]", diagnosticEvent(event, fields));
+}
+
+function diagnosticEvent(event, fields) {
+  return {
+    event,
+    trace_id: FRONTEND_TRACE_ID,
+    elapsed_ms: Math.round(performance.now() - FRONTEND_START_MS),
+    ...fields,
+  };
+}
+
+function elapsedSince(startedAt) {
+  return Math.round(performance.now() - startedAt);
+}
+
+function errorMessage(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function logResourceTiming(pattern) {
+  const entries = performance
+    .getEntriesByType("resource")
+    .filter((entry) => entry.name.includes(pattern));
+  const entry = entries[entries.length - 1];
+  if (!entry) {
+    frontendLog("resource.missing", { resource: pattern });
+    return;
+  }
+  frontendLog("resource.timing", {
+    resource: pattern,
+    duration_ms: Math.round(entry.duration),
+    transfer_size: Math.round(entry.transferSize || 0),
+    encoded_size: Math.round(entry.encodedBodySize || 0),
+    decoded_size: Math.round(entry.decodedBodySize || 0),
+  });
+}
+
+function recordStreamEvent(message, event) {
+  const stats = message._streamStats;
+  if (!stats) return;
+  stats.eventCount += 1;
+  if (!stats.firstEvent) {
+    stats.firstEvent = true;
+    frontendLog("chat.stream.first_event", {
+      session_id: state.activeSessionId || "",
+      event_type: event.event_type || "",
+      duration_ms: elapsedSince(stats.startedAt),
+    });
+  }
+  if (event.event_type === "answer_delta" && !stats.firstDelta) {
+    stats.firstDelta = true;
+    frontendLog("chat.stream.first_delta", {
+      session_id: state.activeSessionId || "",
+      duration_ms: elapsedSince(stats.startedAt),
+    });
+  }
+  if (event.event_type === "final_answer_generated" && !stats.finalAnswer) {
+    stats.finalAnswer = true;
+    frontendLog("chat.stream.final_answer", {
+      session_id: state.activeSessionId || "",
+      count: stats.eventCount,
+      duration_ms: elapsedSince(stats.startedAt),
+    });
+  }
+}
+
 bootApp().catch((error) => {
+  frontendError("boot.error", { message: errorMessage(error) });
   showLogin(String(error), "error");
 });
