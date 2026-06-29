@@ -5,7 +5,12 @@ from typing import Any, Literal
 
 PermissionBehavior = Literal["allow", "deny", "ask"]
 
-DANGEROUS_TOOLS = {"update_qa_card", "delete_qa_card", "merge_qa_cards"}
+TOOLS_REQUIRING_APPROVAL = {
+    "update_qa_card": "This operation changes Q&A knowledge.",
+    "delete_qa_card": "This operation deletes Q&A knowledge.",
+    "merge_qa_cards": "This operation merges Q&A knowledge.",
+    "update_todo": "This operation changes a todo item.",
+}
 
 
 @dataclass(frozen=True)
@@ -22,10 +27,11 @@ class ApprovalRequest:
 
 
 def check_permission(tool_name: str, arguments: dict[str, Any]) -> PermissionDecision:
-    if tool_name in DANGEROUS_TOOLS:
+    reason = TOOLS_REQUIRING_APPROVAL.get(tool_name)
+    if reason is not None:
         return PermissionDecision(
             behavior="ask",
-            reason="This operation changes local Q&A knowledge.",
+            reason=reason,
         )
     return PermissionDecision(behavior="allow")
 

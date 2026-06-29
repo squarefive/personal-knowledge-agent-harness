@@ -23,6 +23,14 @@ def test_update_and_delete_tools_require_approval():
     assert update_decision.reason
 
 
+def test_update_todo_requires_approval_with_todo_reason():
+    decision = check_permission("update_todo", {"todo_id": "todo_1", "status": "done"})
+
+    assert decision.behavior == "ask"
+    assert "todo" in decision.reason.lower()
+    assert "Q&A" not in decision.reason
+
+
 def test_default_approval_callback_denies():
     request = ApprovalRequest(tool_name="delete_qa_card", arguments={"card_id": "qa_1"}, reason="danger")
 
