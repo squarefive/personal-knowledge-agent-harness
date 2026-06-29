@@ -8,7 +8,7 @@ from personal_knowledge_agent.agent_context.agent_profile_memory import (
 from personal_knowledge_agent.llm_clients import LLMResponse, LLMUsage
 from personal_knowledge_agent.llm_clients.deepseek_chat_client import LLMContextLengthExceeded
 from personal_knowledge_agent.tool_runtime import ToolCall
-from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers
+from personal_knowledge_agent.agent_tools import AgentMemoryToolHandlers, QAKnowledgeToolHandlers, TodoToolHandlers
 from personal_knowledge_agent.tool_runtime import ToolDispatcher
 from tests.fakes import (
     InMemoryMemoryStore,
@@ -16,6 +16,7 @@ from tests.fakes import (
     InMemoryQACardStore,
     InMemoryRuntimeContextCompactor,
     InMemoryToolResultCompactor,
+    InMemoryTodoStore,
     InMemoryTranscript,
 )
 
@@ -60,6 +61,15 @@ def create_dispatcher(tmp_path, qa_tools):
         memory_document_repository=memory_store,
     )
     return ToolDispatcher(qa_tools, memory_tools)
+
+
+def create_dispatcher_with_todos(tmp_path, qa_tools, todo_tools):
+    memory_store = InMemoryMemoryStore()
+    memory_tools = AgentMemoryToolHandlers(
+        memory_index_repository=memory_store,
+        memory_document_repository=memory_store,
+    )
+    return ToolDispatcher(qa_tools, memory_tools, todo_tools=todo_tools)
 
 
 def test_agent_loop_executes_tool_call_and_returns_final_answer(tmp_path):
@@ -361,6 +371,40 @@ def test_agent_loop_denies_dangerous_tool_without_execution(tmp_path):
 
     assert answer == "操作未执行。"
     assert knowledge_tools.read_qa_card({"card_id": saved["card_id"]})["ok"] is True
+    assert "permission_denied" in second_messages[-1]["content"]
+
+
+def test_agent_loop_denies_update_todo_without_execution(tmp_path):
+    knowledge_tools = QAKnowledgeToolHandlers(InMemoryQACardStore())
+    todo_store = InMemoryTodoStore()
+    todo_tools = TodoToolHandlers(todo_store)
+    created = todo_tools.create_todo({"title": "整理权限确认"})
+    dispatcher = create_dispatcher_with_todos(tmp_path, knowledge_tools, todo_tools)
+    fake_llm = FakeLLM(
+        [
+            LLMResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call_1",
+                        name="update_todo",
+                        arguments={"todo_id": created["todo"]["todo_id"], "status": "done"},
+                    )
+                ]
+            ),
+            LLMResponse(text="操作未执行。"),
+        ]
+    )
+    loop = AgentLoopRunner(
+        llm=fake_llm,
+        dispatcher=dispatcher,
+        approval_callback=lambda request: False,
+    )
+
+    answer = loop.run("把这条 todo 标为完成")
+    second_messages = fake_llm.calls[1]["messages"]
+
+    assert answer == "操作未执行。"
+    assert todo_tools.list_todos({"status": "all"})["todos"][0]["status"] == "open"
     assert "permission_denied" in second_messages[-1]["content"]
 
 
