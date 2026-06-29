@@ -163,7 +163,7 @@ last_updated: "2026-06-28"
 | `rebuild_qa_semantic_index` | 重建当前用户或受控范围内的语义索引 | 系统维护或索引修复时 | 是 | 否 |
 | `create_todo` | 保存当前用户的一条 todo | 用户明确要求记录行动项时 | 是 | 否 |
 | `list_todos` | 查询当前用户 todo | 用户要求查看、搜索或核对 todo 时 | 否 | 否 |
-| `update_todo` | 更新当前用户 todo | 用户要求修改 todo 内容或状态时 | 是 | 否 |
+| `update_todo` | 更新当前用户 todo | 用户要求修改 todo 内容或状态时 | 是 | 是 |
 | `list_memory_index` | 读取当前用户 memory 索引 | 需要理解长期协作偏好时 | 否 | 否 |
 | `read_memory` | 读取当前用户指定 memory | memory index 显示相关时 | 否 | 否 |
 
@@ -258,7 +258,7 @@ last_updated: "2026-06-28"
 - **输入**: 只接收 `title`、`notes`、`due_at`、`status`、`todo_id`、`query`、`limit` 等业务字段。
 - **输出**: 返回 `ok`、`todo` 或 `todos`、可展示 ID、时间戳和 `error`。
 - **副作用**: `create_todo` 和 `update_todo` 写入 PostgreSQL；`list_todos` 无副作用。
-- **失败处理**: title 缺失、状态非法、目标不存在、跨用户目标或数据库失败时返回结构化错误。
+- **失败处理**: title 缺失、状态非法、目标不存在、跨用户目标、用户拒绝确认或数据库失败时返回结构化错误；用户拒绝确认时不得修改 todo。
 
 #### Memory 工具
 
