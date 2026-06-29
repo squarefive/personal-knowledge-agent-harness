@@ -46,7 +46,7 @@ Make sure the password embedded in `database_url` is the same value written to `
 From the repository root:
 
 ```bash
-APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml config
+APP_IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml config
 ```
 
 The app container starts with `PKA_CLOUD_ONLY=true`; if `DATABASE_URL_FILE` cannot be read or resolves to an empty value, Web startup fails instead of falling back to local SQLite/Qdrant mode.
@@ -62,8 +62,8 @@ python scripts/init-postgres-schema.py && python -m personal_knowledge_agent web
 From the repository root:
 
 ```bash
-APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml pull app
-APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml up -d
+APP_IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml pull app
+APP_IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository APP_IMAGE_TAG=latest docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps
 docker compose -f deploy/docker-compose.yml logs --tail=100 app postgres nginx
 ```
@@ -91,25 +91,30 @@ chmod 750 /opt/personal-knowledge-agent/deploy/backups
 
 ## CI/CD
 
-Production app images are built by GitHub Actions and pushed to GitHub Container Registry:
+Production app images are built by GitHub Actions and pushed to Alibaba Cloud Container Registry:
 
 ```text
-ghcr.io/squarefive/personal-knowledge-agent-harness:<commit-sha>
-ghcr.io/squarefive/personal-knowledge-agent-harness:latest
+registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository:<commit-sha>
+registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository:latest
 ```
 
-The production Compose file pulls the app image from GHCR. It does not build the app image on the server.
+The production Compose file pulls the app image from `APP_IMAGE_NAME`. It does not build the app image on the server.
 
 The workflow runs only after pushes to `main`:
 
 1. Run the test suite.
-2. Build and push the app image with both `<commit-sha>` and `latest` tags.
+2. Build and push the app image to ACR with both `<commit-sha>` and `latest` tags.
 3. Connect to the production server over SSH.
-4. Upload the Compose and deployment scripts needed by the server.
-5. Run `scripts/deploy-production.sh` with `APP_IMAGE_TAG=<commit-sha>`.
+4. Log in to ACR on the production server.
+5. Upload the Compose and deployment scripts needed by the server.
+6. Run `scripts/deploy-production.sh` with `APP_IMAGE_NAME=<acr-image>` and `APP_IMAGE_TAG=<commit-sha>`.
 
 Configure these GitHub Actions repository secrets before enabling automatic deployment:
 
+- `ACR_REGISTRY`: ACR registry host, for example `registry.cn-hangzhou.aliyuncs.com`.
+- `ACR_USERNAME`: ACR registry username.
+- `ACR_PASSWORD`: ACR registry password.
+- `ACR_IMAGE_NAME`: full ACR image name, for example `registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository`.
 - `PROD_HOST`: production server host, for example `124.223.210.44`.
 - `PROD_USER`: SSH user, for example `ubuntu`.
 - `PROD_DEPLOY_DIR`: server deployment directory, for example `/opt/personal-knowledge-agent`.
@@ -122,7 +127,7 @@ Application runtime secrets must stay on the server under `deploy/secrets/`. Do 
 The deployment script performs a PostgreSQL backup before replacing the app container:
 
 ```bash
-APP_IMAGE_TAG=<commit-sha> scripts/deploy-production.sh
+APP_IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository APP_IMAGE_TAG=<commit-sha> scripts/deploy-production.sh
 ```
 
 ## Rollback
@@ -130,7 +135,7 @@ APP_IMAGE_TAG=<commit-sha> scripts/deploy-production.sh
 To roll back the app container to a previous image tag, run from the server deployment directory:
 
 ```bash
-APP_IMAGE_TAG=<previous-commit-sha> docker compose -f deploy/docker-compose.yml pull app
-APP_IMAGE_TAG=<previous-commit-sha> docker compose -f deploy/docker-compose.yml up -d
+APP_IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository APP_IMAGE_TAG=<previous-commit-sha> docker compose -f deploy/docker-compose.yml pull app
+APP_IMAGE_NAME=registry.cn-hangzhou.aliyuncs.com/your-namespace/your-repository APP_IMAGE_TAG=<previous-commit-sha> docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml logs --tail=100 app
 ```
