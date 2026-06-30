@@ -114,6 +114,18 @@ python scripts/check-codebase-map-format.py
 
 检查通过后，才能提交相关文档变更。
 
+## 代码规范
+
+在处理以下任务前，如涉及代码新增、修改、重构或审查，应读取：
+
+- `docs/guidelines/code-style.md`
+
+该文档用于记录本仓库长期稳定的代码规范，例如常量管理和命名规则。
+
+不涉及代码的纯文档任务、只读调研或 Git 分支清理，不需要读取该文档。
+
+该文档不替代协作规约、Agent 开发边界文档或代码地图；任务执行仍必须遵守协作规约，涉及 Agent 能力边界时仍必须读取对应 Agent 文档，需要判断目录和文件职责时仍应读取代码地图。
+
 ## Agent 文档模板
 
 只有在以下场景中才需要读取 `docs/templates/agent-development-context.template.md`：
