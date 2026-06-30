@@ -4,6 +4,7 @@ from typing import Any, Callable
 
 from ..agent_context.agent_profile_memory import AgentMemoryTurnFinalizer, MemoryIndex
 from .answer_source_evidence import finalize_answer
+from .constants import AgentRuntimeConstants as runtime_constants
 
 
 class AgentAnswerFinalizer:
@@ -30,7 +31,12 @@ class AgentAnswerFinalizer:
         recent_messages: list[dict[str, Any]],
     ) -> str:
         trusted_answer = finalize_answer(answer, turn_messages)
-        self.append_message({"role": "assistant", "content": trusted_answer.answer})
+        self.append_message(
+            {
+                runtime_constants.MESSAGE_ROLE_FIELD: runtime_constants.MESSAGE_ROLE_ASSISTANT,
+                runtime_constants.MESSAGE_CONTENT_FIELD: trusted_answer.answer,
+            }
+        )
         self.emit(
             run_id,
             "evidence_checked",
@@ -59,7 +65,12 @@ class AgentAnswerFinalizer:
         recent_messages: list[dict[str, Any]],
     ) -> str:
         answer = "工具调用次数过多，已停止本轮处理。"
-        self.append_message({"role": "assistant", "content": answer})
+        self.append_message(
+            {
+                runtime_constants.MESSAGE_ROLE_FIELD: runtime_constants.MESSAGE_ROLE_ASSISTANT,
+                runtime_constants.MESSAGE_CONTENT_FIELD: answer,
+            }
+        )
         self.emit(run_id, "error", stage="agent_loop", message=answer)
         self._finalize_memory(
             run_id=run_id,

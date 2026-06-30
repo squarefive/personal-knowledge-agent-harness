@@ -5,6 +5,7 @@ from typing import Any, Callable
 from ..agent_tools.agent_memory_tools import AgentMemoryToolHandlers
 from ..agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 from ..agent_tools.todo_tools import TodoToolHandlers
+from .constants import ToolRuntimeConstants as tool_runtime_constants
 from .tool_models import ToolCall
 
 
@@ -21,25 +22,25 @@ class ToolDispatcher:
             *memory_tools.definitions(),
         ]
         self._handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
-            "save_qa_card": qa_tools.save_qa_card,
-            "search_qa_cards": qa_tools.search_qa_cards,
-            "hybrid_search_qa_cards": qa_tools.hybrid_search_qa_cards,
-            "read_qa_card": qa_tools.read_qa_card,
-            "update_qa_card": qa_tools.update_qa_card,
-            "delete_qa_card": qa_tools.delete_qa_card,
-            "list_recent_cards": qa_tools.list_recent_cards,
-            "detect_duplicate_cards": qa_tools.detect_duplicate_cards,
-            "merge_qa_cards": qa_tools.merge_qa_cards,
-            "rebuild_qa_semantic_index": qa_tools.rebuild_qa_semantic_index,
-            "list_memory_index": memory_tools.list_memory_index,
-            "read_memory": memory_tools.read_memory,
+            tool_runtime_constants.TOOL_SAVE_QA_CARD: qa_tools.save_qa_card,
+            tool_runtime_constants.TOOL_SEARCH_QA_CARDS: qa_tools.search_qa_cards,
+            tool_runtime_constants.TOOL_HYBRID_SEARCH_QA_CARDS: qa_tools.hybrid_search_qa_cards,
+            tool_runtime_constants.TOOL_READ_QA_CARD: qa_tools.read_qa_card,
+            tool_runtime_constants.TOOL_UPDATE_QA_CARD: qa_tools.update_qa_card,
+            tool_runtime_constants.TOOL_DELETE_QA_CARD: qa_tools.delete_qa_card,
+            tool_runtime_constants.TOOL_LIST_RECENT_CARDS: qa_tools.list_recent_cards,
+            tool_runtime_constants.TOOL_DETECT_DUPLICATE_CARDS: qa_tools.detect_duplicate_cards,
+            tool_runtime_constants.TOOL_MERGE_QA_CARDS: qa_tools.merge_qa_cards,
+            tool_runtime_constants.TOOL_REBUILD_QA_SEMANTIC_INDEX: qa_tools.rebuild_qa_semantic_index,
+            tool_runtime_constants.TOOL_LIST_MEMORY_INDEX: memory_tools.list_memory_index,
+            tool_runtime_constants.TOOL_READ_MEMORY: memory_tools.read_memory,
         }
         if todo_tools is not None:
             self._handlers.update(
                 {
-                    "create_todo": todo_tools.create_todo,
-                    "list_todos": todo_tools.list_todos,
-                    "update_todo": todo_tools.update_todo,
+                    tool_runtime_constants.TOOL_CREATE_TODO: todo_tools.create_todo,
+                    tool_runtime_constants.TOOL_LIST_TODOS: todo_tools.list_todos,
+                    tool_runtime_constants.TOOL_UPDATE_TODO: todo_tools.update_todo,
                 }
             )
 
@@ -49,17 +50,28 @@ class ToolDispatcher:
     def execute(self, tool_call: ToolCall) -> dict[str, Any]:
         handler = self._handlers.get(tool_call.name)
         if handler is None:
-            return {"ok": False, "error_code": "unknown_tool", "message": tool_call.name}
+            return {
+                tool_runtime_constants.RESULT_OK_FIELD: False,
+                tool_runtime_constants.RESULT_ERROR_CODE_FIELD: tool_runtime_constants.ERROR_CODE_UNKNOWN_TOOL,
+                tool_runtime_constants.RESULT_MESSAGE_FIELD: tool_call.name,
+            }
         try:
             return handler(tool_call.arguments)
         except Exception as exc:
-            return {"ok": False, "error_code": "tool_error", "message": str(exc)}
+            return {
+                tool_runtime_constants.RESULT_OK_FIELD: False,
+                tool_runtime_constants.RESULT_ERROR_CODE_FIELD: tool_runtime_constants.ERROR_CODE_TOOL_ERROR,
+                tool_runtime_constants.RESULT_MESSAGE_FIELD: str(exc),
+            }
 
     def display_input(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        return self._select(arguments, DISPLAY_INPUT_FIELDS.get(tool_name, ()))
+        return self._select(arguments, tool_runtime_constants.DISPLAY_INPUT_FIELDS.get(tool_name, ()))
 
     def display_output(self, tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
-        return self._select(result, DISPLAY_OUTPUT_FIELDS.get(tool_name, ERROR_OUTPUT_FIELDS))
+        return self._select(
+            result,
+            tool_runtime_constants.DISPLAY_OUTPUT_FIELDS.get(tool_name, tool_runtime_constants.ERROR_OUTPUT_FIELDS),
+        )
 
     def _select(self, payload: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
         selected: dict[str, Any] = {}
@@ -91,211 +103,3 @@ class ToolDispatcher:
         else:
             next_target = target.setdefault(head, {}) if isinstance(target, dict) else {}
         self._copy_field(value, next_target, tail)
-
-
-DISPLAY_INPUT_FIELDS: dict[str, tuple[str, ...]] = {
-    "save_qa_card": ("question", "answer", "summary", "keywords", "category"),
-    "search_qa_cards": ("query", "limit", "category"),
-    "hybrid_search_qa_cards": ("query", "limit", "category"),
-    "read_qa_card": ("card_id",),
-    "update_qa_card": ("card_id", "question", "answer", "summary", "keywords", "category"),
-    "delete_qa_card": ("card_id",),
-    "list_recent_cards": ("limit", "category"),
-    "detect_duplicate_cards": ("scope", "card_id", "query", "category", "limit", "mode"),
-    "merge_qa_cards": ("card_ids", "question", "answer", "summary", "keywords", "category"),
-    "rebuild_qa_semantic_index": ("limit",),
-    "create_todo": ("title", "notes", "due_at"),
-    "list_todos": ("query", "status", "limit"),
-    "update_todo": ("todo_id", "title", "notes", "status", "due_at"),
-    "list_memory_index": ("limit",),
-    "read_memory": ("name",),
-}
-
-ERROR_OUTPUT_FIELDS = ("ok", "error_code", "message")
-
-DISPLAY_OUTPUT_FIELDS: dict[str, tuple[str, ...]] = {
-    "save_qa_card": ("ok", "card_id", "source_type", "created_at", "category", "error_code", "message"),
-    "search_qa_cards": (
-        "ok",
-        "cards.card_id",
-        "cards.question",
-        "cards.summary",
-        "cards.answer_snippet",
-        "cards.score",
-        "cards.source_type",
-        "cards.created_at",
-        "cards.category",
-        "error_code",
-        "message",
-    ),
-    "hybrid_search_qa_cards": (
-        "ok",
-        "cards.rank",
-        "cards.card_id",
-        "cards.question",
-        "cards.summary",
-        "cards.answer_snippet",
-        "cards.score",
-        "cards.final_score",
-        "cards.match_level",
-        "cards.matched_by",
-        "cards.keyword_score",
-        "cards.keyword_score_norm",
-        "cards.semantic_score",
-        "cards.source_type",
-        "cards.created_at",
-        "cards.category",
-        "warning",
-        "message",
-        "error_code",
-    ),
-    "read_qa_card": (
-        "ok",
-        "card.card_id",
-        "card.question",
-        "card.answer",
-        "card.summary",
-        "card.keywords",
-        "card.category",
-        "card.source_type",
-        "card.created_at",
-        "card.updated_at",
-        "error_code",
-        "message",
-    ),
-    "update_qa_card": (
-        "ok",
-        "card.card_id",
-        "card.question",
-        "card.answer",
-        "card.summary",
-        "card.keywords",
-        "card.category",
-        "card.source_type",
-        "card.created_at",
-        "card.updated_at",
-        "error_code",
-        "message",
-    ),
-    "delete_qa_card": (
-        "ok",
-        "deleted_card_id",
-        "error_code",
-        "message",
-    ),
-    "list_recent_cards": (
-        "ok",
-        "cards.card_id",
-        "cards.question",
-        "cards.summary",
-        "cards.keywords",
-        "cards.category",
-        "cards.source_type",
-        "cards.created_at",
-        "error_code",
-        "message",
-    ),
-    "detect_duplicate_cards": (
-        "ok",
-        "scope",
-        "checked_card_id",
-        "checked_count",
-        "candidates.card_id",
-        "candidates.question",
-        "candidates.summary",
-        "candidates.category",
-        "candidates.duplicate_score",
-        "candidates.duplicate_level",
-        "candidates.reason",
-        "duplicate_groups.card_ids",
-        "duplicate_groups.duplicate_score",
-        "duplicate_groups.duplicate_level",
-        "duplicate_groups.reason",
-        "duplicate_groups.cards.card_id",
-        "duplicate_groups.cards.question",
-        "duplicate_groups.cards.summary",
-        "duplicate_groups.cards.category",
-        "warning",
-        "error_code",
-        "message",
-    ),
-    "merge_qa_cards": (
-        "ok",
-        "new_card_id",
-        "deleted_card_ids",
-        "source_type",
-        "created_at",
-        "category",
-        "warning",
-        "error_code",
-        "message",
-    ),
-    "rebuild_qa_semantic_index": (
-        "ok",
-        "status",
-        "message",
-        "total",
-        "indexed",
-        "failed",
-        "failed_card_ids",
-        "error_code",
-        "message",
-    ),
-    "create_todo": (
-        "ok",
-        "todo.todo_id",
-        "todo.title",
-        "todo.notes",
-        "todo.status",
-        "todo.due_at",
-        "todo.created_at",
-        "todo.updated_at",
-        "error_code",
-        "message",
-    ),
-    "list_todos": (
-        "ok",
-        "todos.todo_id",
-        "todos.title",
-        "todos.notes",
-        "todos.status",
-        "todos.due_at",
-        "todos.created_at",
-        "todos.updated_at",
-        "error_code",
-        "message",
-    ),
-    "update_todo": (
-        "ok",
-        "todo.todo_id",
-        "todo.title",
-        "todo.notes",
-        "todo.status",
-        "todo.due_at",
-        "todo.created_at",
-        "todo.updated_at",
-        "error_code",
-        "message",
-    ),
-    "list_memory_index": (
-        "ok",
-        "entries.name",
-        "entries.type",
-        "entries.description",
-        "entries.path",
-        "error_code",
-        "message",
-    ),
-    "read_memory": (
-        "ok",
-        "memory.name",
-        "memory.type",
-        "memory.description",
-        "memory.path",
-        "memory.updated_at",
-        "memory.source_type",
-        "memory.content",
-        "error_code",
-        "message",
-    ),
-}

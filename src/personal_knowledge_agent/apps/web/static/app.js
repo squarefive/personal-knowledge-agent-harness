@@ -1,3 +1,5 @@
+const appConstants = window.PKA_CONSTANTS;
+
 const state = {
   authUser: null,
   loginCodeSent: false,
@@ -9,12 +11,16 @@ const state = {
   selectedCardId: null,
   approvalDialogs: new Map(),
   activeTypingController: null,
-  leftCollapsed: getStoredBoolean("left_pane_collapsed", window.matchMedia("(max-width: 1080px)").matches),
-  rightCollapsed: getStoredBoolean("right_pane_collapsed", window.matchMedia("(max-width: 760px)").matches),
+  leftCollapsed: getStoredBoolean(
+    appConstants.LEFT_PANE_COLLAPSED_KEY,
+    window.matchMedia(appConstants.DESKTOP_COLLAPSE_MEDIA_QUERY).matches,
+  ),
+  rightCollapsed: getStoredBoolean(
+    appConstants.RIGHT_PANE_COLLAPSED_KEY,
+    window.matchMedia(appConstants.MOBILE_MEDIA_QUERY).matches,
+  ),
 };
 
-const TYPING_INTERVAL_MS = 22;
-const TYPING_BURST_THRESHOLD = 80;
 const FRONTEND_TRACE_ID = `page_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 8)}`;
 const FRONTEND_START_MS = performance.now();
 
@@ -160,7 +166,7 @@ elements.chatForm.addEventListener("submit", async (event) => {
       duration_ms: elapsedSince(startedAt),
     });
   } catch (error) {
-    clearOpenApprovalDialogs("cancelled");
+    clearOpenApprovalDialogs(appConstants.APPROVAL_STATUS_CANCELLED);
     renderRunError(agentMessage, String(error));
     frontendError("chat.submit.error", {
       session_id: state.activeSessionId || "",
@@ -186,9 +192,9 @@ elements.renameSessionButton.addEventListener("click", async () => {
   const activeSession = state.sessions.find((session) => session.session_id === state.activeSessionId);
   const nextTitle = window.prompt("重命名会话", activeSession?.title || "");
   if (nextTitle === null) return;
-  const result = await getJson(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+  const result = await getJson(`${appConstants.API_SESSIONS_BASE_PATH}/${encodeURIComponent(state.activeSessionId)}`, {
+    method: appConstants.HTTP_METHOD_PATCH,
+    headers: { [appConstants.HEADER_CONTENT_TYPE]: appConstants.CONTENT_TYPE_JSON },
     body: JSON.stringify({ title: nextTitle }),
   });
   if (!result.ok) {
@@ -233,14 +239,14 @@ async function bootApp() {
   const startedAt = performance.now();
   frontendLog("boot.start");
   setAuthStatus("正在检查登录状态。", "muted");
-  const result = await getJson("/api/auth/me", {}, { allowAuthError: true });
+  const result = await getJson(appConstants.API_AUTH_ME_PATH, {}, { allowAuthError: true });
   if (result.ok) {
     await enterAuthenticatedApp(result.user);
     frontendLog("boot.done", { authenticated: true, duration_ms: elapsedSince(startedAt) });
     return;
   }
   const message =
-    result.error_code === "not_authenticated"
+    result.error_code === appConstants.ERROR_CODE_NOT_AUTHENTICATED
       ? ""
       : resultMessage(result, "认证服务暂时不可用。");
   showLogin(message, message ? "error" : "muted");
@@ -281,7 +287,7 @@ async function requestLoginCode() {
   }
   elements.requestCodeButton.disabled = true;
   setAuthStatus("正在发送验证码。", "muted");
-  const result = await postJson("/api/auth/request-code", { email }, { allowAuthError: true });
+  const result = await postJson(appConstants.API_AUTH_REQUEST_CODE_PATH, { email }, { allowAuthError: true });
   if (!result.ok) {
     elements.requestCodeButton.disabled = false;
     setLoginCodeSent(false);
@@ -316,7 +322,7 @@ async function verifyLoginCode() {
   }
   elements.authSubmitButton.disabled = true;
   setAuthStatus("正在登录。", "muted");
-  const result = await postJson("/api/auth/verify-code", { email, code }, { allowAuthError: true });
+  const result = await postJson(appConstants.API_AUTH_VERIFY_CODE_PATH, { email, code }, { allowAuthError: true });
   if (!result.ok) {
     elements.authSubmitButton.disabled = false;
     setAuthStatus(resultMessage(result, "验证码无效或已过期。"), "error");
@@ -342,10 +348,10 @@ async function logout() {
   frontendLog("auth.logout.start");
   elements.logoutButton.disabled = true;
   try {
-    await postJson("/api/auth/logout", {}, { allowAuthError: true });
+    await postJson(appConstants.API_AUTH_LOGOUT_PATH, {}, { allowAuthError: true });
   } finally {
     elements.logoutButton.disabled = false;
-    clearOpenApprovalDialogs("cancelled");
+    clearOpenApprovalDialogs(appConstants.APPROVAL_STATUS_CANCELLED);
     resetAuthenticatedState();
     showLogin("已退出登录。", "muted");
     frontendLog("auth.logout.done", { duration_ms: elapsedSince(startedAt) });
@@ -356,8 +362,8 @@ async function postJson(url, body, options = {}) {
   return getJson(
     url,
     {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: appConstants.HTTP_METHOD_POST,
+      headers: { [appConstants.HEADER_CONTENT_TYPE]: appConstants.CONTENT_TYPE_JSON },
       body: JSON.stringify(body || {}),
     },
     options,
@@ -365,11 +371,11 @@ async function postJson(url, body, options = {}) {
 }
 
 async function getJson(url, init = {}, options = {}) {
-  const method = (init.method || "GET").toUpperCase();
+  const method = (init.method || appConstants.HTTP_METHOD_GET).toUpperCase();
   const startedAt = performance.now();
   frontendLog("api.start", { method, url });
   try {
-    const response = await fetch(url, { credentials: "same-origin", ...init });
+    const response = await fetch(url, { credentials: appConstants.FETCH_CREDENTIALS_SAME_ORIGIN, ...init });
     frontendLog("api.response", {
       method,
       url,
@@ -389,7 +395,7 @@ async function getJson(url, init = {}, options = {}) {
     });
     if (!options.allowAuthError && isNotAuthenticated(result)) {
       showLogin("登录状态已失效，请重新登录。", "error");
-      throw new Error("not_authenticated");
+      throw new Error(appConstants.ERROR_CODE_NOT_AUTHENTICATED);
     }
     return result;
   } catch (error) {
@@ -404,21 +410,21 @@ async function getJson(url, init = {}, options = {}) {
 }
 
 function isNotAuthenticated(result) {
-  return result && result.ok === false && result.error_code === "not_authenticated";
+  return result && result.ok === false && result.error_code === appConstants.ERROR_CODE_NOT_AUTHENTICATED;
 }
 
 function resultMessage(result, fallback) {
   const messages = {
-    auth_not_configured: "认证服务暂时不可用。",
-    auth_request_error: "验证码发送失败，请稍后再试。",
-    auth_verify_error: "登录验证失败，请稍后再试。",
-    email_not_allowed: "该邮箱不在允许登录范围内。",
-    invalid_login_code: "验证码无效。",
-    login_code_expired: "验证码已过期，请重新发送。",
-    login_code_consumed: "验证码已使用，请重新发送。",
-    login_code_not_found: "请先发送验证码。",
-    too_many_attempts: "验证码尝试次数过多，请重新发送。",
-    user_not_found: "没有找到该邮箱对应的账号。",
+    [appConstants.ERROR_CODE_AUTH_NOT_CONFIGURED]: "认证服务暂时不可用。",
+    [appConstants.ERROR_CODE_AUTH_REQUEST_ERROR]: "验证码发送失败，请稍后再试。",
+    [appConstants.ERROR_CODE_AUTH_VERIFY_ERROR]: "登录验证失败，请稍后再试。",
+    [appConstants.ERROR_CODE_EMAIL_NOT_ALLOWED]: "该邮箱不在允许登录范围内。",
+    [appConstants.ERROR_CODE_INVALID_LOGIN_CODE]: "验证码无效。",
+    [appConstants.ERROR_CODE_LOGIN_CODE_EXPIRED]: "验证码已过期，请重新发送。",
+    [appConstants.ERROR_CODE_LOGIN_CODE_CONSUMED]: "验证码已使用，请重新发送。",
+    [appConstants.ERROR_CODE_LOGIN_CODE_NOT_FOUND]: "请先发送验证码。",
+    [appConstants.ERROR_CODE_TOO_MANY_ATTEMPTS]: "验证码尝试次数过多，请重新发送。",
+    [appConstants.ERROR_CODE_USER_NOT_FOUND]: "没有找到该邮箱对应的账号。",
   };
   return messages[result?.error_code] || result?.message || fallback;
 }
@@ -441,7 +447,7 @@ function resetAuthenticatedState() {
   state.cards = [];
   state.activeSessionId = null;
   state.selectedCardId = null;
-  window.localStorage.removeItem("active_session_id");
+  window.localStorage.removeItem(appConstants.ACTIVE_SESSION_ID_KEY);
   renderSessions([]);
   renderCards([]);
   resetMessages("登录后开始提问或录入 Q&A。");
@@ -461,7 +467,7 @@ function setAuthStatus(message, variant = "muted") {
   elements.authStatus.dataset.variant = variant;
 }
 
-function startResendTimer(seconds = 60) {
+function startResendTimer(seconds = appConstants.RESEND_TIMER_SECONDS) {
   stopResendTimer();
   let remaining = seconds;
   elements.requestCodeButton.disabled = true;
@@ -476,7 +482,7 @@ function startResendTimer(seconds = 60) {
     remaining -= 1;
   };
   tick();
-  state.resendTimerId = window.setInterval(tick, 1000);
+  state.resendTimerId = window.setInterval(tick, appConstants.TIMER_INTERVAL_MS);
 }
 
 function stopResendTimer() {
@@ -490,7 +496,7 @@ async function initializeApp() {
   const startedAt = performance.now();
   frontendLog("app.initialize.start");
   await loadSessions();
-  const savedSessionId = window.localStorage.getItem("active_session_id");
+  const savedSessionId = window.localStorage.getItem(appConstants.ACTIVE_SESSION_ID_KEY);
   const savedSession = state.sessions.find((session) => session.session_id === savedSessionId);
   if (savedSession) {
     await activateSession(savedSession.session_id);
@@ -522,7 +528,7 @@ async function initializeApp() {
 async function createSession() {
   const startedAt = performance.now();
   frontendLog("session.create.start");
-  const result = await postJson("/api/sessions");
+  const result = await postJson(appConstants.API_SESSIONS_BASE_PATH);
   if (!result.ok) {
     throw new Error(result.message || "创建会话失败");
   }
@@ -537,7 +543,7 @@ async function createSession() {
 async function loadSessions() {
   const startedAt = performance.now();
   frontendLog("sessions.load.start");
-  const result = await getJson("/api/sessions");
+  const result = await getJson(appConstants.API_SESSIONS_BASE_PATH);
   if (!result.ok) {
     elements.sessionStatus.textContent = result.message || "读取失败";
     renderSessions([]);
@@ -563,7 +569,7 @@ async function activateSession(sessionId) {
   frontendLog("session.activate.start", { session_id: sessionId });
   stopActiveTyping();
   state.activeSessionId = sessionId;
-  window.localStorage.setItem("active_session_id", sessionId);
+  window.localStorage.setItem(appConstants.ACTIVE_SESSION_ID_KEY, sessionId);
   renderSessions(state.sessions);
   renderActiveSessionTitle();
   renderContextForSession(sessionId);
@@ -581,7 +587,7 @@ async function activateSession(sessionId) {
 async function loadSessionMessages(sessionId) {
   const startedAt = performance.now();
   frontendLog("session.messages.load.start", { session_id: sessionId });
-  const result = await getJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+  const result = await getJson(`${appConstants.API_SESSIONS_BASE_PATH}/${encodeURIComponent(sessionId)}/messages`);
   if (!result.ok) {
     resetMessages(result.message || "读取会话历史失败。");
     frontendLog("session.messages.load.done", {
@@ -677,11 +683,11 @@ function renderHistoryMessages(messages) {
     return;
   }
   for (const message of messages) {
-    if (message.role === "user") {
+    if (message.role === appConstants.MESSAGE_ROLE_USER) {
       appendMessage("user", "你", message.content || "", { scroll: false });
       continue;
     }
-    if (message.role === "assistant_run") {
+    if (message.role === appConstants.MESSAGE_ROLE_ASSISTANT_RUN) {
       appendHistoryRunMessage(message);
       continue;
     }
@@ -775,10 +781,10 @@ async function streamChat(message, agentMessage) {
   agentMessage._streamStats = streamStats;
   frontendLog("chat.stream.start", { session_id: state.activeSessionId || "" });
   try {
-    const response = await fetch("/api/chat/stream", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+    const response = await fetch(appConstants.API_CHAT_STREAM_PATH, {
+      method: appConstants.HTTP_METHOD_POST,
+      credentials: appConstants.FETCH_CREDENTIALS_SAME_ORIGIN,
+      headers: { [appConstants.HEADER_CONTENT_TYPE]: appConstants.CONTENT_TYPE_JSON },
       body: JSON.stringify({ session_id: state.activeSessionId, message }),
     });
     frontendLog("chat.stream.open", {
@@ -802,17 +808,17 @@ async function streamChat(message, agentMessage) {
       for (const rawEvent of events) {
         const dataLine = rawEvent
           .split("\n")
-          .find((line) => line.startsWith("data:"));
+          .find((line) => line.startsWith(appConstants.SSE_DATA_PREFIX));
         if (!dataLine) continue;
-        renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+        renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(appConstants.SSE_DATA_PREFIX.length).trim()));
       }
     }
     if (buffer.trim()) {
       const dataLine = buffer
         .split("\n")
-        .find((line) => line.startsWith("data:"));
+        .find((line) => line.startsWith(appConstants.SSE_DATA_PREFIX));
       if (dataLine) {
-        renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(5).trim()));
+        renderAgentEvent(agentMessage, JSON.parse(dataLine.slice(appConstants.SSE_DATA_PREFIX.length).trim()));
       }
     }
     if (agentMessage._typingController) {
@@ -839,48 +845,48 @@ function renderAgentEvent(message, event) {
   recordStreamEvent(message, event);
   const shouldStickToBottom = isNearMessageBottom();
   switch (event.event_type) {
-    case "user_input_received":
+    case appConstants.EVENT_USER_INPUT_RECEIVED:
       addStep(message, "收到输入");
       break;
-    case "llm_call_started":
+    case appConstants.EVENT_LLM_CALL_STARTED:
       addStep(message, "调用模型");
       break;
-    case "llm_call_finished":
+    case appConstants.EVENT_LLM_CALL_FINISHED:
       finishLlmTurn(message, event);
       break;
-    case "prompt_usage_updated":
+    case appConstants.EVENT_PROMPT_USAGE_UPDATED:
       updateContextStatus(event.prompt_usage_ratio);
       rememberActiveSessionContext(event.prompt_usage_ratio);
       break;
-    case "runtime_context_compaction_started":
+    case appConstants.EVENT_RUNTIME_CONTEXT_COMPACTION_STARTED:
       addStep(message, contextCompactionStartText(event));
       break;
-    case "runtime_context_compaction_finished":
+    case appConstants.EVENT_RUNTIME_CONTEXT_COMPACTION_FINISHED:
       addStep(message, contextCompactionFinishText(event));
       break;
-    case "tool_call_started":
+    case appConstants.EVENT_TOOL_CALL_STARTED:
       addToolStep(message, event);
       break;
-    case "tool_call_finished":
+    case appConstants.EVENT_TOOL_CALL_FINISHED:
       addStep(message, summarizeToolResult(event));
       break;
-    case "permission_requested":
+    case appConstants.EVENT_PERMISSION_REQUESTED:
       showApprovalDialog(message, event);
       break;
-    case "permission_resolved":
+    case appConstants.EVENT_PERMISSION_RESOLVED:
       resolveApprovalDialog(event);
       break;
-    case "evidence_checked":
+    case appConstants.EVENT_EVIDENCE_CHECKED:
       addStep(message, event.source_count ? `已核对 ${event.source_count} 条来源` : "未使用知识库来源");
       break;
-    case "answer_delta":
+    case appConstants.EVENT_ANSWER_DELTA:
       appendAnswerDelta(message, event.turn ?? 0, event.text || "");
       break;
-    case "final_answer_generated":
+    case appConstants.EVENT_FINAL_ANSWER_GENERATED:
       finishAnswer(message, event.answer || "");
       break;
-    case "error":
-      if (event.error_code === "not_authenticated") {
+    case appConstants.EVENT_ERROR:
+      if (event.error_code === appConstants.ERROR_CODE_NOT_AUTHENTICATED) {
         renderRunError(message, event.message || "登录状态已失效。");
         showLogin("登录状态已失效，请重新登录。", "error");
         break;
@@ -913,11 +919,14 @@ function updateContextStatus(promptUsageRatio) {
     }
     return;
   }
-  const percentage = Math.max(0, Math.round(Math.min(1, ratio) * 100));
+  const percentage = Math.max(
+    appConstants.MIN_CONTEXT_RATIO,
+    Math.round(Math.min(appConstants.MAX_CONTEXT_RATIO, ratio) * appConstants.PERCENT_MULTIPLIER),
+  );
   elements.contextStatus.textContent = `Context ${percentage}%`;
   const fill = document.querySelector(".context-fill");
   if (fill) {
-    fill.style.width = `${Math.min(100, percentage)}%`;
+    fill.style.width = `${Math.min(appConstants.PERCENT_MULTIPLIER, percentage)}%`;
   }
 }
 
@@ -928,7 +937,9 @@ function renderContextForSession(sessionId) {
 
 function rememberActiveSessionContext(promptUsageRatio) {
   const ratio = Number(promptUsageRatio);
-  const normalizedRatio = Number.isFinite(ratio) ? Math.max(0, Math.min(1, ratio)) : null;
+  const normalizedRatio = Number.isFinite(ratio)
+    ? Math.max(appConstants.MIN_CONTEXT_RATIO, Math.min(appConstants.MAX_CONTEXT_RATIO, ratio))
+    : null;
   state.sessions = state.sessions.map((session) =>
     session.session_id === state.activeSessionId
       ? { ...session, last_prompt_usage_ratio: normalizedRatio }
@@ -982,7 +993,10 @@ function createTypingController(node) {
     }
 
     const shouldStickToBottom = isNearMessageBottom();
-    const take = queue.length > TYPING_BURST_THRESHOLD ? 3 : 1;
+    const take =
+      queue.length > appConstants.TYPING_BURST_THRESHOLD
+        ? appConstants.TYPING_BURST_TAKE
+        : appConstants.TYPING_SINGLE_TAKE;
     visibleText += queue.slice(0, take);
     queue = queue.slice(take);
     node.textContent = visibleText;
@@ -990,7 +1004,7 @@ function createTypingController(node) {
     if (shouldStickToBottom) {
       scrollMessagesToBottom();
     }
-    timerId = window.setTimeout(tick, TYPING_INTERVAL_MS);
+    timerId = window.setTimeout(tick, appConstants.TYPING_INTERVAL_MS);
   };
 
   const start = () => {
@@ -1060,14 +1074,14 @@ function stopActiveTyping() {
 }
 
 function contextCompactionStartText(event) {
-  if (event.reason === "context_length_exceeded") {
+  if (event.reason === appConstants.RUNTIME_COMPACTION_REASON_CONTEXT_LENGTH_EXCEEDED) {
     return "上下文超限，正在压缩上下文";
   }
   return "正在压缩上下文";
 }
 
 function contextCompactionFinishText(event) {
-  if (event.reason === "context_length_exceeded") {
+  if (event.reason === appConstants.RUNTIME_COMPACTION_REASON_CONTEXT_LENGTH_EXCEEDED) {
     return "上下文已压缩，正在重试";
   }
   return "上下文已压缩";
@@ -1224,7 +1238,10 @@ function showApprovalDialog(message, event) {
 
   const status = document.createElement("span");
   status.className = "approval-status";
-  status.textContent = `${Math.round(Number(event.timeout_seconds || 0) / 60) || 5} 分钟内确认`;
+  status.textContent = `${
+    Math.round(Number(event.timeout_seconds || 0) / appConstants.SECONDS_PER_MINUTE) ||
+    appConstants.DEFAULT_APPROVAL_TIMEOUT_MINUTES
+  } 分钟内确认`;
 
   heading.append(titleWrap, status);
 
@@ -1254,13 +1271,13 @@ function showApprovalDialog(message, event) {
   approveButton.type = "button";
   approveButton.className = "approval-button approval-approve";
   approveButton.textContent = "允许执行";
-  approveButton.addEventListener("click", () => submitApproval(dialog, "approve"));
+  approveButton.addEventListener("click", () => submitApproval(dialog, appConstants.APPROVAL_DECISION_APPROVE));
 
   const denyButton = document.createElement("button");
   denyButton.type = "button";
   denyButton.className = "approval-button approval-deny";
   denyButton.textContent = "拒绝";
-  denyButton.addEventListener("click", () => submitApproval(dialog, "deny"));
+  denyButton.addEventListener("click", () => submitApproval(dialog, appConstants.APPROVAL_DECISION_DENY));
 
   actions.append(approveButton, denyButton);
   dialog.append(heading, description, body, risk, actions);
@@ -1308,11 +1325,16 @@ async function submitApproval(dialog, decision) {
   if (!approvalId) return;
   const startedAt = performance.now();
   frontendLog("approval.submit.start", { approval_id: approvalId, decision });
-  setApprovalDialogState(dialog, decision === "approve" ? "submitting-approve" : "submitting-deny");
+  setApprovalDialogState(
+    dialog,
+    decision === appConstants.APPROVAL_DECISION_APPROVE
+      ? appConstants.APPROVAL_STATUS_SUBMITTING_APPROVE
+      : appConstants.APPROVAL_STATUS_SUBMITTING_DENY,
+  );
   try {
-    const result = await postJson(`/api/approvals/${encodeURIComponent(approvalId)}`, { decision });
+    const result = await postJson(`${appConstants.API_APPROVALS_BASE_PATH}/${encodeURIComponent(approvalId)}`, { decision });
     if (!result.ok) {
-      setApprovalDialogState(dialog, "submit-error", result.message || "确认提交失败");
+      setApprovalDialogState(dialog, appConstants.APPROVAL_STATUS_SUBMIT_ERROR, result.message || "确认提交失败");
       frontendLog("approval.submit.done", {
         ok: false,
         approval_id: approvalId,
@@ -1329,7 +1351,7 @@ async function submitApproval(dialog, decision) {
       duration_ms: elapsedSince(startedAt),
     });
   } catch (error) {
-    setApprovalDialogState(dialog, "submit-error", String(error));
+    setApprovalDialogState(dialog, appConstants.APPROVAL_STATUS_SUBMIT_ERROR, String(error));
     frontendError("approval.submit.error", {
       approval_id: approvalId,
       decision,
@@ -1346,7 +1368,7 @@ function resolveApprovalDialog(event) {
   });
   const record = state.approvalDialogs.get(event.approval_id);
   if (!record) return;
-  const status = event.status || "denied";
+  const status = event.status || appConstants.APPROVAL_STATUS_FALLBACK;
   setApprovalDialogState(record.dialog, status);
   updateApprovalStatusStep(record.statusStep, approvalResultText(status), status);
   state.approvalDialogs.delete(event.approval_id);
@@ -1376,33 +1398,33 @@ function updateApprovalStatusStep(step, text, status) {
 }
 
 function approvalResultText(status) {
-  if (status === "approved") return "已允许高风险操作，继续执行";
-  if (status === "expired") return "确认已超时，操作未执行";
-  if (status === "cancelled") return "连接已断开，操作未执行";
+  if (status === appConstants.APPROVAL_STATUS_APPROVED) return "已允许高风险操作，继续执行";
+  if (status === appConstants.APPROVAL_STATUS_EXPIRED) return "确认已超时，操作未执行";
+  if (status === appConstants.APPROVAL_STATUS_CANCELLED) return "连接已断开，操作未执行";
   return "已拒绝高风险操作，操作未执行";
 }
 
 function setApprovalDialogState(dialog, status, message = "") {
   const statusNode = dialog.querySelector(".approval-status");
   const buttons = dialog.querySelectorAll(".approval-button");
-  const disableButtons = !["pending", "submit-error"].includes(status);
+  const disableButtons = ![appConstants.APPROVAL_STATUS_PENDING, appConstants.APPROVAL_STATUS_SUBMIT_ERROR].includes(status);
   for (const button of buttons) {
     button.disabled = disableButtons;
   }
   dialog.classList.remove("is-pending", "is-approved", "is-denied", "is-expired", "is-cancelled", "is-error");
-  if (status === "approved" || status === "submitting-approve") {
+  if (status === appConstants.APPROVAL_STATUS_APPROVED || status === appConstants.APPROVAL_STATUS_SUBMITTING_APPROVE) {
     dialog.classList.add("is-approved");
-    statusNode.textContent = status === "approved" ? "已允许，继续执行" : "正在提交允许";
-  } else if (status === "denied" || status === "submitting-deny") {
+    statusNode.textContent = status === appConstants.APPROVAL_STATUS_APPROVED ? "已允许，继续执行" : "正在提交允许";
+  } else if (status === appConstants.APPROVAL_STATUS_DENIED || status === appConstants.APPROVAL_STATUS_SUBMITTING_DENY) {
     dialog.classList.add("is-denied");
-    statusNode.textContent = status === "denied" ? "已拒绝，操作未执行" : "正在提交拒绝";
-  } else if (status === "expired") {
+    statusNode.textContent = status === appConstants.APPROVAL_STATUS_DENIED ? "已拒绝，操作未执行" : "正在提交拒绝";
+  } else if (status === appConstants.APPROVAL_STATUS_EXPIRED) {
     dialog.classList.add("is-expired");
     statusNode.textContent = "已超时，操作未执行";
-  } else if (status === "cancelled") {
+  } else if (status === appConstants.APPROVAL_STATUS_CANCELLED) {
     dialog.classList.add("is-cancelled");
     statusNode.textContent = "连接已断开，操作未执行";
-  } else if (status === "submit-error") {
+  } else if (status === appConstants.APPROVAL_STATUS_SUBMIT_ERROR) {
     dialog.classList.add("is-error");
     statusNode.textContent = message || "确认提交失败";
     for (const button of buttons) {
@@ -1416,24 +1438,24 @@ function setApprovalDialogState(dialog, status, message = "") {
 
 function toolDisplayName(toolName) {
   const labels = {
-    hybrid_search_qa_cards: "搜索知识库",
-    search_qa_cards: "搜索知识库",
-    save_qa_card: "保存知识卡片",
-    read_qa_card: "读取知识卡片",
-    list_recent_cards: "读取最近卡片",
-    update_qa_card: "更新知识卡片",
-    delete_qa_card: "删除知识卡片",
-    merge_qa_cards: "合并知识卡片",
-    create_todo: "保存待办",
-    list_todos: "查询待办",
-    update_todo: "更新待办",
+    [appConstants.TOOL_NAME_HYBRID_SEARCH_QA_CARDS]: "搜索知识库",
+    [appConstants.TOOL_NAME_SEARCH_QA_CARDS]: "搜索知识库",
+    [appConstants.TOOL_NAME_SAVE_QA_CARD]: "保存知识卡片",
+    [appConstants.TOOL_NAME_READ_QA_CARD]: "读取知识卡片",
+    [appConstants.TOOL_NAME_LIST_RECENT_CARDS]: "读取最近卡片",
+    [appConstants.TOOL_NAME_UPDATE_QA_CARD]: "更新知识卡片",
+    [appConstants.TOOL_NAME_DELETE_QA_CARD]: "删除知识卡片",
+    [appConstants.TOOL_NAME_MERGE_QA_CARDS]: "合并知识卡片",
+    [appConstants.TOOL_NAME_CREATE_TODO]: "保存待办",
+    [appConstants.TOOL_NAME_LIST_TODOS]: "查询待办",
+    [appConstants.TOOL_NAME_UPDATE_TODO]: "更新待办",
   };
   return labels[toolName] || "调用工具";
 }
 
 function summarizeToolResult(event) {
   const output = event.output || {};
-  if (output.error_code === "permission_denied") {
+  if (output.error_code === appConstants.TOOL_OUTPUT_ERROR_CODE_PERMISSION_DENIED) {
     return "操作未执行";
   }
   if (output.ok === false) {
@@ -1446,7 +1468,7 @@ function summarizeToolResult(event) {
     return output.todos.length ? `找到 ${output.todos.length} 条待办` : "未找到待办";
   }
   if (output.todo && output.todo.todo_id) {
-    return output.todo.status === "open" ? "待办已保存" : "待办已更新";
+    return output.todo.status === appConstants.TOOL_OUTPUT_TODO_STATUS_OPEN ? "待办已保存" : "待办已更新";
   }
   if (output.card_id) {
     return "知识卡片已保存";
@@ -1593,7 +1615,11 @@ async function loadRecentCards() {
   frontendLog("cards.recent.load.start");
   elements.cardsTitle.textContent = "保存记录";
   setCardsLoading(true);
-  const result = await getJson("/api/cards/recent?limit=10").finally(() => setCardsLoading(false));
+  const result = await getJson(
+    `${appConstants.API_CARDS_RECENT_PATH}?${appConstants.QUERY_PARAM_LIMIT}=${appConstants.CARD_QUERY_LIMIT}`,
+  ).finally(() =>
+    setCardsLoading(false),
+  );
   if (!result.ok) {
     renderCards([], result.message || "读取最近卡片失败。");
     frontendLog("cards.recent.load.done", {
@@ -1616,7 +1642,9 @@ async function searchCards(query) {
   frontendLog("cards.search.start");
   elements.cardsTitle.textContent = "检索结果";
   setCardsLoading(true);
-  const result = await getJson(`/api/cards/search?q=${encodeURIComponent(query)}&limit=10`).finally(() =>
+  const result = await getJson(
+    `${appConstants.API_CARDS_SEARCH_PATH}?${appConstants.QUERY_PARAM_QUERY}=${encodeURIComponent(query)}&${appConstants.QUERY_PARAM_LIMIT}=${appConstants.CARD_QUERY_LIMIT}`,
+  ).finally(() =>
     setCardsLoading(false),
   );
   if (!result.ok) {
@@ -1707,7 +1735,7 @@ async function loadCardDetail(cardId) {
   state.selectedCardId = cardId;
   openCardDetail();
   markSelectedCard(cardId);
-  const result = await getJson(`/api/cards/${encodeURIComponent(cardId)}`);
+  const result = await getJson(`${appConstants.API_CARDS_BASE_PATH}/${encodeURIComponent(cardId)}`);
   if (!result.ok) {
     elements.cardDetail.className = "card-detail empty-state";
     elements.cardDetail.textContent = result.message || "读取卡片详情失败。";
@@ -1791,7 +1819,7 @@ function renderCardDetail(card) {
   sourceList.className = "source-list";
   sourceList.append(
     sourceRow("Q&A 卡片", card.card_id || "", "100%"),
-    sourceRow(card.source_type || "manual_qa", "PostgreSQL", "事实源")
+    sourceRow(card.source_type || appConstants.DEFAULT_QA_SOURCE_TYPE, "PostgreSQL", "事实源")
   );
   const sourceLink = document.createElement("button");
   sourceLink.className = "source-link";
@@ -1824,23 +1852,25 @@ function formatRelativeSessionTime(session) {
   if (Number.isNaN(date.getTime())) return "";
 
   const diffMs = Math.max(0, Date.now() - date.getTime());
-  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffMinutes = Math.floor(diffMs / appConstants.MILLISECONDS_PER_MINUTE);
 
-  if (diffMinutes < 1) return "刚刚";
-  if (diffMinutes < 60) return `${diffMinutes} 分`;
+  if (diffMinutes < appConstants.JUST_NOW_MINUTES_THRESHOLD) return "刚刚";
+  if (diffMinutes < appConstants.MINUTES_PER_HOUR) return `${diffMinutes} 分`;
 
-  const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours} 时`;
+  const diffHours = Math.floor(diffMinutes / appConstants.MINUTES_PER_HOUR);
+  if (diffHours < appConstants.HOURS_PER_DAY) return `${diffHours} 时`;
 
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays} 天`;
+  const diffDays = Math.floor(diffHours / appConstants.HOURS_PER_DAY);
+  if (diffDays < appConstants.DAYS_PER_WEEK) return `${diffDays} 天`;
 
-  const diffWeeks = Math.floor(diffDays / 7);
-  if (diffWeeks < 5) return `${diffWeeks} 周`;
+  const diffWeeks = Math.floor(diffDays / appConstants.DAYS_PER_WEEK);
+  if (diffWeeks < appConstants.WEEKS_PER_MONTH) return `${diffWeeks} 周`;
 
-  if (diffDays < 365) return `${Math.min(11, Math.floor(diffDays / 30))} 月`;
+  if (diffDays < appConstants.DAYS_PER_YEAR) {
+    return `${Math.min(appConstants.DISPLAY_MONTHS_PER_YEAR, Math.floor(diffDays / appConstants.DAYS_PER_MONTH))} 月`;
+  }
 
-  return `${Math.floor(diffDays / 365)} 年`;
+  return `${Math.floor(diffDays / appConstants.DAYS_PER_YEAR)} 年`;
 }
 
 function getStoredBoolean(key, fallback) {
@@ -1853,18 +1883,18 @@ function getStoredBoolean(key, fallback) {
 function setPaneCollapsed(side, collapsed) {
   if (side === "left") {
     state.leftCollapsed = collapsed;
-    if (!collapsed && window.matchMedia("(max-width: 760px)").matches) {
+    if (!collapsed && window.matchMedia(appConstants.MOBILE_MEDIA_QUERY).matches) {
       state.rightCollapsed = true;
-      window.localStorage.setItem("right_pane_collapsed", String(state.rightCollapsed));
+      window.localStorage.setItem(appConstants.RIGHT_PANE_COLLAPSED_KEY, String(state.rightCollapsed));
     }
-    window.localStorage.setItem("left_pane_collapsed", String(collapsed));
+    window.localStorage.setItem(appConstants.LEFT_PANE_COLLAPSED_KEY, String(collapsed));
   } else {
     state.rightCollapsed = collapsed;
-    if (!collapsed && window.matchMedia("(max-width: 760px)").matches) {
+    if (!collapsed && window.matchMedia(appConstants.MOBILE_MEDIA_QUERY).matches) {
       state.leftCollapsed = true;
-      window.localStorage.setItem("left_pane_collapsed", String(state.leftCollapsed));
+      window.localStorage.setItem(appConstants.LEFT_PANE_COLLAPSED_KEY, String(state.leftCollapsed));
     }
-    window.localStorage.setItem("right_pane_collapsed", String(collapsed));
+    window.localStorage.setItem(appConstants.RIGHT_PANE_COLLAPSED_KEY, String(collapsed));
   }
   applyPaneState();
   frontendLog("ui.pane_collapsed", {
@@ -1912,13 +1942,13 @@ function scrollMessagesToBottom() {
   elements.messages.scrollTop = elements.messages.scrollHeight;
 }
 
-function isNearMessageBottom(threshold = 80) {
+function isNearMessageBottom(threshold = appConstants.NEAR_MESSAGE_BOTTOM_THRESHOLD) {
   const distance = elements.messages.scrollHeight - elements.messages.clientHeight - elements.messages.scrollTop;
   return distance <= threshold;
 }
 
 function isMobileViewport() {
-  return window.matchMedia("(max-width: 760px)").matches;
+  return window.matchMedia(appConstants.MOBILE_MEDIA_QUERY).matches;
 }
 
 function addDetail(list, label, value, valueClass = "") {
@@ -2052,14 +2082,14 @@ function recordStreamEvent(message, event) {
       duration_ms: elapsedSince(stats.startedAt),
     });
   }
-  if (event.event_type === "answer_delta" && !stats.firstDelta) {
+  if (event.event_type === appConstants.EVENT_ANSWER_DELTA && !stats.firstDelta) {
     stats.firstDelta = true;
     frontendLog("chat.stream.first_delta", {
       session_id: state.activeSessionId || "",
       duration_ms: elapsedSince(stats.startedAt),
     });
   }
-  if (event.event_type === "final_answer_generated" && !stats.finalAnswer) {
+  if (event.event_type === appConstants.EVENT_FINAL_ANSWER_GENERATED && !stats.finalAnswer) {
     stats.finalAnswer = true;
     frontendLog("chat.stream.final_answer", {
       session_id: state.activeSessionId || "",

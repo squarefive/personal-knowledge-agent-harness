@@ -4,6 +4,8 @@ from typing import Protocol
 
 import httpx
 
+from .constants import LLMClientConstants as llm_constants
+
 
 class QwenEmbeddingClientError(RuntimeError):
     pass
@@ -35,7 +37,7 @@ class QwenEmbeddingClient:
 
     def embed_text(self, text: str) -> list[float]:
         if not self.api_key:
-            raise QwenEmbeddingClientError("DASHSCOPE_API_KEY is not configured")
+            raise QwenEmbeddingClientError(f"{llm_constants.DASHSCOPE_API_KEY_ENV} is not configured")
         response = self._client().post(
             f"{self.base_url}/embeddings",
             headers={"Authorization": f"Bearer {self.api_key}"},
@@ -63,5 +65,5 @@ class QwenEmbeddingClient:
 
     def _client(self) -> HttpClient:
         if self._http_client is None:
-            self._http_client = httpx.Client(timeout=30.0)
+            self._http_client = httpx.Client(timeout=llm_constants.DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS)
         return self._http_client

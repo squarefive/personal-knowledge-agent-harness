@@ -25,6 +25,7 @@ from .agent_llm_message_formatter import format_assistant_tool_call_message, for
 from ..agent_context.agent_turn_context_loader import TurnContextLoader
 from .agent_runtime_message_recorder import RuntimeMessageRecorder
 from .agent_tool_call_runner import AgentToolCallRunner
+from .constants import AgentRuntimeConstants as runtime_constants
 
 
 class AgentLoopRunner:
@@ -41,12 +42,12 @@ class AgentLoopRunner:
         context_compactor: ToolResultCompactor | None = None,
         runtime_context_compactor: RuntimeContextCompactor | None = None,
         session_summary: str | None = None,
-        context_window_tokens: int = 1_000_000,
-        runtime_compact_usage_threshold: float = 0.75,
+        context_window_tokens: int = runtime_constants.DEFAULT_CONTEXT_WINDOW_TOKENS,
+        runtime_compact_usage_threshold: float = runtime_constants.RUNTIME_COMPACT_USAGE_THRESHOLD,
         memory_extractor: AgentMemoryCandidateExtractor | None = None,
         permission_checker=None,
         approval_callback=None,
-        max_turns: int = 8,
+        max_turns: int = runtime_constants.DEFAULT_MAX_TURNS,
         event_sink: EventSink | None = None,
     ):
         self.llm = llm
@@ -92,7 +93,10 @@ class AgentLoopRunner:
     def run(self, user_input: str) -> str:
         run_id = new_run_id()
         turn_start_index = len(self.messages)
-        user_message = {"role": "user", "content": user_input}
+        user_message = {
+            runtime_constants.MESSAGE_ROLE_FIELD: runtime_constants.MESSAGE_ROLE_USER,
+            runtime_constants.MESSAGE_CONTENT_FIELD: user_input,
+        }
         self.message_recorder.append(user_message)
         self.event_emitter.emit(run_id, "user_input_received", user_input=user_input)
         if self._should_compact_before_llm_call():
@@ -100,7 +104,7 @@ class AgentLoopRunner:
             turn_start_index = 0
         turn_context = self.turn_context_loader.load(
             user_input=user_input,
-            recent_messages=self.messages[-12:],
+            recent_messages=self.messages[-runtime_constants.RECENT_MESSAGES_COUNT:],
         )
         system_prompt = build_system_prompt(
             memory_index=turn_context.memory_index,
@@ -133,7 +137,7 @@ class AgentLoopRunner:
                     answer=response.text or "",
                     turn_messages=self.messages[turn_start_index:],
                     memory_index=turn_context.memory_index,
-                    recent_messages=self.messages[-12:],
+                    recent_messages=self.messages[-runtime_constants.RECENT_MESSAGES_COUNT:],
                 )
 
             self.message_recorder.append(format_assistant_tool_call_message(response))
@@ -151,7 +155,7 @@ class AgentLoopRunner:
             run_id=run_id,
             user_input=user_input,
             memory_index=turn_context.memory_index,
-            recent_messages=self.messages[-12:],
+            recent_messages=self.messages[-runtime_constants.RECENT_MESSAGES_COUNT:],
         )
 
     def _run_llm_with_context_limit_retry(
@@ -177,7 +181,10 @@ class AgentLoopRunner:
         except LLMContextLengthExceeded:
             if self.runtime_context_compactor is None:
                 raise
-            self._apply_runtime_compaction(run_id=run_id, reason="context_length_exceeded")
+            self._apply_runtime_compaction(
+                run_id=run_id,
+                reason=runtime_constants.RUNTIME_COMPACTION_REASON_CONTEXT_LENGTH_EXCEEDED,
+            )
             retry_system_prompt = build_system_prompt(
                 memory_index=turn_context.memory_index,
                 selected_memories=turn_context.selected_memories,

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import re
 from datetime import UTC, datetime
 
-DEFAULT_SESSION_TITLE = "新会话"
-SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+from .constants import ConversationSessionConstants as session_constants
 
 
 def utc_now() -> str:
@@ -12,7 +10,7 @@ def utc_now() -> str:
 
 
 def validate_session_id(session_id: str) -> str:
-    if not SESSION_ID_PATTERN.fullmatch(session_id):
+    if not session_constants.SESSION_ID_PATTERN.fullmatch(session_id):
         raise ValueError("session_id must contain only letters, numbers, underscores, and hyphens")
     return session_id
 
@@ -51,7 +49,12 @@ def summary_input(
 ) -> list[dict]:
     if existing_summary is None:
         return messages
-    return [{"role": "user", "content": f"[Existing session summary]\n\n{existing_summary}"}] + messages
+    return [
+        {
+            session_constants.MESSAGE_ROLE_FIELD: session_constants.MESSAGE_ROLE_USER,
+            session_constants.MESSAGE_CONTENT_FIELD: f"[Existing session summary]\n\n{existing_summary}",
+        }
+    ] + messages
 
 
 def summarize_tool_result(tool_name: str, result_text: str) -> str:

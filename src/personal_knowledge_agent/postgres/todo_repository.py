@@ -6,9 +6,7 @@ from datetime import datetime
 from typing import Protocol
 
 from personal_knowledge_agent.todo_data_access.todo_models import TodoItem
-
-TODO_STATUSES = {"open", "done", "canceled"}
-TODO_QUERY_STATUSES = {*TODO_STATUSES, "all"}
+from .constants import PostgresConstants as postgres_constants
 
 
 class PostgresConnection(Protocol):
@@ -53,7 +51,7 @@ class PostgresTodoRepository:
               created_at,
               updated_at
             """,
-            (todo_id, self._user_id, clean_title, clean_notes, "open", clean_due_at),
+                (todo_id, self._user_id, clean_title, clean_notes, postgres_constants.TODO_STATUS_OPEN, clean_due_at),
         )
         row = _fetchone(cursor)
         self._commit()
@@ -62,7 +60,7 @@ class PostgresTodoRepository:
                 id=todo_id,
                 title=clean_title,
                 notes=clean_notes,
-                status="open",
+                status=postgres_constants.TODO_STATUS_OPEN,
                 due_at=clean_due_at,
                 created_at="",
                 updated_at="",
@@ -95,16 +93,16 @@ class PostgresTodoRepository:
         self,
         *,
         query: str | None = None,
-        status: str | None = "open",
-        limit: int = 20,
+        status: str | None = postgres_constants.TODO_STATUS_OPEN,
+        limit: int = postgres_constants.DEFAULT_TODO_LIMIT,
     ) -> list[TodoItem]:
         clean_query = _optional_nullable_text(query)
         clean_status = validate_query_status(status)
-        safe_limit = _safe_limit(limit, default=20)
+        safe_limit = _safe_limit(limit, default=postgres_constants.DEFAULT_TODO_LIMIT)
 
         clauses = ["user_id = %s"]
         params: list[object] = [self._user_id]
-        if clean_status != "all":
+        if clean_status != postgres_constants.TODO_QUERY_STATUS_ALL:
             clauses.append("status = %s")
             params.append(clean_status)
         if clean_query is not None:
@@ -271,18 +269,18 @@ def validate_status(status: str) -> str:
     if not isinstance(status, str) or not status.strip():
         raise ValueError("status must be a non-empty string")
     clean = status.strip()
-    if clean not in TODO_STATUSES:
+    if clean not in postgres_constants.TODO_STATUSES:
         raise ValueError("status must be open, done, or canceled")
     return clean
 
 
 def validate_query_status(status: str | None) -> str:
     if status is None:
-        return "open"
+        return postgres_constants.TODO_STATUS_OPEN
     if not isinstance(status, str) or not status.strip():
         raise ValueError("status must be a non-empty string")
     clean = status.strip()
-    if clean not in TODO_QUERY_STATUSES:
+    if clean not in postgres_constants.TODO_QUERY_STATUSES:
         raise ValueError("status must be open, done, canceled, or all")
     return clean
 
@@ -290,4 +288,4 @@ def validate_query_status(status: str | None) -> str:
 def _safe_limit(limit: int, *, default: int) -> int:
     if not isinstance(limit, int) or limit < 1:
         return default
-    return min(limit, 50)
+    return min(limit, postgres_constants.MAX_TODO_LIMIT)

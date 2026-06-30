@@ -1,0 +1,16 @@
+class AgentProfileMemoryConstants:
+    MEMORY_TYPE_USER = "user"
+    MEMORY_TYPE_FEEDBACK = "feedback"
+    MEMORY_TYPE_PROJECT = "project"
+    MEMORY_TYPE_REFERENCE = "reference"
+    MEMORY_CANDIDATE_NAME_PREFIX_USER_PREFERENCE = "user-preference"
+    MEMORY_CANDIDATE_SOURCE_TYPE_USER_EXPLICIT = "user_explicit"
+    MEMORY_CANDIDATE_CONFIDENCE_HIGH = "high"
+    MEMORY_CANDIDATE_WRITE_POLICY_NEEDS_CONFIRMATION = "needs_confirmation"
+    AGENT_MEMORY_TYPES = {
+        MEMORY_TYPE_USER,
+        MEMORY_TYPE_FEEDBACK,
+        MEMORY_TYPE_PROJECT,
+        MEMORY_TYPE_REFERENCE,
+    }
+    USER_PREFERENCE_MARKERS = ("记住", "以后", "每次", "总是")

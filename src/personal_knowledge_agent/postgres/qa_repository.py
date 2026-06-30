@@ -9,8 +9,7 @@ from typing import Protocol
 from psycopg.types.json import Jsonb
 
 from ..qa_data_access.qa_card_models import QACard, SearchResult, SemanticSearchHit
-
-FORBIDDEN_CATEGORIES = {"其他", "未分类", "杂项", "默认分类", "未知", "待分类"}
+from .constants import PostgresConstants as postgres_constants
 
 
 class PostgresConnection(Protocol):
@@ -31,7 +30,7 @@ class PostgresQACardRepository:
         summary: str,
         keywords: list[str],
         category: str,
-        source_type: str = "manual_qa",
+        source_type: str = postgres_constants.DEFAULT_QA_SOURCE_TYPE,
         card_id: str | None = None,
     ) -> QACard:
         clean_question = _require_text("question", question)
@@ -40,7 +39,7 @@ class PostgresQACardRepository:
         clean_category = self.validate_category(category)
         clean_source_type = _require_text("source_type", source_type)
         clean_keywords = _clean_keywords(keywords)
-        clean_card_id = card_id.strip() if card_id is not None else f"qa_{uuid.uuid4().hex}"
+        clean_card_id = card_id.strip() if card_id is not None else f"{postgres_constants.QA_CARD_ID_PREFIX}_{uuid.uuid4().hex}"
         _require_text("card_id", clean_card_id)
 
         cursor = self._connection.execute(
@@ -103,7 +102,7 @@ class PostgresQACardRepository:
         summary: str,
         keywords: list[str],
         category: str,
-        source_type: str = "manual_qa",
+        source_type: str = postgres_constants.DEFAULT_QA_SOURCE_TYPE,
     ) -> QACard:
         return self.create_card(
             question=question,
@@ -142,7 +141,7 @@ class PostgresQACardRepository:
     def read_card(self, card_id: str) -> QACard | None:
         return self.get_card(card_id)
 
-    def list_recent_cards(self, limit: int = 10, category: str | None = None) -> list[QACard]:
+    def list_recent_cards(self, limit: int = postgres_constants.DEFAULT_QA_LIMIT, category: str | None = None) -> list[QACard]:
         safe_limit = _safe_limit(limit)
         clean_category = self.validate_optional_category(category)
         if clean_category is None:
@@ -249,10 +248,10 @@ class PostgresQACardRepository:
                   updated_at,
                   embedding_status
                 FROM qa_cards
-                WHERE user_id = %s AND embedding_status != 'ready'
+                WHERE user_id = %s AND embedding_status != %s
                 ORDER BY created_at ASC
                 """,
-                (self._user_id,),
+                (self._user_id, postgres_constants.EMBEDDING_STATUS_READY),
             )
         else:
             cursor = self._connection.execute(
@@ -269,11 +268,11 @@ class PostgresQACardRepository:
                   updated_at,
                   embedding_status
                 FROM qa_cards
-                WHERE user_id = %s AND embedding_status != 'ready'
+                WHERE user_id = %s AND embedding_status != %s
                 ORDER BY created_at ASC
                 LIMIT %s
                 """,
-                (self._user_id, _safe_limit(limit)),
+                (self._user_id, postgres_constants.EMBEDDING_STATUS_READY, _safe_limit(limit)),
             )
         return [_row_to_card(row) for row in _fetchall(cursor)]
 
@@ -291,7 +290,7 @@ class PostgresQACardRepository:
     def search_keyword_cards(
         self,
         query: str,
-        limit: int = 5,
+        limit: int = postgres_constants.DEFAULT_QA_SEARCH_LIMIT,
         category: str | None = None,
     ) -> list[SearchResult]:
         clean_query = _require_text("query", query)
@@ -354,7 +353,7 @@ class PostgresQACardRepository:
     def search_cards(
         self,
         query: str,
-        limit: int = 5,
+        limit: int = postgres_constants.DEFAULT_QA_SEARCH_LIMIT,
         category: str | None = None,
     ) -> list[SearchResult]:
         return self.search_keyword_cards(query=query, limit=limit, category=category)
@@ -362,7 +361,7 @@ class PostgresQACardRepository:
     def search_vector_cards(
         self,
         embedding: Sequence[float],
-        limit: int = 5,
+        limit: int = postgres_constants.DEFAULT_QA_SEARCH_LIMIT,
         category: str | None = None,
     ) -> list[SemanticSearchHit]:
         vector = _vector_literal(embedding)
@@ -378,12 +377,12 @@ class PostgresQACardRepository:
                   1 - (embedding <=> %s::vector) AS score
                 FROM qa_cards
                 WHERE user_id = %s
-                  AND embedding_status = 'ready'
+                  AND embedding_status = %s
                   AND embedding IS NOT NULL
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (vector, self._user_id, vector, safe_limit),
+                (vector, self._user_id, postgres_constants.EMBEDDING_STATUS_READY, vector, safe_limit),
             )
         else:
             cursor = self._connection.execute(
@@ -393,13 +392,13 @@ class PostgresQACardRepository:
                   1 - (embedding <=> %s::vector) AS score
                 FROM qa_cards
                 WHERE user_id = %s
-                  AND embedding_status = 'ready'
+                  AND embedding_status = %s
                   AND embedding IS NOT NULL
                   AND category = %s
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (vector, self._user_id, clean_category, vector, safe_limit),
+                (vector, self._user_id, postgres_constants.EMBEDDING_STATUS_READY, clean_category, vector, safe_limit),
             )
         return [_row_to_semantic_hit(row) for row in _fetchall(cursor)]
 
@@ -429,7 +428,7 @@ class PostgresQACardRepository:
               category = COALESCE(%s, category),
               source_type = COALESCE(%s, source_type),
               embedding = NULL,
-              embedding_status = 'pending',
+              embedding_status = %s,
               embedding_model = NULL,
               updated_at = now()
             WHERE user_id = %s AND card_id = %s
@@ -452,6 +451,7 @@ class PostgresQACardRepository:
                 Jsonb(_clean_keywords(keywords)) if keywords is not None else None,
                 self.validate_optional_category(category),
                 _optional_text("source_type", source_type),
+                postgres_constants.EMBEDDING_STATUS_PENDING,
                 self._user_id,
                 clean_card_id,
             ),
@@ -480,11 +480,11 @@ class PostgresQACardRepository:
             """
             UPDATE qa_cards
             SET
-              embedding_status = 'ready',
+              embedding_status = %s,
               updated_at = now()
             WHERE user_id = %s AND card_id = %s AND embedding IS NOT NULL
             """,
-            (self._user_id, clean_card_id),
+            (postgres_constants.EMBEDDING_STATUS_READY, self._user_id, clean_card_id),
         )
         self._commit()
         return _rowcount(cursor) > 0
@@ -494,9 +494,9 @@ class PostgresQACardRepository:
         if not isinstance(category, str) or not category.strip():
             raise ValueError("category must be a non-empty string")
         clean = category.strip()
-        if len(clean) > 24:
+        if len(clean) > postgres_constants.MAX_CATEGORY_LENGTH:
             raise ValueError("category must be at most 24 characters")
-        if clean in FORBIDDEN_CATEGORIES:
+        if clean in postgres_constants.FORBIDDEN_CATEGORIES:
             raise ValueError(f"category cannot be a fallback category: {clean}")
         return clean
 
@@ -516,9 +516,9 @@ class PostgresQACardRepository:
     ) -> bool:
         clean_card_id = _require_text("card_id", card_id)
         clean_status = _require_text("status", status)
-        if clean_status not in {"pending", "ready", "failed"}:
+        if clean_status not in postgres_constants.EMBEDDING_STATUSES:
             raise ValueError("status must be pending, ready, or failed")
-        if clean_status == "ready" and embedding is None:
+        if clean_status == postgres_constants.EMBEDDING_STATUS_READY and embedding is None:
             raise ValueError("embedding is required when status is ready")
         clean_model = _optional_text("embedding_model", embedding_model)
 
@@ -570,7 +570,7 @@ def _row_to_card(row: object) -> QACard:
         source_type=_row_value(row, 6, "source_type"),
         created_at=_stringify_timestamp(_row_value(row, 7, "created_at")),
         updated_at=_stringify_timestamp(_row_value(row, 8, "updated_at")),
-        is_vectorized=1 if embedding_status == "ready" else 0,
+        is_vectorized=1 if embedding_status == postgres_constants.EMBEDDING_STATUS_READY else 0,
     )
 
 
@@ -581,7 +581,7 @@ def _row_to_search_result(row: object) -> SearchResult:
         question=_row_value(row, 1, "question"),
         summary=_row_value(row, 2, "summary"),
         answer_snippet=_snippet(answer),
-        score=1,
+        score=postgres_constants.SEARCH_RESULT_SCORE,
         source_type=_row_value(row, 4, "source_type"),
         created_at=_stringify_timestamp(_row_value(row, 5, "created_at")),
         category=_row_value(row, 6, "category"),
@@ -640,8 +640,8 @@ def _clean_keywords(keywords: list[str]) -> list[str]:
 
 def _safe_limit(limit: int) -> int:
     if not isinstance(limit, int) or limit < 1:
-        return 10
-    return min(limit, 50)
+        return postgres_constants.DEFAULT_QA_LIMIT
+    return min(limit, postgres_constants.MAX_QA_LIMIT)
 
 
 def _vector_literal(embedding: Sequence[float] | None) -> str | None:
@@ -652,8 +652,8 @@ def _vector_literal(embedding: Sequence[float] | None) -> str | None:
     return "[" + ",".join(str(value) for value in embedding) + "]"
 
 
-def _snippet(answer: object, length: int = 160) -> str:
+def _snippet(answer: object, length: int = postgres_constants.SEARCH_SNIPPET_LENGTH) -> str:
     clean = " ".join(str(answer).split())
     if len(clean) <= length:
         return clean
-    return f"{clean[: length - 3]}..."
+    return f"{clean[: length - len(postgres_constants.SEARCH_SNIPPET_ELLIPSIS)]}{postgres_constants.SEARCH_SNIPPET_ELLIPSIS}"

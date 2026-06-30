@@ -31,30 +31,7 @@ from ...postgres import (
 )
 from ...tool_runtime import ApprovalRequest
 from .cloud_dependencies import CloudUserToolFactory
-
-SESSION_ID_SUFFIX_CHARS = 12
-THREAD_JOIN_TIMEOUT_SECONDS = 1
-APPROVAL_TIMEOUT_SECONDS = 300
-APPROVAL_SUMMARY_TEXT_LIMIT = 180
-APPROVAL_SUMMARY_ELLIPSIS = "..."
-DEFAULT_CARD_LIMIT = 10
-MIN_CARD_LIMIT = 1
-MAX_CARD_LIMIT = 50
-MERGE_TOOL_NAME = "merge_qa_cards"
-AUTH_COOKIE_NAME = "pka_session"
-TOOL_DISPLAY_NAMES = {
-    "hybrid_search_qa_cards": "搜索知识库",
-    "search_qa_cards": "搜索知识库",
-    "save_qa_card": "保存知识卡片",
-    "read_qa_card": "读取知识卡片",
-    "list_recent_cards": "读取最近卡片",
-    "update_qa_card": "更新知识卡片",
-    "delete_qa_card": "删除知识卡片",
-    "merge_qa_cards": "合并知识卡片",
-    "create_todo": "保存待办",
-    "list_todos": "查询待办",
-    "update_todo": "更新待办",
-}
+from .constants import WebConstants as web_constants
 
 
 class ChatAgent(Protocol):
@@ -149,13 +126,13 @@ class PendingApproval:
     expires_at: str
     decision_event: threading.Event = field(default_factory=threading.Event)
     approved: bool = False
-    status: str = "pending"
+    status: str = web_constants.APPROVAL_STATUS_PENDING
 
 
 class WebApprovalManager:
     """Coordinates one-shot Web approvals for high-risk tool calls."""
 
-    def __init__(self, *, timeout_seconds: float = APPROVAL_TIMEOUT_SECONDS):
+    def __init__(self, *, timeout_seconds: float = web_constants.APPROVAL_TIMEOUT_SECONDS):
         self.timeout_seconds = timeout_seconds
         self.pending_approvals: dict[str, PendingApproval] = {}
         self.lock = threading.Lock()
@@ -183,12 +160,12 @@ class WebApprovalManager:
         pending = self._create_pending(session_id, request)
         event_sent = emit_event(
             {
-                "run_id": new_run_id(),
-                "event_type": "permission_requested",
-                "approval_id": pending.approval_id,
-                "summary": pending.summary,
-                "timeout_seconds": self.timeout_seconds,
-                "expires_at": pending.expires_at,
+                web_constants.RUN_ID_FIELD: new_run_id(),
+                web_constants.EVENT_TYPE_FIELD: web_constants.EVENT_PERMISSION_REQUESTED,
+                web_constants.APPROVAL_ID_FIELD: pending.approval_id,
+                web_constants.SUMMARY_FIELD: pending.summary,
+                web_constants.TIMEOUT_SECONDS_FIELD: self.timeout_seconds,
+                web_constants.EXPIRES_AT_FIELD: pending.expires_at,
             }
         )
         if not event_sent:
@@ -197,15 +174,15 @@ class WebApprovalManager:
 
         if not pending.decision_event.wait(self.timeout_seconds):
             self._remove_pending(pending)
-            pending.status = "expired"
+            pending.status = web_constants.APPROVAL_STATUS_EXPIRED
             pending.approved = False
 
         emit_event(
             {
-                "run_id": new_run_id(),
-                "event_type": "permission_resolved",
-                "approval_id": pending.approval_id,
-                "status": pending.status,
+                web_constants.RUN_ID_FIELD: new_run_id(),
+                web_constants.EVENT_TYPE_FIELD: web_constants.EVENT_PERMISSION_RESOLVED,
+                web_constants.APPROVAL_ID_FIELD: pending.approval_id,
+                web_constants.APPROVAL_STATUS_FIELD: pending.status,
             }
         )
         return pending.approved
@@ -223,15 +200,24 @@ class WebApprovalManager:
         """
 
         normalized_decision = decision.strip().lower()
-        if normalized_decision not in {"approve", "deny"}:
-            return _error("invalid_input", "decision must be approve or deny")
+        if normalized_decision not in {
+            web_constants.APPROVAL_DECISION_APPROVE,
+            web_constants.APPROVAL_DECISION_DENY,
+        }:
+            return _error(web_constants.ERROR_INVALID_INPUT, web_constants.MESSAGE_APPROVAL_DECISION_INVALID)
         pending = self._pop_pending(approval_id)
-        if pending is None or pending.status != "pending":
-            return _error("approval_not_found", "approval request is not pending")
-        pending.approved = normalized_decision == "approve"
-        pending.status = "approved" if pending.approved else "denied"
+        if pending is None or pending.status != web_constants.APPROVAL_STATUS_PENDING:
+            return _error(web_constants.ERROR_APPROVAL_NOT_FOUND, web_constants.MESSAGE_APPROVAL_NOT_PENDING)
+        pending.approved = normalized_decision == web_constants.APPROVAL_DECISION_APPROVE
+        pending.status = (
+            web_constants.APPROVAL_STATUS_APPROVED if pending.approved else web_constants.APPROVAL_STATUS_DENIED
+        )
         pending.decision_event.set()
-        return {"ok": True, "approval_id": approval_id, "status": pending.status}
+        return {
+            web_constants.RESULT_OK_FIELD: True,
+            web_constants.APPROVAL_ID_FIELD: approval_id,
+            web_constants.APPROVAL_STATUS_FIELD: pending.status,
+        }
 
     def cancel_session(self, session_id: str) -> None:
         """Cancel all pending approvals for a disconnected session stream.
@@ -248,11 +234,11 @@ class WebApprovalManager:
             cancelled = [
                 pending
                 for pending in self.pending_approvals.values()
-                if pending.session_id == session_id and pending.status == "pending"
+                if pending.session_id == session_id and pending.status == web_constants.APPROVAL_STATUS_PENDING
             ]
             for pending in cancelled:
                 self.pending_approvals.pop(pending.approval_id, None)
-                pending.status = "cancelled"
+                pending.status = web_constants.APPROVAL_STATUS_CANCELLED
                 pending.approved = False
                 pending.decision_event.set()
 
@@ -261,7 +247,7 @@ class WebApprovalManager:
 
         expires_at = datetime.now(UTC) + timedelta(seconds=self.timeout_seconds)
         pending = PendingApproval(
-            approval_id=f"approval_{uuid.uuid4().hex}",
+            approval_id=f"{web_constants.APPROVAL_ID_PREFIX}_{uuid.uuid4().hex}",
             session_id=session_id,
             summary=build_approval_summary(request),
             expires_at=expires_at.isoformat(),
@@ -312,11 +298,14 @@ class WebSessionRunner:
     def publish_event(self, event: dict[str, Any], log_event: AgentEvent | None = None) -> bool:
         """Publish a Web runtime event to audit storage and the active SSE stream."""
 
-        if event.get("event_type") != "answer_delta":
+        if event.get(web_constants.EVENT_TYPE_FIELD) != web_constants.EVENT_ANSWER_DELTA:
             self.events.append(event)
             if self.event_logger is not None:
                 self.event_logger.write(log_event or _agent_event_from_dict(event))
-        if event.get("event_type") == "prompt_usage_updated" and self.prompt_usage_callback is not None:
+        if (
+            event.get(web_constants.EVENT_TYPE_FIELD) == web_constants.EVENT_PROMPT_USAGE_UPDATED
+            and self.prompt_usage_callback is not None
+        ):
             try:
                 self.prompt_usage_callback(_event_ratio(event.get("prompt_usage_ratio")))
             except Exception:
@@ -348,7 +337,7 @@ def create_web_app(
     resolved_config = config or (load_config() if needs_config else None)
     runners: dict[tuple[str | None, str], WebSessionRunner] = {}
     runners_lock = threading.Lock()
-    approval_manager = WebApprovalManager(timeout_seconds=APPROVAL_TIMEOUT_SECONDS)
+    approval_manager = WebApprovalManager(timeout_seconds=web_constants.APPROVAL_TIMEOUT_SECONDS)
 
     def request_web_approval(runner: WebSessionRunner, request: ApprovalRequest) -> bool:
         return approval_manager.request_approval(
@@ -376,7 +365,7 @@ def create_web_app(
             result = auth_service.authenticate_session_token(pka_session)
         except Exception:
             return _business_authentication_error()
-        if not getattr(result, "ok", False):
+        if not getattr(result, web_constants.RESULT_OK_FIELD, False):
             return _business_authentication_error()
         return result
 
@@ -499,68 +488,71 @@ def create_web_app(
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"ok": True}
+        return {web_constants.RESULT_OK_FIELD: True}
 
     @app.post("/api/auth/request-code")
     def request_login_code(request: AuthEmailRequest) -> dict[str, Any]:
         if auth_service is None or email_sender is None:
-            return _error("auth_not_configured", "authentication is not configured")
+            return _error(web_constants.ERROR_AUTH_NOT_CONFIGURED, web_constants.MESSAGE_AUTH_NOT_CONFIGURED)
         try:
             result = auth_service.request_login_code(request.email)
-            if not getattr(result, "ok", False):
+            if not getattr(result, web_constants.RESULT_OK_FIELD, False):
                 return _auth_failure_payload(result)
             expires_minutes = _expires_minutes(result.expires_at)
             email_sender.send_login_code(result.email, result.plaintext_code, expires_minutes)
-            return {"ok": True, "email": result.email}
+            return {web_constants.RESULT_OK_FIELD: True, web_constants.RESULT_EMAIL_FIELD: result.email}
         except Exception:
-            return _error("auth_request_error", "login code request failed")
+            return _error(web_constants.ERROR_AUTH_REQUEST, web_constants.MESSAGE_AUTH_REQUEST_FAILED)
 
     @app.post("/api/auth/verify-code")
     def verify_login_code(request: AuthVerifyCodeRequest, response: Response) -> dict[str, Any]:
         if auth_service is None:
-            return _error("auth_not_configured", "authentication is not configured")
+            return _error(web_constants.ERROR_AUTH_NOT_CONFIGURED, web_constants.MESSAGE_AUTH_NOT_CONFIGURED)
         try:
             result = auth_service.verify_login_code(request.email, request.code)
-            if not getattr(result, "ok", False):
+            if not getattr(result, web_constants.RESULT_OK_FIELD, False):
                 return _auth_failure_payload(result)
             response.set_cookie(
-                AUTH_COOKIE_NAME,
+                web_constants.AUTH_COOKIE_NAME,
                 result.session_token,
                 max_age=_cookie_max_age(result.expires_at),
                 httponly=True,
                 samesite="lax",
                 path="/",
             )
-            return {"ok": True, "user": _verified_user_payload(result)}
+            return {web_constants.RESULT_OK_FIELD: True, web_constants.RESULT_USER_FIELD: _verified_user_payload(result)}
         except Exception:
-            return _error("auth_verify_error", "login code verification failed")
+            return _error(web_constants.ERROR_AUTH_VERIFY, web_constants.MESSAGE_AUTH_VERIFY_FAILED)
 
     @app.get("/api/auth/me")
     def read_current_user(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
         if auth_service is None:
-            return _error("auth_not_configured", "authentication is not configured")
+            return _error(web_constants.ERROR_AUTH_NOT_CONFIGURED, web_constants.MESSAGE_AUTH_NOT_CONFIGURED)
         if not pka_session:
-            return _error("not_authenticated", "authentication session is missing")
+            return _error(web_constants.ERROR_NOT_AUTHENTICATED, web_constants.MESSAGE_AUTHENTICATION_SESSION_MISSING)
         try:
             result = auth_service.authenticate_session_token(pka_session)
-            if not getattr(result, "ok", False):
+            if not getattr(result, web_constants.RESULT_OK_FIELD, False):
                 return _auth_failure_payload(result)
-            return {"ok": True, "user": _authenticated_user_payload(result)}
+            return {
+                web_constants.RESULT_OK_FIELD: True,
+                web_constants.RESULT_USER_FIELD: _authenticated_user_payload(result),
+            }
         except Exception:
-            return _error("auth_me_error", "authentication lookup failed")
+            return _error(web_constants.ERROR_AUTH_ME, web_constants.MESSAGE_AUTH_LOOKUP_FAILED)
 
     @app.post("/api/auth/logout")
     def logout(response: Response, pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
         if auth_service is None:
-            return _error("auth_not_configured", "authentication is not configured")
+            return _error(web_constants.ERROR_AUTH_NOT_CONFIGURED, web_constants.MESSAGE_AUTH_NOT_CONFIGURED)
         try:
             if pka_session:
                 auth_service.revoke_session_token(pka_session)
-            response.delete_cookie(AUTH_COOKIE_NAME, path="/", samesite="lax")
-            return {"ok": True}
+            response.delete_cookie(web_constants.AUTH_COOKIE_NAME, path="/", samesite="lax")
+            return {web_constants.RESULT_OK_FIELD: True}
         except Exception:
-            response.delete_cookie(AUTH_COOKIE_NAME, path="/", samesite="lax")
-            return _error("auth_logout_error", "logout failed")
+            response.delete_cookie(web_constants.AUTH_COOKIE_NAME, path="/", samesite="lax")
+            return _error(web_constants.ERROR_AUTH_LOGOUT, web_constants.MESSAGE_AUTH_LOGOUT_FAILED)
 
     @app.post("/api/approvals/{approval_id}")
     def resolve_approval(
@@ -578,11 +570,14 @@ def create_web_app(
         auth_session = authenticate_business_session(pka_session)
         if _is_auth_error(auth_session):
             return auth_session
-        session_id = f"session_{uuid.uuid4().hex[:SESSION_ID_SUFFIX_CHARS]}"
+        session_id = f"{web_constants.SESSION_ID_PREFIX}_{uuid.uuid4().hex[:web_constants.SESSION_ID_SUFFIX_CHARS]}"
         if cloud_session_repository is None:
-            return _error("session_store_not_configured", "cloud session repository is not configured")
+            return _error(
+                web_constants.ERROR_SESSION_STORE_NOT_CONFIGURED,
+                web_constants.MESSAGE_SESSION_STORE_NOT_CONFIGURED,
+            )
         record = cloud_session_repository.create_session(auth_session.user_id, session_id=session_id)
-        return {"ok": True, "session": _cloud_session_payload(record)}
+        return {web_constants.RESULT_OK_FIELD: True, web_constants.RESULT_SESSION_FIELD: _cloud_session_payload(record)}
 
     @app.get("/api/sessions")
     def list_sessions(pka_session: str | None = Cookie(default=None)) -> dict[str, Any]:
@@ -590,9 +585,15 @@ def create_web_app(
         if _is_auth_error(auth_session):
             return auth_session
         if cloud_session_repository is None:
-            return _error("session_store_not_configured", "cloud session repository is not configured")
+            return _error(
+                web_constants.ERROR_SESSION_STORE_NOT_CONFIGURED,
+                web_constants.MESSAGE_SESSION_STORE_NOT_CONFIGURED,
+            )
         sessions = cloud_session_repository.list_sessions(auth_session.user_id)
-        return {"ok": True, "sessions": [_cloud_session_payload(session) for session in sessions]}
+        return {
+            web_constants.RESULT_OK_FIELD: True,
+            web_constants.RESULT_SESSIONS_FIELD: [_cloud_session_payload(session) for session in sessions],
+        }
 
     @app.patch("/api/sessions/{session_id}")
     def rename_session(
@@ -605,13 +606,19 @@ def create_web_app(
             return auth_session
         try:
             if cloud_session_repository is None:
-                return _error("session_store_not_configured", "cloud session repository is not configured")
+                return _error(
+                    web_constants.ERROR_SESSION_STORE_NOT_CONFIGURED,
+                    web_constants.MESSAGE_SESSION_STORE_NOT_CONFIGURED,
+                )
             record = cloud_session_repository.rename_session(auth_session.user_id, session_id, request.title)
             if record is None:
-                return _error("session_not_found", "session not found")
-            return {"ok": True, "session": _cloud_session_payload(record)}
+                return _error(web_constants.ERROR_SESSION_NOT_FOUND, web_constants.MESSAGE_SESSION_NOT_FOUND)
+            return {
+                web_constants.RESULT_OK_FIELD: True,
+                web_constants.RESULT_SESSION_FIELD: _cloud_session_payload(record),
+            }
         except Exception as exc:
-            return _error("session_rename_error", str(exc))
+            return _error(web_constants.ERROR_SESSION_RENAME, str(exc))
 
     @app.get("/api/sessions/{session_id}/messages")
     def read_session_messages(
@@ -623,15 +630,21 @@ def create_web_app(
             return auth_session
         try:
             if cloud_session_repository is None:
-                return _error("session_store_not_configured", "cloud session repository is not configured")
+                return _error(
+                    web_constants.ERROR_SESSION_STORE_NOT_CONFIGURED,
+                    web_constants.MESSAGE_SESSION_STORE_NOT_CONFIGURED,
+                )
             messages = cloud_session_repository.load_messages(auth_session.user_id, session_id)
             session = cloud_session_repository.get_session(auth_session.user_id, session_id)
-            payload: dict[str, Any] = {"ok": True, "messages": _cloud_display_messages(messages)}
+            payload: dict[str, Any] = {
+                web_constants.RESULT_OK_FIELD: True,
+                web_constants.RESULT_MESSAGES_FIELD: _cloud_display_messages(messages),
+            }
             if session is not None:
-                payload["session"] = _cloud_session_payload(session)
+                payload[web_constants.RESULT_SESSION_FIELD] = _cloud_session_payload(session)
             return payload
         except Exception as exc:
-            return _error("session_read_error", str(exc))
+            return _error(web_constants.ERROR_SESSION_READ, str(exc))
 
     @app.post("/api/chat/stream")
     def chat_stream(
@@ -639,18 +652,25 @@ def create_web_app(
         pka_session: str | None = Cookie(default=None),
     ) -> StreamingResponse:
         message = request.message.strip()
-        session_id = request.session_id or "default"
+        session_id = request.session_id or web_constants.DEFAULT_SESSION_ID
         event_queue: queue.Queue[dict[str, Any] | object] = queue.Queue()
         done = object()
 
         def run_agent() -> None:
             auth_session = authenticate_business_session(pka_session)
             if _is_auth_error(auth_session):
-                event_queue.put(_event_error(auth_session["error_code"], auth_session["message"]))
+                event_queue.put(
+                    _event_error(
+                        auth_session[web_constants.RESULT_ERROR_CODE_FIELD],
+                        auth_session[web_constants.RESULT_MESSAGE_FIELD],
+                    )
+                )
                 event_queue.put(done)
                 return
             if not message:
-                event_queue.put(_event_error("invalid_input", "message must be a non-empty string"))
+                event_queue.put(
+                    _event_error(web_constants.ERROR_INVALID_INPUT, web_constants.MESSAGE_CHAT_MESSAGE_REQUIRED)
+                )
                 event_queue.put(done)
                 return
             try:
@@ -659,7 +679,7 @@ def create_web_app(
                     auth_session if auth_session is not None else None,
                 )
                 if not runner.lock.acquire(blocking=False):
-                    event_queue.put(_event_error("session_busy", "current session is already running"))
+                    event_queue.put(_event_error(web_constants.ERROR_SESSION_BUSY, web_constants.MESSAGE_SESSION_BUSY))
                     return
                 try:
                     with runner.active_event_queue_lock:
@@ -672,9 +692,9 @@ def create_web_app(
                         if event_queue.qsize() == event_count_before and isinstance(answer, str):
                             event_queue.put(
                                 {
-                                    "run_id": new_run_id(),
-                                    "event_type": "final_answer_generated",
-                                    "answer": answer,
+                                    web_constants.RUN_ID_FIELD: new_run_id(),
+                                    web_constants.EVENT_TYPE_FIELD: web_constants.EVENT_FINAL_ANSWER_GENERATED,
+                                    web_constants.ANSWER_FIELD: answer,
                                 }
                             )
                     finally:
@@ -683,7 +703,7 @@ def create_web_app(
                 finally:
                     runner.lock.release()
             except Exception as exc:
-                event_queue.put(_event_error("agent_error", f"Agent run failed: {exc}"))
+                event_queue.put(_event_error(web_constants.ERROR_AGENT, f"Agent run failed: {exc}"))
             finally:
                 event_queue.put(done)
 
@@ -698,13 +718,17 @@ def create_web_app(
                     yield _sse(item)
             finally:
                 approval_manager.cancel_session(session_id)
-                thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
+                thread.join(timeout=web_constants.THREAD_JOIN_TIMEOUT_SECONDS)
 
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+        return StreamingResponse(event_stream(), media_type=web_constants.MEDIA_TYPE_EVENT_STREAM)
 
     @app.get("/api/cards/recent")
     def recent_cards(
-        limit: int = Query(default=DEFAULT_CARD_LIMIT, ge=MIN_CARD_LIMIT, le=MAX_CARD_LIMIT),
+        limit: int = Query(
+            default=web_constants.DEFAULT_CARD_LIMIT,
+            ge=web_constants.MIN_CARD_LIMIT,
+            le=web_constants.MAX_CARD_LIMIT,
+        ),
         pka_session: str | None = Cookie(default=None),
     ) -> dict[str, Any]:
         auth_session = authenticate_business_session(pka_session)
@@ -713,15 +737,19 @@ def create_web_app(
         try:
             return call_card_tools(
                 auth_session if auth_session is not None else None,
-                lambda card_tools: card_tools.list_recent_cards({"limit": limit}),
+                lambda card_tools: card_tools.list_recent_cards({web_constants.CARD_TOOL_LIMIT_FIELD: limit}),
             )
         except Exception as exc:
-            return _error("card_read_error", str(exc))
+            return _error(web_constants.ERROR_CARD_READ, str(exc))
 
     @app.get("/api/cards/search")
     def search_cards(
         q: str = Query(default="", alias="q"),
-        limit: int = Query(default=DEFAULT_CARD_LIMIT, ge=MIN_CARD_LIMIT, le=MAX_CARD_LIMIT),
+        limit: int = Query(
+            default=web_constants.DEFAULT_CARD_LIMIT,
+            ge=web_constants.MIN_CARD_LIMIT,
+            le=web_constants.MAX_CARD_LIMIT,
+        ),
         pka_session: str | None = Cookie(default=None),
     ) -> dict[str, Any]:
         auth_session = authenticate_business_session(pka_session)
@@ -729,14 +757,19 @@ def create_web_app(
             return auth_session
         query = q.strip()
         if not query:
-            return _error("invalid_input", "q must be a non-empty string")
+            return _error(web_constants.ERROR_INVALID_INPUT, web_constants.MESSAGE_CARD_QUERY_REQUIRED)
         try:
             return call_card_tools(
                 auth_session if auth_session is not None else None,
-                lambda card_tools: card_tools.search_qa_cards({"query": query, "limit": limit}),
+                lambda card_tools: card_tools.search_qa_cards(
+                    {
+                        web_constants.CARD_TOOL_QUERY_FIELD: query,
+                        web_constants.CARD_TOOL_LIMIT_FIELD: limit,
+                    }
+                ),
             )
         except Exception as exc:
-            return _error("card_search_error", str(exc))
+            return _error(web_constants.ERROR_CARD_SEARCH, str(exc))
 
     @app.get("/api/cards/{card_id}")
     def read_card(
@@ -749,24 +782,28 @@ def create_web_app(
         try:
             return call_card_tools(
                 auth_session if auth_session is not None else None,
-                lambda card_tools: card_tools.read_qa_card({"card_id": card_id}),
+                lambda card_tools: card_tools.read_qa_card({web_constants.CARD_TOOL_CARD_ID_FIELD: card_id}),
             )
         except Exception as exc:
-            return _error("card_read_error", str(exc))
+            return _error(web_constants.ERROR_CARD_READ, str(exc))
 
     return app
 
 
 def _error(error_code: str, message: str) -> dict[str, Any]:
-    return {"ok": False, "error_code": error_code, "message": message}
+    return {
+        web_constants.RESULT_OK_FIELD: False,
+        web_constants.RESULT_ERROR_CODE_FIELD: error_code,
+        web_constants.RESULT_MESSAGE_FIELD: message,
+    }
 
 
 def _business_authentication_error() -> dict[str, Any]:
-    return _error("not_authenticated", "authentication is required")
+    return _error(web_constants.ERROR_NOT_AUTHENTICATED, web_constants.MESSAGE_AUTHENTICATION_REQUIRED)
 
 
 def _is_auth_error(value: Any) -> bool:
-    return isinstance(value, dict) and value.get("ok") is False
+    return isinstance(value, dict) and value.get(web_constants.RESULT_OK_FIELD) is False
 
 
 def _authenticated_user_id(auth_session: AuthenticatedSessionDependency | None) -> str | None:
@@ -797,11 +834,20 @@ def _authenticated_user_payload(result: Any) -> dict[str, Any]:
 
 
 def _expires_minutes(expires_at: datetime) -> int:
-    return max(1, math.ceil((_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds() / 60))
+    return max(
+        web_constants.MIN_EXPIRES_MINUTES,
+        math.ceil(
+            (_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds()
+            / web_constants.SECONDS_PER_MINUTE
+        ),
+    )
 
 
 def _cookie_max_age(expires_at: datetime) -> int:
-    return max(0, int((_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds()))
+    return max(
+        web_constants.MIN_COOKIE_MAX_AGE_SECONDS,
+        int((_ensure_aware_utc(expires_at) - datetime.now(UTC)).total_seconds()),
+    )
 
 
 def _ensure_aware_utc(value: datetime) -> datetime:
@@ -829,8 +875,12 @@ def _cloud_session_payload(record: Any) -> dict[str, Any]:
             transcript_path="",
             summary_path="",
             artifacts_dir="",
-            title=title if isinstance(title, str) and title else "新会话",
-            title_source="user" if isinstance(title, str) and title else "auto",
+            title=title if isinstance(title, str) and title else web_constants.DEFAULT_SESSION_TITLE,
+            title_source=(
+                web_constants.TITLE_SOURCE_USER
+                if isinstance(title, str) and title
+                else web_constants.TITLE_SOURCE_AUTO
+            ),
             last_prompt_usage_ratio=_optional_prompt_usage_ratio(
                 _record_value(record, "last_prompt_usage_ratio", None),
             ),
@@ -851,28 +901,30 @@ def _cloud_display_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
         pending_run = None
 
     for index, message in enumerate(messages, start=1):
-        role = message.get("role")
-        content = message.get("content")
+        role = message.get(web_constants.MESSAGE_ROLE_FIELD)
+        content = message.get(web_constants.MESSAGE_CONTENT_FIELD)
 
-        if role == "user":
+        if role == web_constants.MESSAGE_ROLE_USER:
             flush_pending_run()
             if not isinstance(content, str):
                 continue
             display_messages.append(
                 {
-                    "role": role,
-                    "content": content,
-                    "created_at": str(message.get("created_at", "")),
-                    "event_id": index,
+                    web_constants.MESSAGE_ROLE_FIELD: role,
+                    web_constants.MESSAGE_CONTENT_FIELD: content,
+                    web_constants.MESSAGE_CREATED_AT_FIELD: str(
+                        message.get(web_constants.MESSAGE_CREATED_AT_FIELD, "")
+                    ),
+                    web_constants.DISPLAY_EVENT_ID_FIELD: index,
                 }
             )
             continue
 
-        tool_calls = message.get("tool_calls")
-        if role == "assistant" and isinstance(tool_calls, list) and tool_calls:
+        tool_calls = message.get(web_constants.MESSAGE_TOOL_CALLS_FIELD)
+        if role == web_constants.MESSAGE_ROLE_ASSISTANT and isinstance(tool_calls, list) and tool_calls:
             if pending_run is None:
                 pending_run = _new_cloud_display_run(message, index)
-            pending_run["steps"].append(f"准备调用 {len(tool_calls)} 个工具")
+            pending_run[web_constants.DISPLAY_STEPS_FIELD].append(f"准备调用 {len(tool_calls)} 个工具")
             for tool_call in tool_calls:
                 call_id = _tool_call_id(tool_call)
                 tool_name = _tool_call_name(tool_call)
@@ -880,25 +932,27 @@ def _cloud_display_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
                     tool_names_by_call_id[call_id] = tool_name
             continue
 
-        if role == "tool":
+        if role == web_constants.MESSAGE_ROLE_TOOL:
             if pending_run is None:
                 continue
-            tool_call_id = message.get("tool_call_id")
+            tool_call_id = message.get(web_constants.MESSAGE_TOOL_CALL_ID_FIELD)
             tool_name = tool_names_by_call_id.get(tool_call_id) if isinstance(tool_call_id, str) else None
-            pending_run["steps"].append(_summarize_cloud_tool_result(tool_name, content))
+            pending_run[web_constants.DISPLAY_STEPS_FIELD].append(_summarize_cloud_tool_result(tool_name, content))
             continue
 
-        if role == "assistant" and isinstance(content, str):
+        if role == web_constants.MESSAGE_ROLE_ASSISTANT and isinstance(content, str):
             if pending_run is not None:
-                pending_run["answer"] = content
+                pending_run[web_constants.ANSWER_FIELD] = content
                 flush_pending_run()
                 continue
             display_messages.append(
                 {
-                    "role": role,
-                    "content": content,
-                    "created_at": str(message.get("created_at", "")),
-                    "event_id": index,
+                    web_constants.MESSAGE_ROLE_FIELD: role,
+                    web_constants.MESSAGE_CONTENT_FIELD: content,
+                    web_constants.MESSAGE_CREATED_AT_FIELD: str(
+                        message.get(web_constants.MESSAGE_CREATED_AT_FIELD, "")
+                    ),
+                    web_constants.DISPLAY_EVENT_ID_FIELD: index,
                 }
             )
 
@@ -908,11 +962,11 @@ def _cloud_display_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
 
 def _new_cloud_display_run(message: dict[str, Any], index: int) -> dict[str, Any]:
     return {
-        "role": "assistant_run",
-        "steps": [],
-        "answer": "",
-        "created_at": str(message.get("created_at", "")),
-        "event_id": index,
+        web_constants.MESSAGE_ROLE_FIELD: web_constants.DISPLAY_MESSAGE_ROLE_ASSISTANT_RUN,
+        web_constants.DISPLAY_STEPS_FIELD: [],
+        web_constants.ANSWER_FIELD: "",
+        web_constants.MESSAGE_CREATED_AT_FIELD: str(message.get(web_constants.MESSAGE_CREATED_AT_FIELD, "")),
+        web_constants.DISPLAY_EVENT_ID_FIELD: index,
     }
 
 
@@ -935,9 +989,9 @@ def _tool_call_name(tool_call: Any) -> str | None:
 
 def _summarize_cloud_tool_result(tool_name: str | None, content: Any) -> str:
     output = _parse_cloud_tool_output(content)
-    if output.get("error_code") == "permission_denied":
+    if output.get(web_constants.RESULT_ERROR_CODE_FIELD) == web_constants.ERROR_PERMISSION_DENIED:
         return "操作未执行"
-    if output.get("ok") is False:
+    if output.get(web_constants.RESULT_OK_FIELD) is False:
         return f"{_cloud_tool_display_name(tool_name)}失败"
     cards = output.get("cards")
     if isinstance(cards, list):
@@ -947,7 +1001,11 @@ def _summarize_cloud_tool_result(tool_name: str | None, content: Any) -> str:
         return f"找到 {len(todos)} 条待办" if todos else "未找到待办"
     todo = output.get("todo")
     if isinstance(todo, dict) and todo.get("todo_id"):
-        return "待办已保存" if todo.get("status") == "open" else "待办已更新"
+        return (
+            "待办已保存"
+            if todo.get("status") == web_constants.TODO_DISPLAY_STATUS_OPEN
+            else "待办已更新"
+        )
     if output.get("card_id"):
         return "知识卡片已保存"
     return f"{_cloud_tool_display_name(tool_name)}完成"
@@ -967,8 +1025,8 @@ def _parse_cloud_tool_output(content: Any) -> dict[str, Any]:
 
 def _cloud_tool_display_name(tool_name: str | None) -> str:
     if tool_name is None:
-        return "调用工具"
-    return TOOL_DISPLAY_NAMES.get(tool_name, "调用工具")
+        return web_constants.DEFAULT_TOOL_DISPLAY_NAME
+    return web_constants.TOOL_DISPLAY_NAMES.get(tool_name, web_constants.DEFAULT_TOOL_DISPLAY_NAME)
 
 
 def _record_value(record: Any, key: str, default: Any) -> Any:
@@ -982,9 +1040,9 @@ def _event_ratio(value: Any) -> float | None:
         return None
     ratio = float(value)
     if ratio < 0:
-        return 0.0
+        return web_constants.MIN_PROMPT_USAGE_RATIO
     if ratio > 1:
-        return 1.0
+        return web_constants.MAX_PROMPT_USAGE_RATIO
     return ratio
 
 
@@ -996,26 +1054,35 @@ def _optional_prompt_usage_ratio(value: Any) -> float | None:
 
 def _event_error(error_code: str, message: str) -> dict[str, Any]:
     return {
-        "run_id": new_run_id(),
-        "event_type": "error",
-        "error_code": error_code,
-        "message": message,
+        web_constants.RUN_ID_FIELD: new_run_id(),
+        web_constants.EVENT_TYPE_FIELD: web_constants.EVENT_ERROR,
+        web_constants.RESULT_ERROR_CODE_FIELD: error_code,
+        web_constants.RESULT_MESSAGE_FIELD: message,
     }
 
 
 def _agent_event_from_dict(event: dict[str, Any]) -> AgentEvent:
     """Convert a Web-only event dict into the shared AgentEvent log shape."""
 
+    event_metadata_fields = {
+        web_constants.RUN_ID_FIELD,
+        web_constants.EVENT_TYPE_FIELD,
+        web_constants.TIMESTAMP_FIELD,
+    }
     payload = {
         key: value
         for key, value in event.items()
-        if key not in {"run_id", "event_type", "timestamp"}
+        if key not in event_metadata_fields
     }
     return AgentEvent(
-        run_id=str(event.get("run_id") or new_run_id()),
-        event_type=str(event.get("event_type") or "unknown"),
+        run_id=str(event.get(web_constants.RUN_ID_FIELD) or new_run_id()),
+        event_type=str(event.get(web_constants.EVENT_TYPE_FIELD) or web_constants.UNKNOWN_EVENT_TYPE),
         payload=payload,
-        timestamp=str(event["timestamp"]) if event.get("timestamp") else datetime.now(UTC).isoformat(),
+        timestamp=(
+            str(event[web_constants.TIMESTAMP_FIELD])
+            if event.get(web_constants.TIMESTAMP_FIELD)
+            else datetime.now(UTC).isoformat()
+        ),
     )
 
 
@@ -1035,75 +1102,73 @@ def build_approval_summary(request: ApprovalRequest) -> dict[str, Any]:
     """
 
     arguments = request.arguments
-    if request.tool_name == "delete_qa_card":
+    if request.tool_name == web_constants.DELETE_TOOL_NAME:
         return {
-            "title": "删除知识卡片",
-            "tool_name": request.tool_name,
-            "tool_label": "删除知识卡片",
-            "target_label": "卡片 ID",
-            "target": _truncate_summary_text(str(arguments.get("card_id") or "")),
-            "changes": [],
-            "preview": "",
-            "risk": "将物理删除本地知识卡片。",
-            "reason": _truncate_summary_text(request.reason),
+            web_constants.APPROVAL_SUMMARY_TITLE_FIELD: "删除知识卡片",
+            web_constants.APPROVAL_SUMMARY_TOOL_NAME_FIELD: request.tool_name,
+            web_constants.APPROVAL_SUMMARY_TOOL_LABEL_FIELD: "删除知识卡片",
+            web_constants.APPROVAL_SUMMARY_TARGET_LABEL_FIELD: "卡片 ID",
+            web_constants.APPROVAL_SUMMARY_TARGET_FIELD: _truncate_summary_text(
+                str(arguments.get(web_constants.CARD_ID_FIELD) or "")
+            ),
+            web_constants.APPROVAL_SUMMARY_CHANGES_FIELD: [],
+            web_constants.APPROVAL_SUMMARY_PREVIEW_FIELD: "",
+            web_constants.APPROVAL_SUMMARY_RISK_FIELD: "将物理删除本地知识卡片。",
+            web_constants.APPROVAL_SUMMARY_REASON_FIELD: _truncate_summary_text(request.reason),
         }
-    if request.tool_name == "update_qa_card":
+    if request.tool_name == web_constants.UPDATE_TOOL_NAME:
         changed_fields = [
             label
-            for field_name, label in [
-                ("question", "原始问题"),
-                ("answer", "原始答案"),
-                ("summary", "摘要"),
-                ("keywords", "关键词"),
-                ("category", "分类"),
-            ]
+            for field_name, label in web_constants.UPDATE_CHANGE_FIELD_LABELS
             if field_name in arguments
         ]
         return {
-            "title": "更新知识卡片",
-            "tool_name": request.tool_name,
-            "tool_label": "更新知识卡片",
-            "target_label": "卡片 ID",
-            "target": _truncate_summary_text(str(arguments.get("card_id") or "")),
-            "changes": changed_fields,
-            "preview": _truncate_summary_text(_first_update_preview(arguments)),
-            "risk": "将覆盖当前卡片内容。",
-            "reason": _truncate_summary_text(request.reason),
+            web_constants.APPROVAL_SUMMARY_TITLE_FIELD: "更新知识卡片",
+            web_constants.APPROVAL_SUMMARY_TOOL_NAME_FIELD: request.tool_name,
+            web_constants.APPROVAL_SUMMARY_TOOL_LABEL_FIELD: "更新知识卡片",
+            web_constants.APPROVAL_SUMMARY_TARGET_LABEL_FIELD: "卡片 ID",
+            web_constants.APPROVAL_SUMMARY_TARGET_FIELD: _truncate_summary_text(
+                str(arguments.get(web_constants.CARD_ID_FIELD) or "")
+            ),
+            web_constants.APPROVAL_SUMMARY_CHANGES_FIELD: changed_fields,
+            web_constants.APPROVAL_SUMMARY_PREVIEW_FIELD: _truncate_summary_text(_first_update_preview(arguments)),
+            web_constants.APPROVAL_SUMMARY_RISK_FIELD: "将覆盖当前卡片内容。",
+            web_constants.APPROVAL_SUMMARY_REASON_FIELD: _truncate_summary_text(request.reason),
         }
-    if request.tool_name == MERGE_TOOL_NAME:
-        card_ids = [str(card_id) for card_id in arguments.get("card_ids", [])]
-        question = str(arguments.get("question") or "")
-        category = str(arguments.get("category") or "")
-        keywords = arguments.get("keywords") or []
+    if request.tool_name == web_constants.MERGE_TOOL_NAME:
+        card_ids = [str(card_id) for card_id in arguments.get(web_constants.CARD_IDS_FIELD, [])]
+        question = str(arguments.get(web_constants.QUESTION_FIELD) or "")
+        category = str(arguments.get(web_constants.CATEGORY_FIELD) or "")
+        keywords = arguments.get(web_constants.KEYWORDS_FIELD) or []
         preview = _merge_preview(question=question, category=category, keywords=keywords)
         return {
-            "title": "合并知识卡片",
-            "tool_name": request.tool_name,
-            "tool_label": "合并知识卡片",
-            "target_label": "原卡片",
-            "target": _truncate_summary_text(", ".join(card_ids)),
-            "changes": ["创建 1 张新卡片", f"删除 {len(card_ids)} 张原卡片"],
-            "preview": _truncate_summary_text(preview),
-            "risk": "将创建新卡片并物理删除原卡片。",
-            "reason": _truncate_summary_text(request.reason),
+            web_constants.APPROVAL_SUMMARY_TITLE_FIELD: "合并知识卡片",
+            web_constants.APPROVAL_SUMMARY_TOOL_NAME_FIELD: request.tool_name,
+            web_constants.APPROVAL_SUMMARY_TOOL_LABEL_FIELD: "合并知识卡片",
+            web_constants.APPROVAL_SUMMARY_TARGET_LABEL_FIELD: "原卡片",
+            web_constants.APPROVAL_SUMMARY_TARGET_FIELD: _truncate_summary_text(", ".join(card_ids)),
+            web_constants.APPROVAL_SUMMARY_CHANGES_FIELD: ["创建 1 张新卡片", f"删除 {len(card_ids)} 张原卡片"],
+            web_constants.APPROVAL_SUMMARY_PREVIEW_FIELD: _truncate_summary_text(preview),
+            web_constants.APPROVAL_SUMMARY_RISK_FIELD: "将创建新卡片并物理删除原卡片。",
+            web_constants.APPROVAL_SUMMARY_REASON_FIELD: _truncate_summary_text(request.reason),
         }
     return {
-        "title": "确认高风险工具",
-        "tool_name": request.tool_name,
-        "tool_label": request.tool_name,
-        "target_label": "工具",
-        "target": request.tool_name,
-        "changes": [],
-        "preview": "",
-        "risk": "该操作会修改本地数据。",
-        "reason": _truncate_summary_text(request.reason),
+        web_constants.APPROVAL_SUMMARY_TITLE_FIELD: "确认高风险工具",
+        web_constants.APPROVAL_SUMMARY_TOOL_NAME_FIELD: request.tool_name,
+        web_constants.APPROVAL_SUMMARY_TOOL_LABEL_FIELD: request.tool_name,
+        web_constants.APPROVAL_SUMMARY_TARGET_LABEL_FIELD: "工具",
+        web_constants.APPROVAL_SUMMARY_TARGET_FIELD: request.tool_name,
+        web_constants.APPROVAL_SUMMARY_CHANGES_FIELD: [],
+        web_constants.APPROVAL_SUMMARY_PREVIEW_FIELD: "",
+        web_constants.APPROVAL_SUMMARY_RISK_FIELD: "该操作会修改本地数据。",
+        web_constants.APPROVAL_SUMMARY_REASON_FIELD: _truncate_summary_text(request.reason),
     }
 
 
 def _first_update_preview(arguments: dict[str, Any]) -> str:
     """Return the first meaningful update value for the confirmation preview."""
 
-    for field_name in ["question", "answer", "summary", "category", "keywords"]:
+    for field_name in web_constants.UPDATE_PREVIEW_FIELDS:
         value = arguments.get(field_name)
         if isinstance(value, list) and value:
             return ", ".join(str(item) for item in value)
@@ -1126,10 +1191,13 @@ def _merge_preview(*, question: str, category: str, keywords: Any) -> str:
     return "；".join(parts)
 
 
-def _truncate_summary_text(value: str, limit: int = APPROVAL_SUMMARY_TEXT_LIMIT) -> str:
+def _truncate_summary_text(value: str, limit: int = web_constants.APPROVAL_SUMMARY_TEXT_LIMIT) -> str:
     """Truncate approval summary text, including the ellipsis in the limit."""
 
     text = " ".join(value.split())
     if len(text) <= limit:
         return text
-    return f"{text[: limit - len(APPROVAL_SUMMARY_ELLIPSIS)]}{APPROVAL_SUMMARY_ELLIPSIS}"
+    return (
+        f"{text[: limit - len(web_constants.APPROVAL_SUMMARY_ELLIPSIS)]}"
+        f"{web_constants.APPROVAL_SUMMARY_ELLIPSIS}"
+    )

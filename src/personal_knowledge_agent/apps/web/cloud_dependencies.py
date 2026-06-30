@@ -6,11 +6,7 @@ from datetime import datetime
 from typing import Any, Iterator
 
 from ...agent_bootstrap import AgentConfig
-from ...agent_bootstrap.agent_runtime_config import (
-    DEFAULT_QWEN_EMBEDDING_BASE_URL,
-    DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
-    DEFAULT_QWEN_EMBEDDING_MODEL,
-)
+from ...agent_bootstrap.constants import AgentBootstrapConstants as bootstrap_constants
 from ...agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 from ...agent_tools.todo_tools import TodoToolHandlers
 from ...auth import AuthService, AuthSessionRecord, AuthSessionWithUserRecord, AuthUser, LoginCodeRecord
@@ -26,6 +22,7 @@ from ...postgres import (
     close_postgres_pool,
     create_postgres_pool,
 )
+from .constants import WebConstants as web_constants
 
 
 @dataclass(frozen=True)
@@ -48,9 +45,9 @@ class CloudUserToolFactory:
         pool: Any,
         *,
         dashscope_api_key: str | None = None,
-        embedding_base_url: str = DEFAULT_QWEN_EMBEDDING_BASE_URL,
-        embedding_model: str = DEFAULT_QWEN_EMBEDDING_MODEL,
-        embedding_dimensions: int = DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
+        embedding_base_url: str = bootstrap_constants.DEFAULT_QWEN_EMBEDDING_BASE_URL,
+        embedding_model: str = bootstrap_constants.DEFAULT_QWEN_EMBEDDING_MODEL,
+        embedding_dimensions: int = bootstrap_constants.DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
     ) -> None:
         self._pool = pool
         self._dashscope_api_key = dashscope_api_key
@@ -113,7 +110,7 @@ class WebCloudDependencies:
 
 def create_web_cloud_dependencies(config: AgentConfig) -> WebCloudDependencies:
     if not config.database_url:
-        raise ValueError("DATABASE_URL is required for cloud-only Web runtime")
+        raise ValueError(f"{web_constants.DATABASE_URL_ENV} is required for cloud-only Web runtime")
     pool = create_postgres_pool(config.database_url)
     try:
         auth_service = AuthService(
@@ -232,15 +229,17 @@ def _smtp_config(config: AgentConfig) -> SmtpEmailConfig:
     missing = [
         name
         for name, value in (
-            ("SMTP_HOST", config.smtp_host),
-            ("SMTP_USER", config.smtp_user),
-            ("SMTP_PASSWORD", config.smtp_password),
-            ("MAIL_FROM", config.mail_from),
+            (web_constants.SMTP_HOST_ENV, config.smtp_host),
+            (web_constants.SMTP_USER_ENV, config.smtp_user),
+            (web_constants.SMTP_PASSWORD_ENV, config.smtp_password),
+            (web_constants.MAIL_FROM_ENV, config.mail_from),
         )
         if not value
     ]
     if missing:
-        raise ValueError(f"SMTP config is required when DATABASE_URL is set: {', '.join(missing)}")
+        raise ValueError(
+            f"SMTP config is required when {web_constants.DATABASE_URL_ENV} is set: {', '.join(missing)}"
+        )
     return SmtpEmailConfig(
         host=str(config.smtp_host),
         port=config.smtp_port,

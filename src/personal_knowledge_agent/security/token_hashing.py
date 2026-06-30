@@ -4,15 +4,19 @@ import hashlib
 import hmac
 import secrets
 
+from .constants import SecurityConstants as security_constants
 
-def generate_token(byte_count: int = 32) -> str:
+
+def generate_token(byte_count: int = security_constants.DEFAULT_TOKEN_BYTE_COUNT) -> str:
     if byte_count <= 0:
         raise ValueError("byte_count must be positive")
     return secrets.token_urlsafe(byte_count)
 
 
 def generate_verification_code() -> str:
-    return f"{secrets.randbelow(1_000_000):06d}"
+    return str(secrets.randbelow(security_constants.VERIFICATION_CODE_UPPER_BOUND)).zfill(
+        security_constants.VERIFICATION_CODE_WIDTH
+    )
 
 
 def hash_token(token: str) -> str:

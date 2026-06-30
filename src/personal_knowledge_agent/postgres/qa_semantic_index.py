@@ -6,6 +6,7 @@ from typing import Protocol
 from ..qa_data_access import QACard, SemanticSearchHit
 
 from .qa_repository import PostgresQACardRepository
+from .constants import PostgresConstants as postgres_constants
 
 
 class EmbeddingClient(Protocol):
@@ -32,7 +33,7 @@ class PostgresQASemanticIndex:
         vector = self.embedding_client.embed_text(_index_text(card))
         updated = self.repository.update_embedding_status(
             card.id,
-            status="ready",
+            status=postgres_constants.EMBEDDING_STATUS_READY,
             embedding=vector,
             embedding_model=self.embedding_client.model,
         )
@@ -40,7 +41,7 @@ class PostgresQASemanticIndex:
             raise RuntimeError(f"card not found or not owned: {card.id}")
 
     def delete_card(self, card_id: str) -> None:
-        self.repository.update_embedding_status(card_id, status="pending")
+        self.repository.update_embedding_status(card_id, status=postgres_constants.EMBEDDING_STATUS_PENDING)
 
     def close(self) -> None:
         close = getattr(self.embedding_client, "close", None)

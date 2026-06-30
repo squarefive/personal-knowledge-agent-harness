@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -22,10 +21,7 @@ from .auth_models import (
     LoginCodeRecord,
     VerifiedLoginSession,
 )
-
-LOGIN_CODE_PURPOSE = "login"
-LLM_PROVIDER_USER_ID_PATTERN = re.compile(r"^[a-zA-Z0-9\-_]+$")
-MAX_LLM_PROVIDER_USER_ID_LENGTH = 512
+from .constants import AuthConstants as auth_constants
 
 
 class AuthRepository(Protocol):
@@ -56,9 +52,9 @@ class AuthService:
         repository: AuthRepository,
         *,
         allowed_login_emails: set[str],
-        code_ttl: timedelta = timedelta(minutes=10),
-        session_ttl: timedelta = timedelta(days=30),
-        max_attempts: int = 5,
+        code_ttl: timedelta = auth_constants.DEFAULT_CODE_TTL,
+        session_ttl: timedelta = auth_constants.DEFAULT_SESSION_TTL,
+        max_attempts: int = auth_constants.DEFAULT_MAX_ATTEMPTS,
         clock: Callable[[], datetime] | None = None,
         verification_code_factory: Callable[[], str] = generate_verification_code,
         token_factory: Callable[[], str] = generate_token,
@@ -68,7 +64,7 @@ class AuthService:
         session_id_factory: Callable[[], str] | None = None,
     ) -> None:
         if max_attempts <= 0:
-            raise ValueError("max_attempts must be positive")
+            raise ValueError(auth_constants.MESSAGE_MAX_ATTEMPTS_POSITIVE)
         self._repository = repository
         self._allowed_login_emails = {normalize_email(email) for email in allowed_login_emails}
         self._code_ttl = code_ttl
@@ -77,18 +73,29 @@ class AuthService:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._verification_code_factory = verification_code_factory
         self._token_factory = token_factory
-        self._user_id_factory = user_id_factory or (lambda: f"usr_{generate_token(18)}")
-        self._llm_provider_user_id_factory = llm_provider_user_id_factory or (lambda: f"llm_{generate_token(18)}")
-        self._login_code_id_factory = login_code_id_factory or (lambda: f"lc_{generate_token(18)}")
-        self._session_id_factory = session_id_factory or (lambda: f"sess_{generate_token(18)}")
+        self._user_id_factory = user_id_factory or (
+            lambda: f"{auth_constants.USER_ID_PREFIX}_{generate_token(auth_constants.GENERATED_ID_TOKEN_BYTES)}"
+        )
+        self._llm_provider_user_id_factory = llm_provider_user_id_factory or (
+            lambda: (
+                f"{auth_constants.LLM_PROVIDER_USER_ID_PREFIX}_"
+                f"{generate_token(auth_constants.GENERATED_ID_TOKEN_BYTES)}"
+            )
+        )
+        self._login_code_id_factory = login_code_id_factory or (
+            lambda: f"{auth_constants.LOGIN_CODE_ID_PREFIX}_{generate_token(auth_constants.GENERATED_ID_TOKEN_BYTES)}"
+        )
+        self._session_id_factory = session_id_factory or (
+            lambda: f"{auth_constants.SESSION_ID_PREFIX}_{generate_token(auth_constants.GENERATED_ID_TOKEN_BYTES)}"
+        )
 
     def request_login_code(self, email: str) -> IssuedLoginCode | AuthFailure:
         normalized_email = normalize_email(email)
         if normalized_email not in self._allowed_login_emails:
             return AuthFailure(
                 ok=False,
-                error_code="email_not_allowed",
-                message="email is not allowed to log in",
+                error_code=auth_constants.ERROR_EMAIL_NOT_ALLOWED,
+                message=auth_constants.MESSAGE_EMAIL_NOT_ALLOWED,
                 email=normalized_email,
             )
 
@@ -104,7 +111,7 @@ class AuthService:
                 email=normalized_email,
                 code_hash=hash_token(plaintext_code),
                 expires_at=expires_at,
-                purpose=LOGIN_CODE_PURPOSE,
+                purpose=auth_constants.LOGIN_CODE_PURPOSE,
                 consumed=False,
                 attempt_count=0,
                 created_at=now,
@@ -117,29 +124,59 @@ class AuthService:
         if normalized_email not in self._allowed_login_emails:
             return AuthFailure(
                 ok=False,
-                error_code="email_not_allowed",
-                message="email is not allowed to log in",
+                error_code=auth_constants.ERROR_EMAIL_NOT_ALLOWED,
+                message=auth_constants.MESSAGE_EMAIL_NOT_ALLOWED,
                 email=normalized_email,
             )
 
-        login_code = self._repository.get_latest_login_code(normalized_email, LOGIN_CODE_PURPOSE)
+        login_code = self._repository.get_latest_login_code(normalized_email, auth_constants.LOGIN_CODE_PURPOSE)
         if login_code is None:
-            return AuthFailure(ok=False, error_code="login_code_not_found", message="login code not found", email=normalized_email)
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_LOGIN_CODE_NOT_FOUND,
+                message=auth_constants.MESSAGE_LOGIN_CODE_NOT_FOUND,
+                email=normalized_email,
+            )
 
         now = self._now()
         if login_code.consumed:
-            return AuthFailure(ok=False, error_code="login_code_consumed", message="login code has already been used", email=normalized_email)
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_LOGIN_CODE_CONSUMED,
+                message=auth_constants.MESSAGE_LOGIN_CODE_CONSUMED,
+                email=normalized_email,
+            )
         if login_code.expires_at <= now:
-            return AuthFailure(ok=False, error_code="login_code_expired", message="login code has expired", email=normalized_email)
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_LOGIN_CODE_EXPIRED,
+                message=auth_constants.MESSAGE_LOGIN_CODE_EXPIRED,
+                email=normalized_email,
+            )
         if login_code.attempt_count >= self._max_attempts:
-            return AuthFailure(ok=False, error_code="too_many_attempts", message="too many login code attempts", email=normalized_email)
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_TOO_MANY_ATTEMPTS,
+                message=auth_constants.MESSAGE_TOO_MANY_ATTEMPTS,
+                email=normalized_email,
+            )
         if not verify_token(code.strip(), login_code.code_hash):
             self._repository.increment_login_code_attempt(login_code.login_code_id)
-            return AuthFailure(ok=False, error_code="invalid_login_code", message="login code is invalid", email=normalized_email)
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_INVALID_LOGIN_CODE,
+                message=auth_constants.MESSAGE_INVALID_LOGIN_CODE,
+                email=normalized_email,
+            )
 
         user = self._repository.get_user_by_email(normalized_email)
         if user is None:
-            return AuthFailure(ok=False, error_code="user_not_found", message="user not found for login code", email=normalized_email)
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_USER_NOT_FOUND,
+                message=auth_constants.MESSAGE_USER_NOT_FOUND,
+                email=normalized_email,
+            )
 
         self._repository.consume_login_code(login_code.login_code_id, now)
         session_token = self._token_factory()
@@ -166,17 +203,33 @@ class AuthService:
     def authenticate_session_token(self, session_token: str) -> AuthenticatedSession | AuthFailure:
         stripped_token = session_token.strip()
         if not stripped_token:
-            return AuthFailure(ok=False, error_code="empty_session_token", message="session token is required")
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_EMPTY_SESSION_TOKEN,
+                message=auth_constants.MESSAGE_EMPTY_SESSION_TOKEN,
+            )
 
         session = self._repository.get_auth_session_by_token_hash(hash_token(stripped_token))
         if session is None:
-            return AuthFailure(ok=False, error_code="auth_session_not_found", message="auth session not found")
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_AUTH_SESSION_NOT_FOUND,
+                message=auth_constants.MESSAGE_AUTH_SESSION_NOT_FOUND,
+            )
 
         now = self._now()
         if session.revoked_at is not None:
-            return AuthFailure(ok=False, error_code="auth_session_revoked", message="auth session has been revoked")
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_AUTH_SESSION_REVOKED,
+                message=auth_constants.MESSAGE_AUTH_SESSION_REVOKED,
+            )
         if session.expires_at <= now:
-            return AuthFailure(ok=False, error_code="auth_session_expired", message="auth session has expired")
+            return AuthFailure(
+                ok=False,
+                error_code=auth_constants.ERROR_AUTH_SESSION_EXPIRED,
+                message=auth_constants.MESSAGE_AUTH_SESSION_EXPIRED,
+            )
 
         self._repository.update_auth_session_last_seen(session.session_id, now)
         return AuthenticatedSession(
@@ -239,10 +292,10 @@ def _validate_non_private_llm_user_id(email: str, llm_provider_user_id: str) -> 
     local_part = normalized_email.split("@", 1)[0]
     normalized_llm_id = llm_provider_user_id.lower()
     if not llm_provider_user_id:
-        raise ValueError("llm_provider_user_id must not be empty")
-    if len(llm_provider_user_id) > MAX_LLM_PROVIDER_USER_ID_LENGTH:
-        raise ValueError("llm_provider_user_id must be 512 characters or fewer")
+        raise ValueError(auth_constants.MESSAGE_LLM_PROVIDER_USER_ID_REQUIRED)
+    if len(llm_provider_user_id) > auth_constants.MAX_LLM_PROVIDER_USER_ID_LENGTH:
+        raise ValueError(auth_constants.MESSAGE_LLM_PROVIDER_USER_ID_TOO_LONG)
     if normalized_email in normalized_llm_id or local_part in normalized_llm_id:
-        raise ValueError("llm_provider_user_id must not contain email-derived values")
-    if not LLM_PROVIDER_USER_ID_PATTERN.fullmatch(llm_provider_user_id):
-        raise ValueError("llm_provider_user_id must match [a-zA-Z0-9\\-_]+")
+        raise ValueError(auth_constants.MESSAGE_LLM_PROVIDER_USER_ID_PRIVATE)
+    if not auth_constants.LLM_PROVIDER_USER_ID_PATTERN.fullmatch(llm_provider_user_id):
+        raise ValueError(auth_constants.MESSAGE_LLM_PROVIDER_USER_ID_PATTERN)

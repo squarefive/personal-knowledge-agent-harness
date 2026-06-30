@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import Any, Callable
 
+from .constants import MailConstants as mail_constants
+
 
 class SmtpEmailSendError(RuntimeError):
     pass
@@ -19,7 +21,7 @@ class SmtpEmailConfig:
     password: str = field(repr=False)
     mail_from: str
     starttls: bool = True
-    timeout_seconds: int = 30
+    timeout_seconds: int = mail_constants.DEFAULT_TIMEOUT_SECONDS
 
 
 class SmtpEmailSender:

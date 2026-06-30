@@ -6,6 +6,7 @@ from .conversation_session_metadata_repository import ConversationSessionMetadat
 from .conversation_session_models import SessionRestoreResult
 from .conversation_session_summarizer import ConversationSessionSummarizer
 from .conversation_transcript_repository import ConversationTranscriptRepository
+from .constants import ConversationSessionConstants as session_constants
 from .session_utils import _recent_messages, _recovery_notice
 
 
@@ -16,9 +17,9 @@ class ConversationSessionRestorer:
         transcript: ConversationTranscriptRepository,
         metadata_store: ConversationSessionMetadataRepository,
         summarizer: ConversationSessionSummarizer | None = None,
-        message_budget_chars: int = 120_000,
-        first_messages_count: int = 6,
-        recent_messages_count: int = 12,
+        message_budget_chars: int = session_constants.RESTORE_MESSAGE_BUDGET_CHARS,
+        first_messages_count: int = session_constants.RESTORE_FIRST_MESSAGES_COUNT,
+        recent_messages_count: int = session_constants.RESTORE_RECENT_MESSAGES_COUNT,
     ):
         self.transcript = transcript
         self.metadata_store = metadata_store
@@ -34,9 +35,9 @@ class ConversationSessionRestorer:
             self.metadata_store.update_counts(
                 event_count=self.transcript.event_count(),
                 message_count=len(messages),
-                last_restore_mode="full",
+                last_restore_mode=session_constants.RESTORE_MODE_FULL,
             )
-            return SessionRestoreResult(messages=messages, mode="full")
+            return SessionRestoreResult(messages=messages, mode=session_constants.RESTORE_MODE_FULL)
 
         if self.summarizer is not None:
             try:
@@ -46,11 +47,15 @@ class ConversationSessionRestorer:
                 self.metadata_store.update_counts(
                     event_count=self.transcript.event_count(),
                     message_count=len(messages),
-                    summary_status="valid",
+                    summary_status=session_constants.SUMMARY_STATUS_VALID,
                     summary_attempts=attempts,
-                    last_restore_mode="summary_plus_recent",
+                    last_restore_mode=session_constants.RESTORE_MODE_SUMMARY_PLUS_RECENT,
                 )
-                return SessionRestoreResult(messages=recent, mode="summary_plus_recent", summary=summary)
+                return SessionRestoreResult(
+                    messages=recent,
+                    mode=session_constants.RESTORE_MODE_SUMMARY_PLUS_RECENT,
+                    summary=summary,
+                )
             except Exception as exc:
                 return self._fallback(messages, str(exc))
 
@@ -62,12 +67,17 @@ class ConversationSessionRestorer:
         self.metadata_store.update_counts(
             event_count=self.transcript.event_count(),
             message_count=len(messages),
-            summary_status="failed",
+            summary_status=session_constants.SUMMARY_STATUS_FAILED,
             summary_attempts=(self.summarizer.max_retries if self.summarizer is not None else 0),
-            last_restore_mode="first_and_recent",
+            last_restore_mode=session_constants.RESTORE_MODE_FIRST_AND_RECENT,
             summary_error=error[:240],
         )
-        return SessionRestoreResult(messages=restored, mode="first_and_recent", summary=notice, warning=notice)
+        return SessionRestoreResult(
+            messages=restored,
+            mode=session_constants.RESTORE_MODE_FIRST_AND_RECENT,
+            summary=notice,
+            warning=notice,
+        )
 
 
 def _estimated_chars(messages: list[dict]) -> int:

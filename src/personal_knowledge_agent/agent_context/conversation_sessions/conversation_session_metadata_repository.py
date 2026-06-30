@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from .conversation_session_models import SessionMetadata
-from .session_utils import DEFAULT_SESSION_TITLE, utc_now, validate_session_id
+from .session_utils import utc_now, validate_session_id
 
 
 class ConversationSessionMetadataRepository(Protocol):

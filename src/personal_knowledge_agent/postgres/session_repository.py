@@ -8,6 +8,8 @@ from typing import Protocol
 
 from psycopg.types.json import Jsonb
 
+from .constants import PostgresConstants as postgres_constants
+
 
 class PostgresConnection(Protocol):
     def execute(self, query: str, params: Sequence[object] = ()) -> object: ...
@@ -59,7 +61,7 @@ class PostgresConversationSessionRepository:
                 session_id=clean_session_id,
                 title=clean_title,
                 summary=None,
-                status="idle",
+                status=postgres_constants.SESSION_STATUS_IDLE,
                 current_run_id=None,
                 last_prompt_usage_ratio=None,
                 created_at="",
@@ -67,7 +69,7 @@ class PostgresConversationSessionRepository:
             )
         return _row_to_session(row)
 
-    def list_sessions(self, *, limit: int = 20) -> list[ConversationSessionRecord]:
+    def list_sessions(self, *, limit: int = postgres_constants.DEFAULT_SESSION_LIMIT) -> list[ConversationSessionRecord]:
         cursor = self._connection.execute(
             """
             SELECT
@@ -151,9 +153,9 @@ class PostgresConversationSessionRepository:
         clean_sequence_no = sequence_no if sequence_no is not None else self._next_sequence_no(clean_session_id)
         if not isinstance(clean_sequence_no, int) or clean_sequence_no < 1:
             raise ValueError("sequence_no must be a positive integer")
-        message_role = message.get("role")
+        message_role = message.get(postgres_constants.SESSION_MESSAGE_FIELD_ROLE)
         clean_role = _optional_text("role", role) or _require_text(
-            "message.role",
+            postgres_constants.SESSION_MESSAGE_ROLE_PATH,
             message_role if isinstance(message_role, str) else "",
         )
 
@@ -198,7 +200,10 @@ class PostgresConversationSessionRepository:
                 """,
                 (self._user_id, clean_session_id, _safe_limit(limit)),
             )
-        return [_message_from_value(_row_value(row, 0, "message")) for row in _fetchall(cursor)]
+        return [
+            _message_from_value(_row_value(row, 0, postgres_constants.SESSION_MESSAGE_ROW_FIELD_MESSAGE))
+            for row in _fetchall(cursor)
+        ]
 
     def count_messages(self, session_id: str) -> int:
         clean_session_id = _require_text("session_id", session_id)
@@ -249,10 +254,10 @@ class PostgresConversationSessionRepository:
         cursor = self._connection.execute(
             """
             UPDATE conversation_sessions
-            SET status = 'running', current_run_id = %s, updated_at = now()
+            SET status = %s, current_run_id = %s, updated_at = now()
             WHERE user_id = %s AND session_id = %s
             """,
-            (clean_run_id, self._user_id, clean_session_id),
+            (postgres_constants.SESSION_STATUS_RUNNING, clean_run_id, self._user_id, clean_session_id),
         )
         self._commit()
         return _rowcount(cursor) > 0
@@ -262,10 +267,10 @@ class PostgresConversationSessionRepository:
         cursor = self._connection.execute(
             """
             UPDATE conversation_sessions
-            SET status = 'idle', current_run_id = NULL, updated_at = now()
+            SET status = %s, current_run_id = NULL, updated_at = now()
             WHERE user_id = %s AND session_id = %s
             """,
-            (self._user_id, clean_session_id),
+            (postgres_constants.SESSION_STATUS_IDLE, self._user_id, clean_session_id),
         )
         self._commit()
         return _rowcount(cursor) > 0
@@ -369,5 +374,5 @@ def _optional_float(value: object) -> float | None:
 
 def _safe_limit(limit: int) -> int:
     if not isinstance(limit, int) or limit < 1:
-        return 20
-    return min(limit, 100)
+        return postgres_constants.DEFAULT_SESSION_LIMIT
+    return min(limit, postgres_constants.MAX_SESSION_LIMIT)

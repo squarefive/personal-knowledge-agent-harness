@@ -1,6 +1,5 @@
 from .conversation_session_metadata_repository import (
     ConversationSessionMetadataRepository,
-    DEFAULT_SESSION_TITLE,
     utc_now,
     validate_session_id,
 )
@@ -10,6 +9,7 @@ from .conversation_session_summarizer import ConversationSessionSummarizer
 from .conversation_transcript_repository import ConversationTranscriptRepository
 from .runtime_context_compactor import RuntimeContextCompactor
 from .tool_result_compactor import ToolResultCompactor
+from .constants import ConversationSessionConstants
 
 __all__ = [
     "ConversationSessionMetadataRepository",
@@ -20,7 +20,7 @@ __all__ = [
     "RuntimeContextCompactor",
     "ToolResultCompactor",
     "CompactRecord",
-    "DEFAULT_SESSION_TITLE",
+    "ConversationSessionConstants",
     "SessionMetadata",
     "SessionRestoreResult",
     "utc_now",

@@ -14,6 +14,7 @@ from ..tool_runtime.tool_permission_policy import (
     default_approval_callback,
     permission_denied_result,
 )
+from .constants import AgentRuntimeConstants as runtime_constants
 
 
 @dataclass
@@ -70,7 +71,7 @@ class AgentToolCallRunner:
                     result = permission_denied_result("Permission denied by user.")
         else:
             result = permission_denied_result(decision.reason)
-        duration_ms = int((time.monotonic() - started_at) * 1000)
+        duration_ms = int((time.monotonic() - started_at) * runtime_constants.MILLISECONDS_PER_SECOND)
         compact_record = self._compact_tool_result(
             run_id=run_id,
             tool_call_id=tool_call.id,

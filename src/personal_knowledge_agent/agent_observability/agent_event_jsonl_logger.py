@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Final
 
 from ..agent_runtime.agent_events import AgentEvent
+from .constants import AgentObservabilityConstants as observability_constants
 
 _STOP: Final = object()
 
@@ -15,10 +16,10 @@ _STOP: Final = object()
 class AgentEventJsonlLogger:
     def __init__(
         self,
-        path: str | Path = ".logs/agent.log",
+        path: str | Path = observability_constants.DEFAULT_LOG_PATH,
         *,
-        max_queue_size: int = 1000,
-        flush_timeout_seconds: float = 2.0,
+        max_queue_size: int = observability_constants.DEFAULT_MAX_QUEUE_SIZE,
+        flush_timeout_seconds: float = observability_constants.DEFAULT_FLUSH_TIMEOUT_SECONDS,
     ):
         self.path = Path(path)
         self.flush_timeout_seconds = flush_timeout_seconds

@@ -4,6 +4,7 @@ from dataclasses import asdict
 from typing import Any, Protocol
 
 from ...todo_data_access import TodoItem
+from .constants import TodoToolConstants as todo_constants
 
 
 class TodoStore(Protocol):
@@ -19,8 +20,8 @@ class TodoStore(Protocol):
         self,
         *,
         query: str | None = None,
-        status: str | None = "open",
-        limit: int = 20,
+        status: str | None = todo_constants.DEFAULT_STATUS,
+        limit: int = todo_constants.DEFAULT_LIMIT,
     ) -> list[TodoItem]: ...
 
     def update_todo(
@@ -41,37 +42,40 @@ class TodoToolHandlers:
 
     def create_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            title = self._required_text(arguments, "title")
-            notes = self._optional_text(arguments, "notes")
-            due_at = self._optional_text(arguments, "due_at")
+            title = self._required_text(arguments, todo_constants.ARG_TITLE)
+            notes = self._optional_text(arguments, todo_constants.ARG_NOTES)
+            due_at = self._optional_text(arguments, todo_constants.ARG_DUE_AT)
             todo = self.store.create_todo(title=title, notes=notes, due_at=due_at)
-            return {"ok": True, "todo": self._todo_payload(todo)}
+            return {todo_constants.FIELD_OK: True, todo_constants.FIELD_TODO: self._todo_payload(todo)}
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(todo_constants.ERROR_INVALID_INPUT, str(exc))
 
     def list_todos(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            query = self._optional_text(arguments, "query")
-            status = self._optional_text(arguments, "status")
-            limit = self._optional_limit(arguments, default=20)
-            todos = self.store.list_todos(query=query, status=status or "open", limit=limit)
-            return {"ok": True, "todos": [self._todo_payload(todo) for todo in todos]}
+            query = self._optional_text(arguments, todo_constants.ARG_QUERY)
+            status = self._optional_text(arguments, todo_constants.ARG_STATUS)
+            limit = self._optional_limit(arguments, default=todo_constants.DEFAULT_LIMIT)
+            todos = self.store.list_todos(query=query, status=status or todo_constants.DEFAULT_STATUS, limit=limit)
+            return {
+                todo_constants.FIELD_OK: True,
+                todo_constants.FIELD_TODOS: [self._todo_payload(todo) for todo in todos],
+            }
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(todo_constants.ERROR_INVALID_INPUT, str(exc))
 
     def update_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            todo_id = self._required_text(arguments, "todo_id")
+            todo_id = self._required_text(arguments, todo_constants.ARG_TODO_ID)
             patch = self._update_patch(arguments)
             todo = self.store.update_todo(todo_id, **patch)
             if todo is None:
-                return self._error("not_found", f"todo not found: {todo_id}")
-            return {"ok": True, "todo": self._todo_payload(todo)}
+                return self._error(todo_constants.ERROR_NOT_FOUND, f"todo not found: {todo_id}")
+            return {todo_constants.FIELD_OK: True, todo_constants.FIELD_TODO: self._todo_payload(todo)}
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(todo_constants.ERROR_INVALID_INPUT, str(exc))
 
     def definitions(self) -> list[dict[str, Any]]:
-        return TODO_TOOL_DEFINITIONS
+        return todo_constants.TODO_TOOL_DEFINITIONS
 
     @staticmethod
     def _required_text(arguments: dict[str, Any], name: str) -> str:
@@ -91,27 +95,27 @@ class TodoToolHandlers:
 
     @staticmethod
     def _optional_limit(arguments: dict[str, Any], default: int) -> int:
-        value = arguments.get("limit", default)
+        value = arguments.get(todo_constants.ARG_LIMIT, default)
         if not isinstance(value, int) or value < 1:
             return default
-        return min(value, 50)
+        return min(value, todo_constants.MAX_LIMIT)
 
     def _update_patch(self, arguments: dict[str, Any]) -> dict[str, Any]:
         patch: dict[str, Any] = {}
-        if "title" in arguments:
-            patch["title"] = self._required_text(arguments, "title")
-        if "notes" in arguments:
-            patch["notes"] = self._optional_text(arguments, "notes") or ""
-        if "status" in arguments:
-            patch["status"] = self._required_text(arguments, "status")
-        if "due_at" in arguments:
-            due_at = self._optional_text(arguments, "due_at")
+        if todo_constants.ARG_TITLE in arguments:
+            patch[todo_constants.PATCH_TITLE] = self._required_text(arguments, todo_constants.ARG_TITLE)
+        if todo_constants.ARG_NOTES in arguments:
+            patch[todo_constants.PATCH_NOTES] = self._optional_text(arguments, todo_constants.ARG_NOTES) or ""
+        if todo_constants.ARG_STATUS in arguments:
+            patch[todo_constants.PATCH_STATUS] = self._required_text(arguments, todo_constants.ARG_STATUS)
+        if todo_constants.ARG_DUE_AT in arguments:
+            due_at = self._optional_text(arguments, todo_constants.ARG_DUE_AT)
             if due_at is None:
-                patch["clear_due_at"] = True
+                patch[todo_constants.PATCH_CLEAR_DUE_AT] = True
             else:
-                patch["due_at"] = due_at
+                patch[todo_constants.PATCH_DUE_AT] = due_at
                 if not due_at:
-                    patch["clear_due_at"] = True
+                    patch[todo_constants.PATCH_CLEAR_DUE_AT] = True
         if not patch:
             raise ValueError("at least one field must be provided")
         return patch
@@ -119,100 +123,13 @@ class TodoToolHandlers:
     @staticmethod
     def _todo_payload(todo: TodoItem) -> dict[str, Any]:
         payload = asdict(todo)
-        payload["todo_id"] = payload.pop("id")
+        payload[todo_constants.FIELD_TODO_ID] = payload.pop(todo_constants.TODO_MODEL_ID_FIELD)
         return payload
 
     @staticmethod
     def _error(error_code: str, message: str) -> dict[str, Any]:
-        return {"ok": False, "error_code": error_code, "message": message}
-
-
-TODO_TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "create_todo",
-            "description": "保存当前用户的一条 todo 待办项。当用户明确要求记录之后要做的行动项、任务或待办时使用；本工具会写入服务端事实库。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "待办标题，应是用户要之后执行的具体行动项；不得把普通聊天、假设或未确认计划保存为待办。",
-                    },
-                    "notes": {
-                        "type": "string",
-                        "description": "可选补充说明。只有用户提供额外背景或细节时填写；没有则省略。",
-                    },
-                    "due_at": {
-                        "type": "string",
-                        "description": "可选截止时间。第一版只保存用户明确提供的时间文本或 ISO 风格字符串，不做提醒或自然语言时间推断。",
-                    },
-                },
-                "required": ["title"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_todos",
-            "description": "查询当前用户 todo 待办项。当用户要求查看、搜索或核对当前用户 todo 列表时使用；默认只返回 open 待办。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "可选搜索词，用于匹配待办标题和备注。",
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["open", "done", "canceled", "all"],
-                        "description": "可选状态过滤。默认 open；用户明确要求全部时使用 all；用户要求已完成或已取消时分别使用 done 或 canceled。",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "最大返回数量，工具会限制到允许范围。",
-                    },
-                },
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_todo",
-            "description": "更新当前用户的一条 todo 待办项。当用户明确要求修改待办标题、备注、截止时间或状态时使用；需要真实 todo_id。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "todo_id": {
-                        "type": "string",
-                        "description": "要更新的 todo ID。若用户没有提供明确 ID，应先查询候选并让用户确认，不要凭最近一条待办静默修改。",
-                    },
-                    "title": {
-                        "type": "string",
-                        "description": "新的待办标题，提供时必须是非空具体行动项。",
-                    },
-                    "notes": {
-                        "type": "string",
-                        "description": "新的补充说明。可为空字符串，用于清空备注。",
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["open", "done", "canceled"],
-                        "description": "新的待办状态。完成使用 done；取消或不再需要使用 canceled；重新打开使用 open。",
-                    },
-                    "due_at": {
-                        "type": "string",
-                        "description": "新的截止时间。空字符串表示清空截止时间；第一版不做提醒或自然语言时间推断。",
-                    },
-                },
-                "required": ["todo_id"],
-                "additionalProperties": False,
-            },
-        },
-    },
-]
+        return {
+            todo_constants.FIELD_OK: False,
+            todo_constants.FIELD_ERROR_CODE: error_code,
+            todo_constants.FIELD_MESSAGE: message,
+        }

@@ -3,22 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
+from ...llm_clients.constants import LLMClientConstants as llm_constants
 from ...qa_data_access import QACard, SearchResult, SemanticSearchHit
 from ...qa_data_access.duplicate_detection import DuplicateDetectionService, DuplicateGroup
-
-KEYWORD_SCORE_WEIGHT = 0.4
-SEMANTIC_SCORE_WEIGHT = 0.6
-STRONG_MATCH_THRESHOLD = 0.70
-MEDIUM_MATCH_THRESHOLD = 0.50
-WEAK_MATCH_THRESHOLD = 0.35
-DUPLICATE_SEMANTIC_WEIGHT = 0.55
-DUPLICATE_KEYWORD_OVERLAP_WEIGHT = 0.25
-DUPLICATE_QUESTION_OVERLAP_WEIGHT = 0.15
-DUPLICATE_CATEGORY_WEIGHT = 0.05
-DUPLICATE_SEMANTIC_THRESHOLD = 0.88
-DUPLICATE_SCORE_THRESHOLD = 0.82
-POSSIBLE_DUPLICATE_SCORE_THRESHOLD = 0.70
-POSSIBLE_CROSS_CATEGORY_SEMANTIC_THRESHOLD = 0.93
+from .constants import QAKnowledgeToolConstants as qa_constants
 
 
 class QACardStore(Protocol):
@@ -35,7 +23,7 @@ class QACardStore(Protocol):
     def search_cards(
         self,
         query: str,
-        limit: int = 5,
+        limit: int = qa_constants.DEFAULT_SEARCH_LIMIT,
         category: str | None = None,
     ) -> list[SearchResult]: ...
 
@@ -54,7 +42,11 @@ class QACardStore(Protocol):
 
     def delete_card(self, card_id: str) -> bool: ...
 
-    def list_recent_cards(self, limit: int = 10, category: str | None = None) -> list[QACard]: ...
+    def list_recent_cards(
+        self,
+        limit: int = qa_constants.DEFAULT_RECENT_LIMIT,
+        category: str | None = None,
+    ) -> list[QACard]: ...
 
     def list_all_cards(self, category: str | None = None) -> list[QACard]: ...
 
@@ -84,7 +76,7 @@ class QAKnowledgeSearchCandidate:
     keyword_score_norm: float = 0.0
     semantic_score: float = 0.0
     final_score: float = 0.0
-    match_level: str = "discard"
+    match_level: str = qa_constants.MATCH_LEVEL_DISCARD
     matched_by: list[str] | None = None
 
     def add_match(self, source: str) -> None:
@@ -121,11 +113,11 @@ class QAKnowledgeToolHandlers:
 
     def save_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            question = self._required_text(arguments, "question")
-            answer = self._required_text(arguments, "answer")
-            summary = self._required_text(arguments, "summary")
+            question = self._required_text(arguments, qa_constants.ARG_QUESTION)
+            answer = self._required_text(arguments, qa_constants.ARG_ANSWER)
+            summary = self._required_text(arguments, qa_constants.ARG_SUMMARY)
             keywords = self._required_keywords(arguments)
-            category = self._required_text(arguments, "category")
+            category = self._required_text(arguments, qa_constants.ARG_CATEGORY)
             card = self.store.save_card(
                 question=question,
                 answer=answer,
@@ -134,33 +126,33 @@ class QAKnowledgeToolHandlers:
                 category=category,
             )
             result = {
-                "ok": True,
-                "card_id": card.id,
-                "source_type": card.source_type,
-                "created_at": card.created_at,
-                "category": card.category,
+                qa_constants.OUTPUT_OK: True,
+                qa_constants.OUTPUT_CARD_ID: card.id,
+                qa_constants.OUTPUT_SOURCE_TYPE: card.source_type,
+                qa_constants.OUTPUT_CREATED_AT: card.created_at,
+                qa_constants.OUTPUT_CATEGORY: card.category,
             }
             warning = self._try_upsert_semantic_index(card)
             if warning:
-                result["warning"] = warning
+                result[qa_constants.OUTPUT_WARNING] = warning
             return result
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def search_qa_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            query = self._required_text(arguments, "query")
-            limit = self._optional_limit(arguments, default=5)
+            query = self._required_text(arguments, qa_constants.ARG_QUERY)
+            limit = self._optional_limit(arguments, default=qa_constants.DEFAULT_SEARCH_LIMIT)
             category = self._optional_category(arguments)
             cards = self.store.search_cards(query, limit=limit, category=category)
-            return {"ok": True, "cards": [asdict(card) for card in cards]}
+            return {qa_constants.OUTPUT_OK: True, qa_constants.OUTPUT_CARDS: [asdict(card) for card in cards]}
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def hybrid_search_qa_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            query = self._required_text(arguments, "query")
-            limit = self._optional_limit(arguments, default=5)
+            query = self._required_text(arguments, qa_constants.ARG_QUERY)
+            limit = self._optional_limit(arguments, default=qa_constants.DEFAULT_SEARCH_LIMIT)
             category = self._optional_category(arguments)
             keyword_results = self.store.search_cards(query, limit=limit, category=category)
             warning: str | None = None
@@ -172,7 +164,11 @@ class QAKnowledgeToolHandlers:
                 semantic_degraded = True
             else:
                 try:
-                    semantic_limit = max(limit * 5, 20) if category is not None else limit
+                    semantic_limit = (
+                        max(limit * qa_constants.OVER_FETCH_MULTIPLIER, qa_constants.MIN_OVER_FETCH_LIMIT)
+                        if category is not None
+                        else limit
+                    )
                     semantic_hits = self.semantic_index.search(query, limit=semantic_limit)
                 except Exception as exc:
                     warning = f"语义检索失败，已降级为关键词检索: {exc}"
@@ -197,77 +193,81 @@ class QAKnowledgeToolHandlers:
                     if category is not None
                     else "没有找到足够相关的知识卡片。"
                 )
-            elif not semantic_degraded and returned_candidates[0].match_level == "weak":
+            elif not semantic_degraded and returned_candidates[0].match_level == qa_constants.MATCH_LEVEL_WEAK:
                 warning = "只找到弱相关候选，回答前应读取完整卡片并谨慎判断。"
 
             cards = self.store.read_cards_by_ids([candidate.card_id for candidate in returned_candidates])
             candidate_by_card_id = {candidate.card_id: candidate for candidate in returned_candidates}
             payload = {
-                "ok": True,
-                "cards": [
+                qa_constants.OUTPUT_OK: True,
+                qa_constants.OUTPUT_CARDS: [
                     self._search_payload(card, candidate_by_card_id[card.id], rank=index + 1)
                     for index, card in enumerate(cards[:limit])
                 ],
             }
             if warning:
-                payload["warning"] = warning
+                payload[qa_constants.OUTPUT_WARNING] = warning
             if message:
-                payload["message"] = message
+                payload[qa_constants.OUTPUT_MESSAGE] = message
             return payload
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def read_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            card_id = self._required_text(arguments, "card_id")
+            card_id = self._required_text(arguments, qa_constants.ARG_CARD_ID)
             card = self.store.read_card(card_id)
             if card is None:
-                return self._error("not_found", f"card not found: {card_id}")
-            return {"ok": True, "card": self._card_payload(card)}
+                return self._error(qa_constants.ERROR_CODE_NOT_FOUND, f"card not found: {card_id}")
+            return {qa_constants.OUTPUT_OK: True, qa_constants.OUTPUT_CARD: self._card_payload(card)}
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def update_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            card_id = self._required_text(arguments, "card_id")
+            card_id = self._required_text(arguments, qa_constants.ARG_CARD_ID)
             patch = self._update_patch(arguments)
             card = self.store.update_card(card_id, **patch)
             if card is None:
-                return self._error("not_found", f"card not found: {card_id}")
-            result = {"ok": True, "card": self._card_payload(card)}
+                return self._error(qa_constants.ERROR_CODE_NOT_FOUND, f"card not found: {card_id}")
+            result = {qa_constants.OUTPUT_OK: True, qa_constants.OUTPUT_CARD: self._card_payload(card)}
             warning = self._try_upsert_semantic_index(card)
             if warning:
-                result["warning"] = warning
+                result[qa_constants.OUTPUT_WARNING] = warning
             return result
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def delete_qa_card(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            card_id = self._required_text(arguments, "card_id")
+            card_id = self._required_text(arguments, qa_constants.ARG_CARD_ID)
             deleted = self.store.delete_card(card_id)
             if not deleted:
-                return self._error("not_found", f"card not found: {card_id}")
-            result = {"ok": True, "deleted_card_id": card_id}
+                return self._error(qa_constants.ERROR_CODE_NOT_FOUND, f"card not found: {card_id}")
+            result = {qa_constants.OUTPUT_OK: True, qa_constants.OUTPUT_DELETED_CARD_ID: card_id}
             warning = self._try_delete_semantic_index(card_id)
             if warning:
-                result["warning"] = warning
+                result[qa_constants.OUTPUT_WARNING] = warning
             return result
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def rebuild_qa_semantic_index(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            limit = self._optional_limit(arguments, default=50) if "limit" in arguments else None
+            limit = (
+                self._optional_limit(arguments, default=qa_constants.DEFAULT_REBUILD_LIMIT)
+                if qa_constants.ARG_LIMIT in arguments
+                else None
+            )
             if self.semantic_index is None or not self.semantic_index.is_enabled():
                 return {
-                    "ok": True,
-                    "status": "disabled",
-                    "message": "缺少 DASHSCOPE_API_KEY，无法向量化历史卡片。",
-                    "total": 0,
-                    "indexed": 0,
-                    "failed": 0,
-                    "failed_card_ids": [],
+                    qa_constants.OUTPUT_OK: True,
+                    qa_constants.OUTPUT_STATUS: qa_constants.REBUILD_STATUS_DISABLED,
+                    qa_constants.OUTPUT_MESSAGE: f"缺少 {llm_constants.DASHSCOPE_API_KEY_ENV}，无法向量化历史卡片。",
+                    qa_constants.OUTPUT_TOTAL: 0,
+                    qa_constants.OUTPUT_INDEXED: 0,
+                    qa_constants.OUTPUT_FAILED: 0,
+                    qa_constants.OUTPUT_FAILED_CARD_IDS: [],
                 }
             cards = self.store.list_unvectorized_cards(limit=limit)
             indexed = 0
@@ -280,24 +280,31 @@ class QAKnowledgeToolHandlers:
                 except Exception:
                     failed_card_ids.append(card.id)
             return {
-                "ok": True,
-                "status": "ok" if not failed_card_ids else "partial_failed",
-                "total": len(cards),
-                "indexed": indexed,
-                "failed": len(failed_card_ids),
-                "failed_card_ids": failed_card_ids,
+                qa_constants.OUTPUT_OK: True,
+                qa_constants.OUTPUT_STATUS: (
+                    qa_constants.REBUILD_STATUS_OK
+                    if not failed_card_ids
+                    else qa_constants.REBUILD_STATUS_PARTIAL_FAILED
+                ),
+                qa_constants.OUTPUT_TOTAL: len(cards),
+                qa_constants.OUTPUT_INDEXED: indexed,
+                qa_constants.OUTPUT_FAILED: len(failed_card_ids),
+                qa_constants.OUTPUT_FAILED_CARD_IDS: failed_card_ids,
             }
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def list_recent_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
-            limit = self._optional_limit(arguments, default=10)
+            limit = self._optional_limit(arguments, default=qa_constants.DEFAULT_RECENT_LIMIT)
             category = self._optional_category(arguments)
             cards = self.store.list_recent_cards(limit=limit, category=category)
-            return {"ok": True, "cards": [self._recent_payload(card) for card in cards]}
+            return {
+                qa_constants.OUTPUT_OK: True,
+                qa_constants.OUTPUT_CARDS: [self._recent_payload(card) for card in cards],
+            }
         except Exception as exc:
-            return self._error("store_error", str(exc))
+            return self._error(qa_constants.ERROR_CODE_STORE_ERROR, str(exc))
 
     def detect_duplicate_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Detect duplicate cards for a target card/query or the whole library.
@@ -310,11 +317,11 @@ class QAKnowledgeToolHandlers:
             None.
         """
         try:
-            limit = self._optional_limit(arguments, default=5)
+            limit = self._optional_limit(arguments, default=qa_constants.DEFAULT_SEARCH_LIMIT)
             scope = self._duplicate_scope(arguments)
             mode = self._duplicate_mode(arguments)
             category = self._optional_category(arguments)
-            if scope == "all":
+            if scope == qa_constants.DUPLICATE_SCOPE_ALL:
                 return self._detect_all_duplicate_cards(
                     category=category,
                     limit=limit,
@@ -327,7 +334,7 @@ class QAKnowledgeToolHandlers:
                 mode=mode,
             )
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def _detect_all_duplicate_cards(
         self,
@@ -340,10 +347,10 @@ class QAKnowledgeToolHandlers:
         cards = self.store.list_all_cards(category=category)
         result = self.duplicate_detection.detect_all(cards, mode=mode, limit=limit)
         return {
-            "ok": True,
-            "scope": "all",
-            "checked_count": result.checked_count,
-            "duplicate_groups": [
+            qa_constants.OUTPUT_OK: True,
+            qa_constants.OUTPUT_SCOPE: qa_constants.DUPLICATE_SCOPE_ALL,
+            qa_constants.OUTPUT_CHECKED_COUNT: result.checked_count,
+            qa_constants.OUTPUT_DUPLICATE_GROUPS: [
                 self._duplicate_group_payload(group)
                 for group in result.duplicate_groups
             ],
@@ -363,7 +370,7 @@ class QAKnowledgeToolHandlers:
             query = self._duplicate_query(arguments, target_card)
             checked_card_id = target_card.id if target_card is not None else None
             effective_category = category
-            over_fetch_limit = max(limit * 5, 20)
+            over_fetch_limit = max(limit * qa_constants.OVER_FETCH_MULTIPLIER, qa_constants.MIN_OVER_FETCH_LIMIT)
             keyword_results = self.store.search_cards(query, limit=over_fetch_limit, category=effective_category)
             warning: str | None = None
             semantic_hits = []
@@ -382,22 +389,26 @@ class QAKnowledgeToolHandlers:
                 excluded_card_id=checked_card_id,
                 category=effective_category,
             )
-            if mode == "auto":
-                candidates = [item for item in candidates if item[1].duplicate_level == "duplicate"]
+            if mode == qa_constants.DUPLICATE_MODE_AUTO:
+                candidates = [
+                    item
+                    for item in candidates
+                    if item[1].duplicate_level == qa_constants.DUPLICATE_LEVEL_DUPLICATE
+                ]
             payload = {
-                "ok": True,
-                "scope": "target",
-                "checked_card_id": checked_card_id,
-                "candidates": [
+                qa_constants.OUTPUT_OK: True,
+                qa_constants.OUTPUT_SCOPE: qa_constants.DUPLICATE_SCOPE_TARGET,
+                qa_constants.OUTPUT_CHECKED_CARD_ID: checked_card_id,
+                qa_constants.OUTPUT_CANDIDATES: [
                     self._duplicate_payload(card, candidate)
                     for card, candidate in candidates[:limit]
                 ],
             }
             if warning:
-                payload["warning"] = warning
+                payload[qa_constants.OUTPUT_WARNING] = warning
             return payload
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def merge_qa_cards(self, arguments: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -406,13 +417,13 @@ class QAKnowledgeToolHandlers:
             found_card_ids = {card.id for card in original_cards}
             missing_card_ids = [card_id for card_id in card_ids if card_id not in found_card_ids]
             if missing_card_ids:
-                return self._error("not_found", f"cards not found: {', '.join(missing_card_ids)}")
+                return self._error(qa_constants.ERROR_CODE_NOT_FOUND, f"cards not found: {', '.join(missing_card_ids)}")
 
-            question = self._required_text(arguments, "question")
-            answer = self._required_text(arguments, "answer")
-            summary = self._required_text(arguments, "summary")
+            question = self._required_text(arguments, qa_constants.ARG_QUESTION)
+            answer = self._required_text(arguments, qa_constants.ARG_ANSWER)
+            summary = self._required_text(arguments, qa_constants.ARG_SUMMARY)
             keywords = self._required_keywords(arguments)
-            category = self._required_text(arguments, "category")
+            category = self._required_text(arguments, qa_constants.ARG_CATEGORY)
             new_card = self.store.save_card(
                 question=question,
                 answer=answer,
@@ -430,21 +441,21 @@ class QAKnowledgeToolHandlers:
             if warning:
                 warnings.append(warning)
             result = {
-                "ok": True,
-                "new_card_id": new_card.id,
-                "deleted_card_ids": card_ids,
-                "source_type": new_card.source_type,
-                "created_at": new_card.created_at,
-                "category": new_card.category,
+                qa_constants.OUTPUT_OK: True,
+                qa_constants.OUTPUT_NEW_CARD_ID: new_card.id,
+                qa_constants.OUTPUT_DELETED_CARD_IDS: card_ids,
+                qa_constants.OUTPUT_SOURCE_TYPE: new_card.source_type,
+                qa_constants.OUTPUT_CREATED_AT: new_card.created_at,
+                qa_constants.OUTPUT_CATEGORY: new_card.category,
             }
             if warnings:
-                result["warning"] = "；".join(warnings)
+                result[qa_constants.OUTPUT_WARNING] = "；".join(warnings)
             return result
         except Exception as exc:
-            return self._error("invalid_input", str(exc))
+            return self._error(qa_constants.ERROR_CODE_INVALID_INPUT, str(exc))
 
     def definitions(self) -> list[dict[str, Any]]:
-        return QA_KNOWLEDGE_TOOL_DEFINITIONS
+        return qa_constants.QA_KNOWLEDGE_TOOL_DEFINITIONS
 
     @staticmethod
     def _required_text(arguments: dict[str, Any], name: str) -> str:
@@ -455,7 +466,7 @@ class QAKnowledgeToolHandlers:
 
     @staticmethod
     def _required_keywords(arguments: dict[str, Any]) -> list[str]:
-        value = arguments.get("keywords")
+        value = arguments.get(qa_constants.ARG_KEYWORDS)
         if not isinstance(value, list):
             raise ValueError("keywords must be a list of strings")
         keywords = [item.strip() for item in value if isinstance(item, str) and item.strip()]
@@ -465,20 +476,20 @@ class QAKnowledgeToolHandlers:
 
     @staticmethod
     def _optional_limit(arguments: dict[str, Any], default: int) -> int:
-        value = arguments.get("limit", default)
+        value = arguments.get(qa_constants.ARG_LIMIT, default)
         if not isinstance(value, int) or value < 1:
             return default
-        return min(value, 50)
+        return min(value, qa_constants.MAX_LIMIT)
 
     def _optional_category(self, arguments: dict[str, Any]) -> str | None:
-        if "category" not in arguments or arguments.get("category") is None:
+        if qa_constants.ARG_CATEGORY not in arguments or arguments.get(qa_constants.ARG_CATEGORY) is None:
             return None
-        return self.store.validate_category(self._required_text(arguments, "category"))
+        return self.store.validate_category(self._required_text(arguments, qa_constants.ARG_CATEGORY))
 
     def _optional_target_card(self, arguments: dict[str, Any]) -> QACard | None:
-        if "card_id" not in arguments or arguments.get("card_id") is None:
+        if qa_constants.ARG_CARD_ID not in arguments or arguments.get(qa_constants.ARG_CARD_ID) is None:
             return None
-        card_id = self._required_text(arguments, "card_id")
+        card_id = self._required_text(arguments, qa_constants.ARG_CARD_ID)
         card = self.store.read_card(card_id)
         if card is None:
             raise ValueError(f"card not found: {card_id}")
@@ -487,20 +498,20 @@ class QAKnowledgeToolHandlers:
     @staticmethod
     def _duplicate_scope(arguments: dict[str, Any]) -> str:
         """Return the validated duplicate detection scope."""
-        scope = arguments.get("scope", "target")
-        if scope not in ("target", "all"):
+        scope = arguments.get(qa_constants.ARG_SCOPE, qa_constants.DUPLICATE_SCOPE_TARGET)
+        if scope not in (qa_constants.DUPLICATE_SCOPE_TARGET, qa_constants.DUPLICATE_SCOPE_ALL):
             raise ValueError("scope must be target or all")
         return scope
 
     @staticmethod
     def _duplicate_mode(arguments: dict[str, Any]) -> str:
-        mode = arguments.get("mode", "manual")
-        if mode not in ("manual", "auto"):
+        mode = arguments.get(qa_constants.ARG_MODE, qa_constants.DUPLICATE_MODE_MANUAL)
+        if mode not in (qa_constants.DUPLICATE_MODE_MANUAL, qa_constants.DUPLICATE_MODE_AUTO):
             raise ValueError("mode must be manual or auto")
         return mode
 
     def _duplicate_query(self, arguments: dict[str, Any], target_card: QACard | None) -> str:
-        query = arguments.get("query")
+        query = arguments.get(qa_constants.ARG_QUERY)
         if isinstance(query, str) and query.strip():
             return query.strip()
         if target_card is not None:
@@ -509,7 +520,7 @@ class QAKnowledgeToolHandlers:
 
     @staticmethod
     def _required_card_ids(arguments: dict[str, Any]) -> list[str]:
-        value = arguments.get("card_ids")
+        value = arguments.get(qa_constants.ARG_CARD_IDS)
         if not isinstance(value, list):
             raise ValueError("card_ids must be a list of strings")
         card_ids: list[str] = []
@@ -522,14 +533,14 @@ class QAKnowledgeToolHandlers:
 
     def _update_patch(self, arguments: dict[str, Any]) -> dict[str, Any]:
         patch: dict[str, Any] = {}
-        for name in ("question", "answer", "summary"):
+        for name in (qa_constants.ARG_QUESTION, qa_constants.ARG_ANSWER, qa_constants.ARG_SUMMARY):
             value = arguments.get(name)
             if value is not None:
                 patch[name] = self._required_text(arguments, name)
-        if "keywords" in arguments:
-            patch["keywords"] = self._required_keywords(arguments)
-        if "category" in arguments:
-            patch["category"] = self._required_text(arguments, "category")
+        if qa_constants.ARG_KEYWORDS in arguments:
+            patch[qa_constants.ARG_KEYWORDS] = self._required_keywords(arguments)
+        if qa_constants.ARG_CATEGORY in arguments:
+            patch[qa_constants.ARG_CATEGORY] = self._required_text(arguments, qa_constants.ARG_CATEGORY)
         if not patch:
             raise ValueError("at least one field must be provided")
         return patch
@@ -537,27 +548,27 @@ class QAKnowledgeToolHandlers:
     @staticmethod
     def _card_payload(card: QACard) -> dict[str, Any]:
         return {
-            "card_id": card.id,
-            "question": card.question,
-            "answer": card.answer,
-            "summary": card.summary,
-            "keywords": card.keywords,
-            "category": card.category,
-            "source_type": card.source_type,
-            "created_at": card.created_at,
-            "updated_at": card.updated_at,
+            qa_constants.OUTPUT_CARD_ID: card.id,
+            qa_constants.OUTPUT_QUESTION: card.question,
+            qa_constants.OUTPUT_ANSWER: card.answer,
+            qa_constants.OUTPUT_SUMMARY: card.summary,
+            qa_constants.OUTPUT_KEYWORDS: card.keywords,
+            qa_constants.OUTPUT_CATEGORY: card.category,
+            qa_constants.OUTPUT_SOURCE_TYPE: card.source_type,
+            qa_constants.OUTPUT_CREATED_AT: card.created_at,
+            qa_constants.OUTPUT_UPDATED_AT: card.updated_at,
         }
 
     @staticmethod
     def _recent_payload(card: QACard) -> dict[str, Any]:
         return {
-            "card_id": card.id,
-            "question": card.question,
-            "summary": card.summary,
-            "keywords": card.keywords,
-            "category": card.category,
-            "source_type": card.source_type,
-            "created_at": card.created_at,
+            qa_constants.OUTPUT_CARD_ID: card.id,
+            qa_constants.OUTPUT_QUESTION: card.question,
+            qa_constants.OUTPUT_SUMMARY: card.summary,
+            qa_constants.OUTPUT_KEYWORDS: card.keywords,
+            qa_constants.OUTPUT_CATEGORY: card.category,
+            qa_constants.OUTPUT_SOURCE_TYPE: card.source_type,
+            qa_constants.OUTPUT_CREATED_AT: card.created_at,
         }
 
     @staticmethod
@@ -568,54 +579,54 @@ class QAKnowledgeToolHandlers:
         rank: int,
     ) -> dict[str, Any]:
         return {
-            "rank": rank,
-            "card_id": card.id,
-            "question": card.question,
-            "summary": card.summary,
-            "answer_snippet": QAKnowledgeToolHandlers._snippet(card.answer),
-            "score": candidate.final_score,
-            "final_score": candidate.final_score,
-            "match_level": candidate.match_level,
-            "matched_by": candidate.matched_by or [],
-            "keyword_score": candidate.keyword_score,
-            "keyword_score_norm": candidate.keyword_score_norm,
-            "semantic_score": candidate.semantic_score,
-            "source_type": card.source_type,
-            "created_at": card.created_at,
-            "category": card.category,
+            qa_constants.OUTPUT_RANK: rank,
+            qa_constants.OUTPUT_CARD_ID: card.id,
+            qa_constants.OUTPUT_QUESTION: card.question,
+            qa_constants.OUTPUT_SUMMARY: card.summary,
+            qa_constants.OUTPUT_ANSWER_SNIPPET: QAKnowledgeToolHandlers._snippet(card.answer),
+            qa_constants.OUTPUT_SCORE: candidate.final_score,
+            qa_constants.OUTPUT_FINAL_SCORE: candidate.final_score,
+            qa_constants.OUTPUT_MATCH_LEVEL: candidate.match_level,
+            qa_constants.OUTPUT_MATCHED_BY: candidate.matched_by or [],
+            qa_constants.OUTPUT_KEYWORD_SCORE: candidate.keyword_score,
+            qa_constants.OUTPUT_KEYWORD_SCORE_NORM: candidate.keyword_score_norm,
+            qa_constants.OUTPUT_SEMANTIC_SCORE: candidate.semantic_score,
+            qa_constants.OUTPUT_SOURCE_TYPE: card.source_type,
+            qa_constants.OUTPUT_CREATED_AT: card.created_at,
+            qa_constants.OUTPUT_CATEGORY: card.category,
         }
 
     @staticmethod
     def _duplicate_payload(card: QACard, candidate: DuplicateCandidate) -> dict[str, Any]:
         return {
-            "card_id": card.id,
-            "question": card.question,
-            "summary": card.summary,
-            "category": card.category,
-            "duplicate_score": candidate.duplicate_score,
-            "duplicate_level": candidate.duplicate_level,
-            "semantic_score": candidate.semantic_score,
-            "keyword_score_norm": candidate.keyword_score_norm,
-            "keyword_overlap": candidate.keyword_overlap,
-            "question_overlap": candidate.question_overlap,
-            "same_category": candidate.same_category,
-            "reason": candidate.reason,
+            qa_constants.OUTPUT_CARD_ID: card.id,
+            qa_constants.OUTPUT_QUESTION: card.question,
+            qa_constants.OUTPUT_SUMMARY: card.summary,
+            qa_constants.OUTPUT_CATEGORY: card.category,
+            qa_constants.OUTPUT_DUPLICATE_SCORE: candidate.duplicate_score,
+            qa_constants.OUTPUT_DUPLICATE_LEVEL: candidate.duplicate_level,
+            qa_constants.OUTPUT_SEMANTIC_SCORE: candidate.semantic_score,
+            qa_constants.OUTPUT_KEYWORD_SCORE_NORM: candidate.keyword_score_norm,
+            qa_constants.OUTPUT_KEYWORD_OVERLAP: candidate.keyword_overlap,
+            qa_constants.OUTPUT_QUESTION_OVERLAP: candidate.question_overlap,
+            qa_constants.OUTPUT_SAME_CATEGORY: candidate.same_category,
+            qa_constants.OUTPUT_REASON: candidate.reason,
         }
 
     @staticmethod
     def _duplicate_group_payload(group: DuplicateGroup) -> dict[str, Any]:
         """Return the tool payload for one duplicate group."""
         return {
-            "card_ids": group.card_ids,
-            "duplicate_score": group.duplicate_score,
-            "duplicate_level": group.duplicate_level,
-            "reason": group.reason,
-            "cards": [
+            qa_constants.OUTPUT_CARD_IDS: group.card_ids,
+            qa_constants.OUTPUT_DUPLICATE_SCORE: group.duplicate_score,
+            qa_constants.OUTPUT_DUPLICATE_LEVEL: group.duplicate_level,
+            qa_constants.OUTPUT_REASON: group.reason,
+            qa_constants.OUTPUT_CARDS: [
                 {
-                    "card_id": card.id,
-                    "question": card.question,
-                    "summary": card.summary,
-                    "category": card.category,
+                    qa_constants.OUTPUT_CARD_ID: card.id,
+                    qa_constants.OUTPUT_QUESTION: card.question,
+                    qa_constants.OUTPUT_SUMMARY: card.summary,
+                    qa_constants.OUTPUT_CATEGORY: card.category,
                 }
                 for card in group.cards
             ],
@@ -651,11 +662,11 @@ class QAKnowledgeToolHandlers:
         for card_id, score in keyword_scores.items():
             candidate = candidates.setdefault(card_id, QAKnowledgeSearchCandidate(card_id=card_id))
             candidate.keyword_score = score
-            candidate.add_match("keyword")
+            candidate.add_match(qa_constants.MATCH_SOURCE_KEYWORD)
         for card_id, score in semantic_scores.items():
             candidate = candidates.setdefault(card_id, QAKnowledgeSearchCandidate(card_id=card_id))
             candidate.semantic_score = score
-            candidate.add_match("semantic")
+            candidate.add_match(qa_constants.MATCH_SOURCE_SEMANTIC)
 
         max_keyword_score = max((candidate.keyword_score for candidate in candidates.values()), default=0.0)
         for candidate in candidates.values():
@@ -666,8 +677,8 @@ class QAKnowledgeToolHandlers:
                 candidate.final_score = candidate.keyword_score_norm
             else:
                 candidate.final_score = (
-                    KEYWORD_SCORE_WEIGHT * candidate.keyword_score_norm
-                    + SEMANTIC_SCORE_WEIGHT * candidate.semantic_score
+                    qa_constants.KEYWORD_SCORE_WEIGHT * candidate.keyword_score_norm
+                    + qa_constants.SEMANTIC_SCORE_WEIGHT * candidate.semantic_score
                 )
             candidate.match_level = self._match_level(candidate.final_score)
 
@@ -715,28 +726,37 @@ class QAKnowledgeToolHandlers:
 
     @staticmethod
     def _duplicate_score(candidate: DuplicateCandidate) -> float:
-        category_bonus = 1.0 if candidate.same_category else 0.0
-        score = (
-            DUPLICATE_SEMANTIC_WEIGHT * candidate.semantic_score
-            + DUPLICATE_KEYWORD_OVERLAP_WEIGHT * candidate.keyword_overlap
-            + DUPLICATE_QUESTION_OVERLAP_WEIGHT * candidate.question_overlap
-            + DUPLICATE_CATEGORY_WEIGHT * category_bonus
+        category_bonus = (
+            qa_constants.CATEGORY_MATCH_BONUS if candidate.same_category else qa_constants.CATEGORY_MISMATCH_BONUS
         )
-        return round(score, 3)
+        score = (
+            qa_constants.DUPLICATE_SEMANTIC_WEIGHT * candidate.semantic_score
+            + qa_constants.DUPLICATE_KEYWORD_OVERLAP_WEIGHT * candidate.keyword_overlap
+            + qa_constants.DUPLICATE_QUESTION_OVERLAP_WEIGHT * candidate.question_overlap
+            + qa_constants.DUPLICATE_CATEGORY_WEIGHT * category_bonus
+        )
+        return round(score, qa_constants.SCORE_ROUND_DIGITS)
 
     @staticmethod
     def _duplicate_level(candidate: DuplicateCandidate) -> str:
         if candidate.same_category and (
-            candidate.semantic_score >= DUPLICATE_SEMANTIC_THRESHOLD
-            or candidate.duplicate_score >= DUPLICATE_SCORE_THRESHOLD
+            candidate.semantic_score >= qa_constants.DUPLICATE_SEMANTIC_THRESHOLD
+            or candidate.duplicate_score >= qa_constants.DUPLICATE_SCORE_THRESHOLD
         ):
-            return "duplicate"
-        if candidate.same_category and candidate.duplicate_score >= POSSIBLE_DUPLICATE_SCORE_THRESHOLD:
-            return "possible_duplicate"
-        if candidate.same_category and candidate.keyword_score_norm >= 0.85 and candidate.keyword_overlap >= 0.5:
-            return "possible_duplicate"
-        if not candidate.same_category and candidate.semantic_score >= POSSIBLE_CROSS_CATEGORY_SEMANTIC_THRESHOLD:
-            return "possible_duplicate"
+            return qa_constants.DUPLICATE_LEVEL_DUPLICATE
+        if candidate.same_category and candidate.duplicate_score >= qa_constants.POSSIBLE_DUPLICATE_SCORE_THRESHOLD:
+            return qa_constants.DUPLICATE_LEVEL_POSSIBLE
+        if (
+            candidate.same_category
+            and candidate.keyword_score_norm >= qa_constants.POSSIBLE_DUPLICATE_KEYWORD_SCORE_THRESHOLD
+            and candidate.keyword_overlap >= qa_constants.POSSIBLE_DUPLICATE_KEYWORD_OVERLAP_THRESHOLD
+        ):
+            return qa_constants.DUPLICATE_LEVEL_POSSIBLE
+        if (
+            not candidate.same_category
+            and candidate.semantic_score >= qa_constants.POSSIBLE_CROSS_CATEGORY_SEMANTIC_THRESHOLD
+        ):
+            return qa_constants.DUPLICATE_LEVEL_POSSIBLE
         return ""
 
     @staticmethod
@@ -760,7 +780,10 @@ class QAKnowledgeToolHandlers:
         candidate_keywords = {keyword.lower() for keyword in candidate_card.keywords}
         if not target_keywords or not candidate_keywords:
             return 0.0
-        return round(len(target_keywords & candidate_keywords) / max(len(target_keywords), len(candidate_keywords)), 3)
+        return round(
+            len(target_keywords & candidate_keywords) / max(len(target_keywords), len(candidate_keywords)),
+            qa_constants.SCORE_ROUND_DIGITS,
+        )
 
     @classmethod
     def _text_overlap(cls, left: str, right: str) -> float:
@@ -768,7 +791,10 @@ class QAKnowledgeToolHandlers:
         right_terms = cls._text_terms(right)
         if not left_terms or not right_terms:
             return 0.0
-        return round(len(left_terms & right_terms) / max(len(left_terms), len(right_terms)), 3)
+        return round(
+            len(left_terms & right_terms) / max(len(left_terms), len(right_terms)),
+            qa_constants.SCORE_ROUND_DIGITS,
+        )
 
     @staticmethod
     def _text_terms(text: str) -> set[str]:
@@ -783,312 +809,37 @@ class QAKnowledgeToolHandlers:
         *,
         limit: int,
     ) -> list[QAKnowledgeSearchCandidate]:
-        normal = [candidate for candidate in candidates if candidate.match_level in ("strong", "medium")]
+        normal = [
+            candidate
+            for candidate in candidates
+            if candidate.match_level in (qa_constants.MATCH_LEVEL_STRONG, qa_constants.MATCH_LEVEL_MEDIUM)
+        ]
         if normal:
             return normal[:limit]
-        weak = [candidate for candidate in candidates if candidate.match_level == "weak"]
-        return weak[:1]
+        weak = [candidate for candidate in candidates if candidate.match_level == qa_constants.MATCH_LEVEL_WEAK]
+        return weak[:qa_constants.WEAK_CANDIDATE_LIMIT]
 
     @staticmethod
     def _match_level(final_score: float) -> str:
-        if final_score >= STRONG_MATCH_THRESHOLD:
-            return "strong"
-        if final_score >= MEDIUM_MATCH_THRESHOLD:
-            return "medium"
-        if final_score >= WEAK_MATCH_THRESHOLD:
-            return "weak"
-        return "discard"
+        if final_score >= qa_constants.STRONG_MATCH_THRESHOLD:
+            return qa_constants.MATCH_LEVEL_STRONG
+        if final_score >= qa_constants.MEDIUM_MATCH_THRESHOLD:
+            return qa_constants.MATCH_LEVEL_MEDIUM
+        if final_score >= qa_constants.WEAK_MATCH_THRESHOLD:
+            return qa_constants.MATCH_LEVEL_WEAK
+        return qa_constants.MATCH_LEVEL_DISCARD
 
     @staticmethod
-    def _snippet(answer: str, length: int = 160) -> str:
+    def _snippet(answer: str, length: int = qa_constants.SNIPPET_LENGTH) -> str:
         clean = " ".join(answer.split())
         if len(clean) <= length:
             return clean
-        return f"{clean[: length - 3]}..."
+        return f"{clean[: length - len(qa_constants.SNIPPET_ELLIPSIS)]}{qa_constants.SNIPPET_ELLIPSIS}"
 
     @staticmethod
     def _error(error_code: str, message: str) -> dict[str, Any]:
-        return {"ok": False, "error_code": error_code, "message": message}
-
-
-QA_KNOWLEDGE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "save_qa_card",
-            "description": "保存当前用户的一条 Q&A 知识卡片。仅在用户明确提供 Q&A 并表达保存意图时使用；本工具会写入服务端事实库，并在语义索引启用时同步 pgvector 向量索引。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "用户提供的原始问题，不要改写为模型自造问题。",
-                    },
-                    "answer": {
-                        "type": "string",
-                        "description": "用户提供的原始答案，不要用模型外部知识补写。",
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "对答案的简短摘要，用于快速浏览和检索。",
-                    },
-                    "keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "检索关键词，包括主题词、技术名词、项目名、工具名、API 名、模型名、数据库名、函数名或关键概念。",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "知识卡片唯一的语义主归属分类。必须是具体稳定的短名词短语，不超过 24 个字符；不得使用其他、未分类、杂项、默认分类、未知、待分类等兜底分类；不得使用函数名、字段名、模型名、数据库名、工具名或 API 名。",
-                    },
-                },
-                "required": ["question", "answer", "summary", "keywords", "category"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_qa_cards",
-            "description": "使用关键词检索当前用户的 Q&A 知识卡片，作为基础检索和降级兜底。返回候选摘要，不是完整回答依据；需要回答时继续读取完整卡片。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "用户问题或检索关键词。",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "最大返回数量，工具会限制到允许范围。",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "可选硬过滤分类。只有用户明确限定分类时才传入；指定分类无结果时不要跨分类兜底。",
-                    },
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "hybrid_search_qa_cards",
-            "description": "默认 Q&A 检索工具。用于用户要求基于当前用户个人知识库、已保存 Q&A、历史记录或来源回答时；返回候选摘要和排序信息，不是完整回答依据。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "用户问题或检索意图。",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "最大返回数量，工具会限制到允许范围。",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "可选硬过滤分类。只有用户明确限定分类时才传入；指定分类无结果时不要跨分类兜底。",
-                    },
-                },
-                "required": ["query"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_qa_card",
-            "description": "按 card_id 读取当前用户可访问的完整 Q&A 知识卡片。用于把检索、最近列表或保存结果中的真实 card_id 转换为完整回答依据。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "card_id": {
-                        "type": "string",
-                        "description": "来自检索、最近列表或保存结果的真实 card_id。",
-                    }
-                },
-                "required": ["card_id"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_qa_card",
-            "description": "更新当前用户的一条 Q&A 知识卡片。仅当用户明确要求修改某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "card_id": {
-                        "type": "string",
-                        "description": "要更新的卡片 ID。",
-                    },
-                    "question": {
-                        "type": "string",
-                        "description": "新的问题文本，不得用模型自造问题覆盖用户真实意图。",
-                    },
-                    "answer": {
-                        "type": "string",
-                        "description": "新的答案文本，不得用模型外部知识补写。",
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "新的摘要，用于快速浏览和检索。",
-                    },
-                    "keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "新的检索关键词，包括主题词、技术名词、项目名、工具名、API 名、模型名、数据库名、函数名或关键概念。",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "新的唯一语义主分类。必须是具体稳定的短名词短语，不超过 24 个字符；不得使用兜底分类；不得使用函数名、字段名、模型名、数据库名、工具名或 API 名。",
-                    },
-                },
-                "required": ["card_id"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_qa_card",
-            "description": "物理删除当前用户的一条 Q&A 知识卡片。仅当用户明确要求删除某张卡片时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "card_id": {
-                        "type": "string",
-                        "description": "要删除的卡片 ID。",
-                    }
-                },
-                "required": ["card_id"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_recent_cards",
-            "description": "列出当前用户最近保存的 Q&A 知识卡片。用于查看最近卡片、浏览知识库或选择要读取、更新、删除的卡片；返回摘要，不是完整回答依据。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "最大返回数量，工具会限制到允许范围。",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "可选硬过滤分类。只有用户明确限定分类时才传入；指定分类无结果时不要跨分类兜底。",
-                    },
-                },
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "detect_duplicate_cards",
-            "description": "检测当前用户疑似重复的 Q&A 知识卡片，只返回 duplicate 或 possible_duplicate 候选。用户主动查重、整理或合并时使用 mode=manual；保存或更新后的低打扰检测使用 mode=auto，且不得自动合并。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "scope": {
-                        "type": "string",
-                        "enum": ["target", "all"],
-                        "description": "target 检测指定卡片或文本；all 检测当前用户个人知识库全部 Q&A 卡片。",
-                    },
-                    "card_id": {
-                        "type": "string",
-                        "description": "以某张已有卡片为目标进行查重。",
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "未指定 card_id 时使用的查重查询文本。",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "可选硬过滤分类。",
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "最大返回数量，工具会限制到允许范围。",
-                    },
-                    "mode": {
-                        "type": "string",
-                        "enum": ["manual", "auto"],
-                        "description": "manual 表示用户主动查重；auto 表示保存或更新后的低打扰检测。",
-                    },
-                },
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "merge_qa_cards",
-            "description": "合并当前用户的多张 Q&A 知识卡片：创建一张新卡片，并物理删除原卡片。仅当用户明确要求合并且已确认合并草案时使用；本工具属于高风险写操作，执行前必须经过 harness 权限确认。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "card_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "要合并并删除的原卡片 ID，至少两张。",
-                    },
-                    "question": {
-                        "type": "string",
-                        "description": "合并后新卡片的问题，应综合原卡片且不要引入无来源内容。",
-                    },
-                    "answer": {
-                        "type": "string",
-                        "description": "合并后新卡片的答案，应综合原卡片且不要引入无来源内容。",
-                    },
-                    "summary": {
-                        "type": "string",
-                        "description": "合并后新卡片的摘要。",
-                    },
-                    "keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "合并后新卡片的检索关键词，包括主题词、技术名词、项目名、工具名、API 名、模型名、数据库名、函数名或关键概念。",
-                    },
-                    "category": {
-                        "type": "string",
-                        "description": "合并后新卡片的唯一语义主分类。必须是具体稳定的短名词短语，不超过 24 个字符；不得使用兜底分类；不得使用函数名、字段名、模型名、数据库名、工具名或 API 名。",
-                    },
-                },
-                "required": ["card_ids", "question", "answer", "summary", "keywords", "category"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "rebuild_qa_semantic_index",
-            "description": "为尚未向量化的历史 Q&A 卡片重建语义向量索引。用于维护或修复语义索引，不改变 Q&A 事实内容；不是普通问答检索工具。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "本次最多处理的未向量化卡片数量。",
-                    }
-                },
-                "additionalProperties": False,
-            },
-        },
-    },
-]
+        return {
+            qa_constants.OUTPUT_OK: False,
+            qa_constants.OUTPUT_ERROR_CODE: error_code,
+            qa_constants.OUTPUT_MESSAGE: message,
+        }

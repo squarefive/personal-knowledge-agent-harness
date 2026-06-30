@@ -10,8 +10,7 @@ from .agent_profile_memory import (
     MemoryIndex,
     MemoryIndexEntry,
 )
-
-MAX_SELECTED_MEMORY_DOCUMENTS = 3
+from .constants import AgentContextConstants as context_constants
 
 
 @dataclass
@@ -67,7 +66,7 @@ class TurnContextLoader:
         user_input: str,
         memory_index: MemoryIndex,
         recent_messages: list[dict[str, Any]] | None = None,
-        limit: int = MAX_SELECTED_MEMORY_DOCUMENTS,
+        limit: int = context_constants.MAX_SELECTED_MEMORY_DOCUMENTS,
     ) -> list[MemoryIndexEntry]:
         query_parts = [user_input]
         if recent_messages:
@@ -97,7 +96,7 @@ def _query_tokens(query: str) -> list[str]:
 
 
 def _message_text(message: dict[str, Any]) -> str:
-    content = message.get("content", "")
+    content = message.get(context_constants.MESSAGE_CONTENT_FIELD, "")
     if isinstance(content, str):
         return content
     return str(content)
