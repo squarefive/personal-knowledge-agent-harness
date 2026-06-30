@@ -114,6 +114,18 @@ python scripts/check-codebase-map-format.py
 
 检查通过后，才能提交相关文档变更。
 
+## 前端原型
+
+当前项目前端原型位于 `docs/frontend-prototype/`，用于在修改真实 Web UI 前预览布局、交互状态和 mock 场景。
+
+涉及前端界面布局、样式、交互状态或视觉改版时，应优先读取并修改该原型，让用户确认效果后，再同步到真实前端文件：
+
+- `src/personal_knowledge_agent/apps/web/static/index.html`
+- `src/personal_knowledge_agent/apps/web/static/styles.css`
+- `src/personal_knowledge_agent/apps/web/static/app.js`
+
+该原型不需要在后端、Agent 能力或数据模型修改任务中读取；它不能替代真实 Web app 代码、后端 API 契约、Agent 开发边界文档或代码地图。
+
 ## Agent 文档模板
 
 只有在以下场景中才需要读取 `docs/templates/agent-development-context.template.md`：

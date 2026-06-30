@@ -1,6 +1,6 @@
 ---
 title: "Personal Knowledge Agent Harness 代码地图"
-last_updated: "2026-06-28"
+last_updated: "2026-06-30"
 ---
 
 # Personal Knowledge Agent Harness 代码地图
@@ -36,6 +36,7 @@ last_updated: "2026-06-28"
 | `docs/` | 项目文档目录。 |
 | `docs/agents/` | Agent 稳定设计边界文档目录；当前边界文档为 `cloud-qa-knowledge-agent.md`。 |
 | `docs/architecture/` | 代码地图等架构说明文档目录。 |
+| `docs/frontend-prototype/` | 前端原型资产目录，用固定 mock 场景预览 Web UI 布局和交互状态，不参与生产运行。 |
 | `docs/guidelines/` | AI Coding 协作偏好和行为规约目录。 |
 | `docs/templates/` | Agent 开发上下文和代码地图模板目录。 |
 | `.github/workflows/` | GitHub Actions CI/CD workflow 目录。 |
@@ -316,6 +317,11 @@ last_updated: "2026-06-28"
 |---|---|
 | `agents/cloud-qa-knowledge-agent.md` | 云端个人 Q&A 知识库 Agent 的稳定设计边界和验收依据。 |
 | `architecture/codebase-map.md` | 当前代码目录和文件职责地图。 |
+| `frontend-prototype/index.html` | 前端原型预览入口，复用真实 Web UI 结构并加载真实前端脚本。 |
+| `frontend-prototype/prototype.css` | 前端原型专用样式入口，复用真实 Web 样式并保留可选场景控制面板样式。 |
+| `frontend-prototype/mock-data.js` | 前端原型固定 mock 数据，覆盖用户、会话、消息、卡片、审批和错误数据。 |
+| `frontend-prototype/scenarios.js` | 前端原型固定场景定义，将 mock 数据组合成可复现的 UI 状态。 |
+| `frontend-prototype/prototype.js` | 前端原型 mock API 层，拦截真实前端脚本的 `/api/*` 请求并返回固定场景数据。 |
 | `guidelines/collaboration-preferences.md` | 用户协作偏好、计划、分支和提交规则。 |
 | `guidelines/ai-coding-behavior.md` | AI Coding 调研、修改和验证行为规约。 |
 | `templates/agent-development-context.template.md` | Agent 开发上下文文档模板。 |
