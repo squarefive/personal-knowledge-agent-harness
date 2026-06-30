@@ -4,8 +4,7 @@ import sys
 from typing import Any
 
 from ...tool_runtime import ApprovalRequest
-
-EXIT_COMMANDS = {"/exit", "/quit"}
+from .constants import CliConstants as cli_constants
 
 
 def create_prompt_session() -> None:
@@ -35,7 +34,7 @@ def run_cli() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if args[:1] == ["web"]:
+    if args[:1] == [cli_constants.WEB_COMMAND]:
         from ..web.web_main import main as web_main
 
         return web_main(args[1:])

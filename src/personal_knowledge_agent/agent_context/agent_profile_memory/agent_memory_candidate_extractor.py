@@ -4,8 +4,7 @@ import re
 from typing import Any
 
 from .agent_memory_models import MemoryCandidate, MemoryIndex
-
-USER_PREFERENCE_MARKERS = ("记住", "以后", "每次", "总是")
+from .constants import AgentProfileMemoryConstants as memory_constants
 
 
 class AgentMemoryCandidateExtractor:
@@ -18,17 +17,17 @@ class AgentMemoryCandidateExtractor:
         recent_messages: list[dict[str, Any]] | None = None,
     ) -> list[MemoryCandidate]:
         candidates: list[MemoryCandidate] = []
-        if _contains_any(user_input, USER_PREFERENCE_MARKERS):
+        if _contains_any(user_input, memory_constants.USER_PREFERENCE_MARKERS):
             candidates.append(
                 MemoryCandidate(
-                    name=_candidate_name("user-preference", user_input),
-                    type="user",
+                    name=_candidate_name(memory_constants.MEMORY_CANDIDATE_NAME_PREFIX_USER_PREFERENCE, user_input),
+                    type=memory_constants.MEMORY_TYPE_USER,
                     description=_first_sentence(user_input),
                     content=user_input.strip(),
-                    source_type="user_explicit",
+                    source_type=memory_constants.MEMORY_CANDIDATE_SOURCE_TYPE_USER_EXPLICIT,
                     source_ref=None,
-                    confidence="high",
-                    write_policy="needs_confirmation",
+                    confidence=memory_constants.MEMORY_CANDIDATE_CONFIDENCE_HIGH,
+                    write_policy=memory_constants.MEMORY_CANDIDATE_WRITE_POLICY_NEEDS_CONFIRMATION,
                 )
             )
         return _dedupe_against_index(candidates, memory_index)

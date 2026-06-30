@@ -4,10 +4,11 @@ import json
 from typing import Any, TextIO
 
 from ...agent_runtime import AgentEvent
+from .constants import CliConstants as cli_constants
 
 
 class CliEventRenderer:
-    def __init__(self, *, stream: TextIO, max_text_length: int = 240):
+    def __init__(self, *, stream: TextIO, max_text_length: int = cli_constants.DEFAULT_MAX_TEXT_LENGTH):
         self.stream = stream
         self.max_text_length = max_text_length
         self._answer_parts: list[str] = []
@@ -27,21 +28,21 @@ class CliEventRenderer:
             self._section("User Input")
             self._write(payload.get("user_input", ""))
         elif event.event_type == "llm_call_started":
-            self._write(f"[LLM] {payload.get('stage', 'unknown')} started")
+            self._write(f"[LLM] {payload.get('stage', cli_constants.DEFAULT_EVENT_STAGE)} started")
         elif event.event_type == "llm_call_finished":
-            status = payload.get("status", "success")
-            self._write(f"[LLM] {payload.get('stage', 'unknown')} finished ({status})")
+            status = payload.get("status", cli_constants.DEFAULT_EVENT_STATUS)
+            self._write(f"[LLM] {payload.get('stage', cli_constants.DEFAULT_EVENT_STAGE)} finished ({status})")
         elif event.event_type == "tool_call_started":
-            self._section(f"Tool Call: {payload.get('tool_name', 'unknown')}")
+            self._section(f"Tool Call: {payload.get('tool_name', cli_constants.DEFAULT_EVENT_STAGE)}")
             self._dump(payload.get("input", {}))
         elif event.event_type == "tool_call_finished":
-            tool_name = payload.get("tool_name", "unknown")
+            tool_name = payload.get("tool_name", cli_constants.DEFAULT_EVENT_STAGE)
             duration_ms = payload.get("duration_ms")
             suffix = f" in {duration_ms}ms" if duration_ms is not None else ""
             self._section(f"Tool Result: {tool_name}{suffix}")
             self._dump(payload.get("output", {}))
         elif event.event_type == "evidence_checked":
-            self._write(f"[Evidence] {payload.get('status', 'completed')}")
+            self._write(f"[Evidence] {payload.get('status', cli_constants.DEFAULT_EVIDENCE_STATUS)}")
         elif event.event_type == "memory_candidates_generated":
             self._section("Memory Candidates")
             self._dump(payload.get("candidates", []))
@@ -95,4 +96,7 @@ class CliEventRenderer:
     def _truncate_text(self, value: str) -> str:
         if len(value) <= self.max_text_length:
             return value
-        return f"{value[: self.max_text_length - 3]}..."
+        return (
+            f"{value[: self.max_text_length - len(cli_constants.TEXT_ELLIPSIS)]}"
+            f"{cli_constants.TEXT_ELLIPSIS}"
+        )

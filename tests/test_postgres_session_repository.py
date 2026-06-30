@@ -285,12 +285,12 @@ def test_mark_running_and_idle_are_user_scoped_status_updates() -> None:
     assert idle is True
     running_sql, running_params = connection.executed[0]
     idle_sql, idle_params = connection.executed[1]
-    assert "SET status = 'running', current_run_id = %s, updated_at = now()" in running_sql
+    assert "SET status = %s, current_run_id = %s, updated_at = now()" in running_sql
     assert "WHERE user_id = %s AND session_id = %s" in running_sql
-    assert running_params == ("run_1", "usr_1", "chat_1")
-    assert "SET status = 'idle', current_run_id = NULL, updated_at = now()" in idle_sql
+    assert running_params == ("running", "run_1", "usr_1", "chat_1")
+    assert "SET status = %s, current_run_id = NULL, updated_at = now()" in idle_sql
     assert "WHERE user_id = %s AND session_id = %s" in idle_sql
-    assert idle_params == ("usr_1", "chat_1")
+    assert idle_params == ("idle", "usr_1", "chat_1")
     assert connection.commit_count == 2
 
 

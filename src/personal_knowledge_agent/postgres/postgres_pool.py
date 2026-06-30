@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from psycopg_pool import ConnectionPool
 
+from .constants import PostgresConstants as postgres_constants
+
 
 def create_postgres_pool(
     database_url: str,
     *,
-    min_size: int = 1,
-    max_size: int = 5,
+    min_size: int = postgres_constants.DEFAULT_POOL_MIN_SIZE,
+    max_size: int = postgres_constants.DEFAULT_POOL_MAX_SIZE,
     open: bool = True,
 ) -> ConnectionPool:
     if not database_url or not database_url.strip():

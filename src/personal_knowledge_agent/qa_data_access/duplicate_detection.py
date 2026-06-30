@@ -4,31 +4,8 @@ import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
+from .constants import QADataAccessConstants as qa_data_constants
 from .qa_card_models import QACard
-
-DUPLICATE_GROUP_SCORE_THRESHOLD = 0.78
-POSSIBLE_GROUP_SCORE_THRESHOLD = 0.58
-CROSS_CATEGORY_GROUP_SCORE_THRESHOLD = 0.86
-MIN_SHARED_TOKEN_WEIGHT = 2.0
-QUESTION_SCORE_WEIGHT = 0.40
-SUMMARY_SCORE_WEIGHT = 0.25
-KEYWORD_SCORE_WEIGHT = 0.20
-ANSWER_SCORE_WEIGHT = 0.10
-CATEGORY_SCORE_WEIGHT = 0.05
-LONG_TOKEN_WEIGHT = 1.5
-SHORT_TOKEN_WEIGHT = 1.0
-LONG_TOKEN_MIN_LENGTH = 2
-NO_SCORE = 0.0
-CATEGORY_MATCH_BONUS = 1.0
-CATEGORY_MISMATCH_BONUS = 0.0
-ROUND_DIGITS = 3
-NEXT_INDEX_OFFSET = 1
-CHINESE_BIGRAM_WIDTH = 2
-QUESTION_DUPLICATE_THRESHOLD = 0.88
-KEYWORD_POSSIBLE_THRESHOLD = 0.66
-REASON_SIGNAL_THRESHOLD = 0.58
-KEYWORD_REASON_THRESHOLD = 0.5
-COMMON_CHINESE_CHARS = set("的是了和与及或在有为到中这那一个什么怎么如何吗呢吧")
 
 
 @dataclass(frozen=True)
@@ -39,7 +16,7 @@ class DuplicatePair:
         left_id: The first card id in the pair.
         right_id: The second card id in the pair.
         duplicate_score: Weighted similarity score for this pair.
-        duplicate_level: Duplicate severity, such as duplicate or possible_duplicate.
+        duplicate_level: Duplicate severity returned to the tool layer.
         reason: Human-readable explanation for why the pair was retained.
     """
 
@@ -96,7 +73,7 @@ class DuplicateDetectionService:
 
         Inputs:
             cards: Cards to inspect.
-            mode: Detection strictness, either manual or auto.
+            mode: Detection strictness.
             limit: Maximum number of groups to return.
         Outputs:
             A DuplicateDetectionResult with checked count and duplicate groups.
@@ -104,8 +81,12 @@ class DuplicateDetectionService:
             None.
         """
         pairs = self._score_pairs(cards, self._candidate_pairs(cards))
-        if mode == "auto":
-            pairs = [pair for pair in pairs if pair.duplicate_level == "duplicate"]
+        if mode == qa_data_constants.DETECTION_MODE_AUTO:
+            pairs = [
+                pair
+                for pair in pairs
+                if pair.duplicate_level == qa_data_constants.DUPLICATE_LEVEL_DUPLICATE
+            ]
         groups = self._build_groups(cards, pairs)
         return DuplicateDetectionResult(
             checked_count=len(cards),
@@ -122,16 +103,20 @@ class DuplicateDetectionService:
 
         pair_weights: dict[tuple[str, str], float] = {}
         for token, card_ids in inverted.items():
-            weight = LONG_TOKEN_WEIGHT if len(token) >= LONG_TOKEN_MIN_LENGTH else SHORT_TOKEN_WEIGHT
+            weight = (
+                qa_data_constants.LONG_TOKEN_WEIGHT
+                if len(token) >= qa_data_constants.LONG_TOKEN_MIN_LENGTH
+                else qa_data_constants.SHORT_TOKEN_WEIGHT
+            )
             for index, left_id in enumerate(card_ids):
-                for right_id in card_ids[index + NEXT_INDEX_OFFSET :]:
+                for right_id in card_ids[index + qa_data_constants.NEXT_INDEX_OFFSET :]:
                     pair = tuple(sorted((left_id, right_id)))
-                    pair_weights[pair] = pair_weights.get(pair, NO_SCORE) + weight
+                    pair_weights[pair] = pair_weights.get(pair, qa_data_constants.NO_SCORE) + weight
 
         return {
             pair
             for pair, weight in pair_weights.items()
-            if weight >= MIN_SHARED_TOKEN_WEIGHT
+            if weight >= qa_data_constants.MIN_SHARED_TOKEN_WEIGHT
         }
 
     def _score_pairs(
@@ -151,14 +136,16 @@ class DuplicateDetectionService:
             answer_score = self._similarity(left.answer, right.answer)
             same_category = left.category == right.category
             duplicate_score = round(
-                QUESTION_SCORE_WEIGHT * question_score
-                + SUMMARY_SCORE_WEIGHT * summary_score
-                + KEYWORD_SCORE_WEIGHT * keyword_overlap
-                + ANSWER_SCORE_WEIGHT * answer_score
-                + CATEGORY_SCORE_WEIGHT * (
-                    CATEGORY_MATCH_BONUS if same_category else CATEGORY_MISMATCH_BONUS
+                qa_data_constants.QUESTION_SCORE_WEIGHT * question_score
+                + qa_data_constants.SUMMARY_SCORE_WEIGHT * summary_score
+                + qa_data_constants.KEYWORD_SCORE_WEIGHT * keyword_overlap
+                + qa_data_constants.ANSWER_SCORE_WEIGHT * answer_score
+                + qa_data_constants.CATEGORY_SCORE_WEIGHT * (
+                    qa_data_constants.CATEGORY_MATCH_BONUS
+                    if same_category
+                    else qa_data_constants.CATEGORY_MISMATCH_BONUS
                 ),
-                ROUND_DIGITS,
+                qa_data_constants.ROUND_DIGITS,
             )
             duplicate_level = self._duplicate_level(
                 duplicate_score=duplicate_score,
@@ -193,17 +180,17 @@ class DuplicateDetectionService:
     ) -> str:
         """Classify a scored pair into a duplicate level or discard it."""
         if same_category and (
-            duplicate_score >= DUPLICATE_GROUP_SCORE_THRESHOLD
-            or question_score >= QUESTION_DUPLICATE_THRESHOLD
+            duplicate_score >= qa_data_constants.DUPLICATE_GROUP_SCORE_THRESHOLD
+            or question_score >= qa_data_constants.QUESTION_DUPLICATE_THRESHOLD
         ):
-            return "duplicate"
-        if same_category and duplicate_score >= POSSIBLE_GROUP_SCORE_THRESHOLD:
-            return "possible_duplicate"
-        if same_category and keyword_overlap >= KEYWORD_POSSIBLE_THRESHOLD:
-            return "possible_duplicate"
-        if not same_category and duplicate_score >= CROSS_CATEGORY_GROUP_SCORE_THRESHOLD:
-            return "possible_duplicate"
-        return ""
+            return qa_data_constants.DUPLICATE_LEVEL_DUPLICATE
+        if same_category and duplicate_score >= qa_data_constants.POSSIBLE_GROUP_SCORE_THRESHOLD:
+            return qa_data_constants.DUPLICATE_LEVEL_POSSIBLE_DUPLICATE
+        if same_category and keyword_overlap >= qa_data_constants.KEYWORD_POSSIBLE_THRESHOLD:
+            return qa_data_constants.DUPLICATE_LEVEL_POSSIBLE_DUPLICATE
+        if not same_category and duplicate_score >= qa_data_constants.CROSS_CATEGORY_GROUP_SCORE_THRESHOLD:
+            return qa_data_constants.DUPLICATE_LEVEL_POSSIBLE_DUPLICATE
+        return qa_data_constants.DUPLICATE_LEVEL_NONE
 
     def _build_groups(
         self,
@@ -230,16 +217,19 @@ class DuplicateDetectionService:
             component_pairs = [
                 pair_by_ids[tuple(sorted((left_id, right_id)))]
                 for index, left_id in enumerate(component)
-                for right_id in component[index + NEXT_INDEX_OFFSET :]
+                for right_id in component[index + qa_data_constants.NEXT_INDEX_OFFSET :]
                 if tuple(sorted((left_id, right_id))) in pair_by_ids
             ]
             if not component_pairs:
                 continue
             best_pair = max(component_pairs, key=lambda pair: pair.duplicate_score)
             level = (
-                "duplicate"
-                if any(pair.duplicate_level == "duplicate" for pair in component_pairs)
-                else "possible_duplicate"
+                qa_data_constants.DUPLICATE_LEVEL_DUPLICATE
+                if any(
+                    pair.duplicate_level == qa_data_constants.DUPLICATE_LEVEL_DUPLICATE
+                    for pair in component_pairs
+                )
+                else qa_data_constants.DUPLICATE_LEVEL_POSSIBLE_DUPLICATE
             )
             groups.append(
                 DuplicateGroup(
@@ -288,7 +278,7 @@ class DuplicateDetectionService:
         left_keywords = {keyword.lower() for keyword in left.keywords}
         right_keywords = {keyword.lower() for keyword in right.keywords}
         if not left_keywords or not right_keywords:
-            return NO_SCORE
+            return qa_data_constants.NO_SCORE
         return len(left_keywords & right_keywords) / max(len(left_keywords), len(right_keywords))
 
     @classmethod
@@ -299,12 +289,12 @@ class DuplicateDetectionService:
         chinese_chars = [
             character
             for character in clean
-            if "\u4e00" <= character <= "\u9fff" and character not in COMMON_CHINESE_CHARS
+            if "\u4e00" <= character <= "\u9fff" and character not in qa_data_constants.COMMON_CHINESE_CHARS
         ]
         words.update(chinese_chars)
         words.update(
-            "".join(chinese_chars[index : index + CHINESE_BIGRAM_WIDTH])
-            for index in range(len(chinese_chars) - NEXT_INDEX_OFFSET)
+            "".join(chinese_chars[index : index + qa_data_constants.CHINESE_BIGRAM_WIDTH])
+            for index in range(len(chinese_chars) - qa_data_constants.NEXT_INDEX_OFFSET)
         )
         return {word for word in words if word}
 
@@ -312,7 +302,7 @@ class DuplicateDetectionService:
     def _similarity(left: str, right: str) -> float:
         """Return deterministic string similarity for two text fields."""
         if not left.strip() or not right.strip():
-            return NO_SCORE
+            return qa_data_constants.NO_SCORE
         return SequenceMatcher(None, left.lower().strip(), right.lower().strip()).ratio()
 
     @staticmethod
@@ -327,10 +317,10 @@ class DuplicateDetectionService:
         parts = []
         if same_category:
             parts.append("同分类")
-        if question_score >= REASON_SIGNAL_THRESHOLD:
+        if question_score >= qa_data_constants.REASON_SIGNAL_THRESHOLD:
             parts.append("问题文本相似")
-        if summary_score >= REASON_SIGNAL_THRESHOLD:
+        if summary_score >= qa_data_constants.REASON_SIGNAL_THRESHOLD:
             parts.append("摘要相似")
-        if keyword_overlap >= KEYWORD_REASON_THRESHOLD:
+        if keyword_overlap >= qa_data_constants.KEYWORD_REASON_THRESHOLD:
             parts.append("关键词重合")
         return "，".join(parts) if parts else "相似度达到查重阈值"

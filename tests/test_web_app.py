@@ -1359,9 +1359,11 @@ def test_web_static_context_status_ui_is_lightweight():
     client = make_client()
 
     index_response = client.get("/")
+    constants_response = client.get("/static/constants.js")
     app_response = client.get("/static/app.js")
 
     assert index_response.status_code == 200
+    assert constants_response.status_code == 200
     assert app_response.status_code == 200
     assert 'id="authGate"' in index_response.text
     assert 'id="authForm"' in index_response.text
@@ -1374,15 +1376,15 @@ def test_web_static_context_status_ui_is_lightweight():
     assert "本地知识库" not in index_response.text
     assert 'id="contextStatus"' in index_response.text
     assert "Context --" in index_response.text
-    assert '"/api/auth/me"' in app_response.text
-    assert '"/api/auth/request-code"' in app_response.text
-    assert '"/api/auth/verify-code"' in app_response.text
-    assert '"/api/auth/logout"' in app_response.text
-    assert 'error_code === "not_authenticated"' in app_response.text
+    assert 'API_AUTH_ME_PATH: "/api/auth/me"' in constants_response.text
+    assert 'API_AUTH_REQUEST_CODE_PATH: "/api/auth/request-code"' in constants_response.text
+    assert 'API_AUTH_VERIFY_CODE_PATH: "/api/auth/verify-code"' in constants_response.text
+    assert 'API_AUTH_LOGOUT_PATH: "/api/auth/logout"' in constants_response.text
+    assert "appConstants.ERROR_CODE_NOT_AUTHENTICATED" in app_response.text
     assert "bootApp().catch" in app_response.text
     assert "initializeApp().catch" not in app_response.text
     assert "loadRecentCards().catch" not in app_response.text
-    assert "runtime_context_compaction_started" in app_response.text
+    assert 'EVENT_RUNTIME_CONTEXT_COMPACTION_STARTED: "runtime_context_compaction_started"' in constants_response.text
     assert "createTypingController" in app_response.text
     assert "isMobileViewport()" in app_response.text
     assert "setPaneCollapsed(\"right\", true)" in app_response.text

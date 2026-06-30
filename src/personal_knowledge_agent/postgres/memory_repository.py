@@ -9,6 +9,7 @@ from ..agent_context.agent_profile_memory import (
     MemoryIndex,
     MemoryIndexEntry,
 )
+from .constants import PostgresConstants as postgres_constants
 
 
 class PostgresConnection(Protocol):
@@ -54,31 +55,36 @@ class PostgresAgentMemoryRepository:
 
 
 def _row_to_index_entry(row: object) -> MemoryIndexEntry:
-    memory_id, title, summary = _row_values(row, "memory_id", "title", "summary")
+    memory_id, title, summary = _row_values(
+        row,
+        postgres_constants.MEMORY_FIELD_MEMORY_ID,
+        postgres_constants.MEMORY_FIELD_TITLE,
+        postgres_constants.MEMORY_FIELD_SUMMARY,
+    )
     return MemoryIndexEntry(
         name=str(memory_id),
-        type="user",
+        type=postgres_constants.DEFAULT_MEMORY_TYPE,
         description=str(summary or title),
-        path=f"postgres:agent_user_memories/{memory_id}",
+        path=f"{postgres_constants.MEMORY_PATH_PREFIX}/{memory_id}",
     )
 
 
 def _row_to_document(row: object) -> MemoryDocument:
     memory_id, title, summary, content, updated_at = _row_values(
         row,
-        "memory_id",
-        "title",
-        "summary",
-        "content",
-        "updated_at",
+        postgres_constants.MEMORY_FIELD_MEMORY_ID,
+        postgres_constants.MEMORY_FIELD_TITLE,
+        postgres_constants.MEMORY_FIELD_SUMMARY,
+        postgres_constants.MEMORY_FIELD_CONTENT,
+        postgres_constants.MEMORY_FIELD_UPDATED_AT,
     )
     return MemoryDocument(
         name=str(memory_id),
-        type="user",
+        type=postgres_constants.DEFAULT_MEMORY_TYPE,
         description=str(summary or title),
-        path=f"postgres:agent_user_memories/{memory_id}",
+        path=f"{postgres_constants.MEMORY_PATH_PREFIX}/{memory_id}",
         updated_at=_format_datetime(updated_at),
-        source_type="user_preference",
+        source_type=postgres_constants.MEMORY_SOURCE_TYPE_USER_PREFERENCE,
         source_ref=None,
         content=str(content),
     )

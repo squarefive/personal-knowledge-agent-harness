@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from .constants import ConversationSessionConstants as session_constants
+
 
 @dataclass(frozen=True)
 class SessionMetadata:
@@ -12,15 +14,15 @@ class SessionMetadata:
     transcript_path: str
     summary_path: str
     artifacts_dir: str
-    title: str = "新会话"
-    title_source: str = "auto"
+    title: str = session_constants.DEFAULT_SESSION_TITLE
+    title_source: str = session_constants.TITLE_SOURCE_AUTO
     last_user_message: str | None = None
     event_count: int = 0
     message_count: int = 0
     compacted_until_event_id: int = 0
-    summary_status: str = "none"
+    summary_status: str = session_constants.SUMMARY_STATUS_NONE
     summary_attempts: int = 0
-    last_restore_mode: str = "full"
+    last_restore_mode: str = session_constants.RESTORE_MODE_FULL
     summary_error: str | None = None
     last_prompt_usage_ratio: float | None = None
 

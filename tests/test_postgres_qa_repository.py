@@ -6,6 +6,7 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from personal_knowledge_agent.postgres import PostgresQACardRepository
+from personal_knowledge_agent.postgres.constants import PostgresConstants as postgres_constants
 
 
 NOW = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
@@ -282,9 +283,9 @@ def test_list_unvectorized_cards_filters_by_user_id_status_and_limit_param() -> 
 
     assert [card.id for card in cards] == ["qa_2"]
     sql, params = connection.executed[0]
-    assert "WHERE user_id = %s AND embedding_status != 'ready'" in sql
+    assert "WHERE user_id = %s AND embedding_status != %s" in sql
     assert "ORDER BY created_at ASC LIMIT %s" in sql
-    assert params == ("usr_1", 2)
+    assert params == ("usr_1", postgres_constants.EMBEDDING_STATUS_READY, 2)
 
 
 def test_list_unvectorized_cards_without_limit_uses_user_id_only() -> None:
@@ -294,9 +295,9 @@ def test_list_unvectorized_cards_without_limit_uses_user_id_only() -> None:
     assert repo.list_unvectorized_cards() == []
 
     sql, params = connection.executed[0]
-    assert "WHERE user_id = %s AND embedding_status != 'ready'" in sql
+    assert "WHERE user_id = %s AND embedding_status != %s" in sql
     assert "LIMIT %s" not in sql
-    assert params == ("usr_1",)
+    assert params == ("usr_1", postgres_constants.EMBEDDING_STATUS_READY)
 
 
 def test_search_keyword_cards_uses_user_id_and_parameter_tuple_for_ilike_terms() -> None:
@@ -350,11 +351,11 @@ def test_update_card_filters_by_user_id_resets_embedding_and_returns_none_when_n
     sql, params = connection.executed[0]
     assert "UPDATE qa_cards SET" in sql
     assert "embedding = NULL" in sql
-    assert "embedding_status = 'pending'" in sql
+    assert "embedding_status = %s" in sql
     assert "WHERE user_id = %s AND card_id = %s" in sql
     assert params[:3] == ("New question", None, None)
     assert jsonb_value(params[3]) == ["new"]
-    assert params[4:] == (None, None, "usr_1", "qa_cross_user")
+    assert params[4:] == (None, None, "pending", "usr_1", "qa_cross_user")
     assert connection.commit_count == 1
 
 
@@ -369,7 +370,7 @@ def test_update_card_with_keywords_none_does_not_update_keywords() -> None:
     sql, params = connection.executed[0]
     assert "keywords = COALESCE(%s, keywords)" in sql
     assert params[3] is None
-    assert params[-2:] == ("usr_1", "qa_1")
+    assert params[-3:] == ("pending", "usr_1", "qa_1")
 
 
 def test_update_card_rejects_empty_keywords() -> None:
@@ -432,9 +433,9 @@ def test_mark_card_vectorized_sets_ready_only_for_user_scoped_card() -> None:
 
     assert updated is True
     sql, params = connection.executed[0]
-    assert "UPDATE qa_cards SET embedding_status = 'ready', updated_at = now()" in sql
+    assert "UPDATE qa_cards SET embedding_status = %s, updated_at = now()" in sql
     assert "WHERE user_id = %s AND card_id = %s AND embedding IS NOT NULL" in sql
-    assert params == ("usr_1", "qa_1")
+    assert params == ("ready", "usr_1", "qa_1")
     assert connection.commit_count == 1
 
 
@@ -447,7 +448,7 @@ def test_mark_card_vectorized_returns_false_for_missing_or_cross_user_card() -> 
     assert updated is False
     sql, params = connection.executed[0]
     assert "WHERE user_id = %s AND card_id = %s" in sql
-    assert params == ("usr_1", "qa_cross_user")
+    assert params == ("ready", "usr_1", "qa_cross_user")
     assert connection.commit_count == 1
 
 
@@ -482,12 +483,19 @@ def test_search_vector_cards_uses_user_ready_embedding_category_distance_and_lim
     sql, params = connection.executed[0]
     assert "FROM qa_cards" in sql
     assert "WHERE user_id = %s" in sql
-    assert "embedding_status = 'ready'" in sql
+    assert "embedding_status = %s" in sql
     assert "embedding IS NOT NULL" in sql
     assert "AND category = %s" in sql
     assert "ORDER BY embedding <=> %s::vector" in sql
     assert "LIMIT %s" in sql
-    assert params == ("[0.1,0.2,0.3]", "usr_1", "Agent边界", "[0.1,0.2,0.3]", 7)
+    assert params == (
+        "[0.1,0.2,0.3]",
+        "usr_1",
+        postgres_constants.EMBEDDING_STATUS_READY,
+        "Agent边界",
+        "[0.1,0.2,0.3]",
+        7,
+    )
 
 
 def test_search_vector_cards_without_category_omits_category_filter() -> None:
@@ -499,7 +507,7 @@ def test_search_vector_cards_without_category_omits_category_filter() -> None:
     sql, params = connection.executed[0]
     assert "AND category = %s" not in sql
     assert "ORDER BY embedding <=> %s::vector" in sql
-    assert params == ("[0.1,0.2]", "usr_1", "[0.1,0.2]", 3)
+    assert params == ("[0.1,0.2]", "usr_1", postgres_constants.EMBEDDING_STATUS_READY, "[0.1,0.2]", 3)
 
 
 def test_update_embedding_status_rejects_ready_without_embedding() -> None:

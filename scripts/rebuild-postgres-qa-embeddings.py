@@ -4,11 +4,7 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from personal_knowledge_agent.agent_bootstrap.agent_runtime_config import (
-    DEFAULT_QWEN_EMBEDDING_BASE_URL,
-    DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
-    DEFAULT_QWEN_EMBEDDING_MODEL,
-)
+from personal_knowledge_agent.agent_bootstrap.constants import AgentBootstrapConstants as bootstrap_constants
 from personal_knowledge_agent.llm_clients import QwenEmbeddingClient
 from personal_knowledge_agent.postgres import PostgresQACardRepository, close_postgres_pool, create_postgres_pool
 from personal_knowledge_agent.postgres.qa_semantic_index import PostgresQASemanticIndex
@@ -24,9 +20,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-email", required=True, help="Existing PostgreSQL user email whose cards should be rebuilt.")
     parser.add_argument("--limit", type=int, default=50, help="Maximum unvectorized cards to process.")
     parser.add_argument("--database-url", help="PostgreSQL database URL. Defaults to DATABASE_URL/_FILE.")
-    parser.add_argument("--embedding-base-url", default=DEFAULT_QWEN_EMBEDDING_BASE_URL)
-    parser.add_argument("--embedding-model", default=DEFAULT_QWEN_EMBEDDING_MODEL)
-    parser.add_argument("--embedding-dimensions", type=int, default=DEFAULT_QWEN_EMBEDDING_DIMENSIONS)
+    parser.add_argument("--embedding-base-url", default=bootstrap_constants.DEFAULT_QWEN_EMBEDDING_BASE_URL)
+    parser.add_argument("--embedding-model", default=bootstrap_constants.DEFAULT_QWEN_EMBEDDING_MODEL)
+    parser.add_argument(
+        "--embedding-dimensions",
+        type=int,
+        default=bootstrap_constants.DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
+    )
     return parser.parse_args(argv)
 
 
@@ -36,9 +36,9 @@ def rebuild_postgres_qa_embeddings(
     target_email: str,
     dashscope_api_key: str | None,
     limit: int,
-    embedding_base_url: str = DEFAULT_QWEN_EMBEDDING_BASE_URL,
-    embedding_model: str = DEFAULT_QWEN_EMBEDDING_MODEL,
-    embedding_dimensions: int = DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
+    embedding_base_url: str = bootstrap_constants.DEFAULT_QWEN_EMBEDDING_BASE_URL,
+    embedding_model: str = bootstrap_constants.DEFAULT_QWEN_EMBEDDING_MODEL,
+    embedding_dimensions: int = bootstrap_constants.DEFAULT_QWEN_EMBEDDING_DIMENSIONS,
     embedding_client: object | None = None,
 ) -> dict[str, object]:
     if not dashscope_api_key:

@@ -3,25 +3,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-import ssl
 import time
 from typing import Any, Callable, Iterator
 from urllib import error, request
 
 from ..tool_runtime.tool_models import ToolCall
+from .constants import LLMClientConstants as llm_constants
 from .llm_models import LLMResponse, LLMUsage
 
 logger = logging.getLogger(__name__)
-
-RETRYABLE_HTTP_STATUSES = {429, 500, 503}
-RETRYABLE_NETWORK_ERRORS = (error.URLError, TimeoutError, ssl.SSLError, ConnectionError)
-CONTEXT_LIMIT_ERROR_MARKERS = (
-    "context length exceeded",
-    "context_length_exceeded",
-    "token limit exceeded",
-    "maximum context length",
-)
-
 
 class LLMContextLengthExceeded(RuntimeError):
     pass
@@ -31,16 +21,16 @@ class DeepSeekChatClient:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "deepseek-v4-flash",
-        base_url: str = "https://api.deepseek.com",
-        timeout_seconds: int = 60,
-        max_retries: int = 2,
-        retry_backoff_seconds: tuple[float, ...] = (0.5, 1.0),
+        model: str = llm_constants.DEFAULT_DEEPSEEK_MODEL,
+        base_url: str = llm_constants.DEFAULT_DEEPSEEK_BASE_URL,
+        timeout_seconds: int = llm_constants.DEFAULT_TIMEOUT_SECONDS,
+        max_retries: int = llm_constants.DEFAULT_MAX_RETRIES,
+        retry_backoff_seconds: tuple[float, ...] = llm_constants.DEFAULT_RETRY_BACKOFF_SECONDS,
         llm_provider_user_id: str | None = None,
     ):
-        self.api_key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        self.api_key = api_key or os.environ.get(llm_constants.DEEPSEEK_API_KEY_ENV)
         if not self.api_key:
-            raise ValueError("DEEPSEEK_API_KEY is required")
+            raise ValueError(f"{llm_constants.DEEPSEEK_API_KEY_ENV} is required")
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
@@ -57,26 +47,38 @@ class DeepSeekChatClient:
         system_prompt: str,
         on_text_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
-        request_messages = [{"role": "system", "content": system_prompt}, *messages]
+        request_messages = [
+            {
+                llm_constants.MESSAGE_ROLE_FIELD: llm_constants.MESSAGE_ROLE_SYSTEM,
+                llm_constants.MESSAGE_CONTENT_FIELD: system_prompt,
+            },
+            *messages,
+        ]
         payload = {
-            "model": self.model,
-            "messages": request_messages,
-            "tools": tools,
-            "tool_choice": "auto",
-            "stream": True,
-            "stream_options": {"include_usage": True},
+            llm_constants.PAYLOAD_MODEL_FIELD: self.model,
+            llm_constants.PAYLOAD_MESSAGES_FIELD: request_messages,
+            llm_constants.PAYLOAD_TOOLS_FIELD: tools,
+            llm_constants.PAYLOAD_TOOL_CHOICE_FIELD: llm_constants.TOOL_CHOICE_AUTO,
+            llm_constants.PAYLOAD_STREAM_FIELD: True,
+            llm_constants.PAYLOAD_STREAM_OPTIONS_FIELD: {
+                llm_constants.PAYLOAD_INCLUDE_USAGE_FIELD: True,
+            },
         }
         if self.llm_provider_user_id:
-            payload["user_id"] = self.llm_provider_user_id
+            payload[llm_constants.PAYLOAD_USER_ID_FIELD] = self.llm_provider_user_id
         text_parts: list[str] = []
         tool_accumulator = _ToolCallAccumulator()
         usage: LLMUsage | None = None
         for data in self._post_stream("/chat/completions", payload):
-            if data.get("usage") is not None:
-                usage = _parse_usage(data.get("usage"))
-            delta = ((data.get("choices") or [{}])[0].get("delta")) or {}
-            tool_call_deltas = delta.get("tool_calls") or []
-            content = delta.get("content")
+            if data.get(llm_constants.RESPONSE_USAGE_FIELD) is not None:
+                usage = _parse_usage(data.get(llm_constants.RESPONSE_USAGE_FIELD))
+            delta = (
+                (data.get(llm_constants.RESPONSE_CHOICES_FIELD) or [{}])[0].get(
+                    llm_constants.RESPONSE_DELTA_FIELD
+                )
+            ) or {}
+            tool_call_deltas = delta.get(llm_constants.RESPONSE_TOOL_CALLS_FIELD) or []
+            content = delta.get(llm_constants.MESSAGE_CONTENT_FIELD)
             if content and not tool_call_deltas:
                 text_parts.append(content)
                 if on_text_delta is not None:
@@ -115,13 +117,13 @@ class DeepSeekChatClient:
                     raise LLMContextLengthExceeded(
                         f"DeepSeek context length exceeded with status {exc.code}: {detail}"
                     ) from exc
-                if not emitted and exc.code in RETRYABLE_HTTP_STATUSES and attempt < self.max_retries:
+                if not emitted and exc.code in llm_constants.RETRYABLE_HTTP_STATUSES and attempt < self.max_retries:
                     self._sleep_before_retry(attempt)
                     continue
                 raise RuntimeError(
                     f"DeepSeek request failed with status {exc.code} after {attempt + 1} attempts: {detail}"
                 ) from exc
-            except RETRYABLE_NETWORK_ERRORS as exc:
+            except llm_constants.RETRYABLE_NETWORK_ERRORS as exc:
                 logger.error("llm.deepseek.url_error")
                 if not emitted and attempt < self.max_retries:
                     self._sleep_before_retry(attempt)
@@ -165,9 +167,9 @@ def _parse_usage(payload: Any) -> LLMUsage | None:
     if not isinstance(payload, dict):
         return None
     return LLMUsage(
-        prompt_tokens=_optional_int(payload.get("prompt_tokens")),
-        completion_tokens=_optional_int(payload.get("completion_tokens")),
-        total_tokens=_optional_int(payload.get("total_tokens")),
+        prompt_tokens=_optional_int(payload.get(llm_constants.RESPONSE_PROMPT_TOKENS_FIELD)),
+        completion_tokens=_optional_int(payload.get(llm_constants.RESPONSE_COMPLETION_TOKENS_FIELD)),
+        total_tokens=_optional_int(payload.get(llm_constants.RESPONSE_TOTAL_TOKENS_FIELD)),
     )
 
 
@@ -179,7 +181,7 @@ def _optional_int(value: Any) -> int | None:
 
 def _is_context_limit_error(detail: str) -> bool:
     lowered = detail.lower()
-    return any(marker in lowered for marker in CONTEXT_LIMIT_ERROR_MARKERS)
+    return any(marker in lowered for marker in llm_constants.CONTEXT_LIMIT_ERROR_MARKERS)
 
 
 class _ToolCallAccumulator:
@@ -188,34 +190,46 @@ class _ToolCallAccumulator:
 
     def add_delta(self, deltas: list[dict[str, Any]]) -> None:
         for fallback_index, raw_call in enumerate(deltas):
-            index = raw_call.get("index", fallback_index)
+            index = raw_call.get(llm_constants.RESPONSE_TOOL_CALL_INDEX_FIELD, fallback_index)
             item = self._items.setdefault(
                 index,
-                {"id": None, "name": "", "arguments": ""},
+                {
+                    llm_constants.RESPONSE_TOOL_CALL_ID_FIELD: None,
+                    llm_constants.RESPONSE_TOOL_CALL_NAME_FIELD: "",
+                    llm_constants.RESPONSE_TOOL_CALL_ARGUMENTS_FIELD: "",
+                },
             )
-            if raw_call.get("id"):
-                item["id"] = raw_call["id"]
-            function = raw_call.get("function") or {}
-            if function.get("name"):
-                item["name"] += function["name"]
-            if function.get("arguments"):
-                item["arguments"] += function["arguments"]
+            if raw_call.get(llm_constants.RESPONSE_TOOL_CALL_ID_FIELD):
+                item[llm_constants.RESPONSE_TOOL_CALL_ID_FIELD] = raw_call[
+                    llm_constants.RESPONSE_TOOL_CALL_ID_FIELD
+                ]
+            function = raw_call.get(llm_constants.RESPONSE_TOOL_CALL_FUNCTION_FIELD) or {}
+            if function.get(llm_constants.RESPONSE_TOOL_CALL_NAME_FIELD):
+                item[llm_constants.RESPONSE_TOOL_CALL_NAME_FIELD] += function[
+                    llm_constants.RESPONSE_TOOL_CALL_NAME_FIELD
+                ]
+            if function.get(llm_constants.RESPONSE_TOOL_CALL_ARGUMENTS_FIELD):
+                item[llm_constants.RESPONSE_TOOL_CALL_ARGUMENTS_FIELD] += function[
+                    llm_constants.RESPONSE_TOOL_CALL_ARGUMENTS_FIELD
+                ]
 
     def to_tool_calls(self) -> list[ToolCall]:
         tool_calls: list[ToolCall] = []
         for index in sorted(self._items):
             item = self._items[index]
-            if not item["name"]:
+            if not item[llm_constants.RESPONSE_TOOL_CALL_NAME_FIELD]:
                 continue
-            raw_arguments = item["arguments"] or "{}"
+            raw_arguments = item[llm_constants.RESPONSE_TOOL_CALL_ARGUMENTS_FIELD] or "{}"
             try:
                 arguments = json.loads(raw_arguments)
             except json.JSONDecodeError as exc:
-                raise RuntimeError(f"Invalid tool call arguments for {item['name']}") from exc
+                raise RuntimeError(
+                    f"Invalid tool call arguments for {item[llm_constants.RESPONSE_TOOL_CALL_NAME_FIELD]}"
+                ) from exc
             tool_calls.append(
                 ToolCall(
-                    id=item["id"] or f"tool_call_{index}",
-                    name=item["name"],
+                    id=item[llm_constants.RESPONSE_TOOL_CALL_ID_FIELD] or f"tool_call_{index}",
+                    name=item[llm_constants.RESPONSE_TOOL_CALL_NAME_FIELD],
                     arguments=arguments,
                 )
             )

@@ -13,6 +13,8 @@ def test_load_config_reads_dotenv(tmp_path, monkeypatch):
 
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY_FILE", raising=False)
 
     config = load_config(env_file)
 

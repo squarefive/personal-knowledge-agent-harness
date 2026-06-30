@@ -4,19 +4,21 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..agent_context.conversation_sessions import CompactRecord, RuntimeCompactionResult, SessionMetadata, utc_now
+from ..agent_context.conversation_sessions import (
+    CompactRecord,
+    ConversationSessionConstants as session_constants,
+    RuntimeCompactionResult,
+    SessionMetadata,
+    utc_now,
+)
 from ..agent_context.conversation_sessions.session_utils import (
-    DEFAULT_SESSION_TITLE,
     _recent_messages,
     _recovery_notice,
     _summary,
     _summary_input,
 )
 from .session_repository import ConversationSessionRecord, PostgresConversationSessionRepository
-
-DEFAULT_TOOL_RESULT_THRESHOLD_CHARS = 8000
-DEFAULT_RECENT_MESSAGES_COUNT = 12
-SESSION_TITLE_PREVIEW_CHARS = 30
+from .constants import PostgresConstants as postgres_constants
 
 
 class PostgresConversationTranscriptAdapter:
@@ -97,7 +99,7 @@ class PostgresSessionMetadataAdapter:
         if record.title is None and normalized_message:
             record = self._repository.rename_session(
                 self.session_id,
-                normalized_message[:SESSION_TITLE_PREVIEW_CHARS],
+                normalized_message[:postgres_constants.SESSION_TITLE_PREVIEW_CHARS],
             ) or record
         metadata = self._metadata(record)
         return SessionMetadata(
@@ -130,11 +132,19 @@ class PostgresSessionMetadataAdapter:
             transcript_path=f"postgres://conversation_sessions/{record.session_id}/messages",
             summary_path=f"postgres://conversation_sessions/{record.session_id}/summary",
             artifacts_dir="",
-            title=record.title or DEFAULT_SESSION_TITLE,
-            title_source="user" if record.title else "auto",
+            title=record.title or session_constants.DEFAULT_SESSION_TITLE,
+            title_source=(
+                session_constants.TITLE_SOURCE_USER
+                if record.title
+                else session_constants.TITLE_SOURCE_AUTO
+            ),
             event_count=count,
             message_count=count,
-            summary_status="valid" if record.summary else "none",
+            summary_status=(
+                session_constants.SUMMARY_STATUS_VALID
+                if record.summary
+                else session_constants.SUMMARY_STATUS_NONE
+            ),
             last_prompt_usage_ratio=record.last_prompt_usage_ratio,
         )
 
@@ -142,7 +152,11 @@ class PostgresSessionMetadataAdapter:
 class InMemoryToolResultCompactor:
     """Compacts long tool results without writing local artifact files."""
 
-    def __init__(self, *, threshold_chars: int = DEFAULT_TOOL_RESULT_THRESHOLD_CHARS) -> None:
+    def __init__(
+        self,
+        *,
+        threshold_chars: int = postgres_constants.DEFAULT_TOOL_RESULT_THRESHOLD_CHARS,
+    ) -> None:
         self.threshold_chars = threshold_chars
 
     def compact_tool_result(
@@ -175,7 +189,7 @@ class PostgresRuntimeContextCompactor:
         session_id: str,
         *,
         summarizer: Any,
-        recent_messages_count: int = DEFAULT_RECENT_MESSAGES_COUNT,
+        recent_messages_count: int = postgres_constants.DEFAULT_RECENT_MESSAGES_COUNT,
     ) -> None:
         self._repository = repository
         self.session_id = session_id
@@ -196,7 +210,7 @@ class PostgresRuntimeContextCompactor:
             return RuntimeCompactionResult(
                 messages=_recent_messages(messages, self.recent_messages_count),
                 session_summary=notice,
-                mode="recent_with_recovery_notice",
+                mode=session_constants.RESTORE_MODE_RECENT_WITH_RECOVERY_NOTICE,
                 warning=notice,
             )
 
@@ -204,5 +218,5 @@ class PostgresRuntimeContextCompactor:
         return RuntimeCompactionResult(
             messages=_recent_messages(messages, self.recent_messages_count),
             session_summary=summary,
-            mode="summary_plus_recent",
+            mode=session_constants.RESTORE_MODE_SUMMARY_PLUS_RECENT,
         )

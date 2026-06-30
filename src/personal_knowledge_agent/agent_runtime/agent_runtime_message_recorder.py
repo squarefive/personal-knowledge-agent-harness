@@ -6,6 +6,7 @@ from ..agent_context.conversation_sessions import (
     ConversationSessionMetadataRepository,
     ConversationTranscriptRepository,
 )
+from .constants import AgentRuntimeConstants as runtime_constants
 
 
 class RuntimeMessageRecorder:
@@ -38,9 +39,11 @@ class RuntimeMessageRecorder:
                 message_count = len(self.transcript.load_messages())
             else:
                 message_count = len(self.messages)
-            if message.get("role") == "user" and isinstance(message.get("content"), str):
+            if message.get(runtime_constants.MESSAGE_ROLE_FIELD) == runtime_constants.MESSAGE_ROLE_USER and isinstance(
+                message.get(runtime_constants.MESSAGE_CONTENT_FIELD), str
+            ):
                 self.metadata_store.update_after_user_message(
-                    message["content"],
+                    message[runtime_constants.MESSAGE_CONTENT_FIELD],
                     event_count=event_count,
                     message_count=message_count,
                 )

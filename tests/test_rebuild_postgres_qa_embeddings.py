@@ -41,7 +41,7 @@ class FakePostgresConnection:
         self.executed.append((sql, params))
         if "FROM users" in sql:
             return FakeCursor(row=self.user_row)
-        if "FROM qa_cards" in sql and "embedding_status != 'ready'" in sql:
+        if "FROM qa_cards" in sql and "embedding_status != %s" in sql and params[1] == "ready":
             return FakeCursor(rows=self.card_rows)
         if "UPDATE qa_cards" in sql:
             return FakeCursor(rowcount=1)
@@ -122,8 +122,8 @@ def test_rebuild_processes_target_user_by_email_and_marks_success_ready() -> Non
     assert embedding_client.texts == ["Question\nSummary\npostgres"]
     assert connection.executed[0][1] == ("user@example.test",)
     list_sql, list_params = connection.executed[1]
-    assert "WHERE user_id = %s AND embedding_status != 'ready'" in list_sql
-    assert list_params == ("usr_1", 5)
+    assert "WHERE user_id = %s AND embedding_status != %s" in list_sql
+    assert list_params == ("usr_1", "ready", 5)
     update_sql, update_params = connection.executed[2]
     assert "embedding_status = %s" in update_sql
     assert update_params == ("ready", "[0.1,0.2,0.3]", "text-embedding-v4", "usr_1", "qa_1")

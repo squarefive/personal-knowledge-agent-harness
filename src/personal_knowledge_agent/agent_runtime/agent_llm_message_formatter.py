@@ -5,22 +5,26 @@ from dataclasses import asdict
 from typing import Any
 
 from ..llm_clients import LLMResponse
+from .constants import AgentRuntimeConstants as runtime_constants
 
 
 def format_assistant_tool_call_message(response: LLMResponse) -> dict[str, Any]:
     message: dict[str, Any] = {
-        "role": "assistant",
-        "content": response.text,
-        "tool_calls": [],
+        runtime_constants.MESSAGE_ROLE_FIELD: runtime_constants.MESSAGE_ROLE_ASSISTANT,
+        runtime_constants.MESSAGE_CONTENT_FIELD: response.text,
+        runtime_constants.MESSAGE_TOOL_CALLS_FIELD: [],
     }
     for tool_call in response.tool_calls:
-        message["tool_calls"].append(
+        message[runtime_constants.MESSAGE_TOOL_CALLS_FIELD].append(
             {
-                "id": tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_call.name,
-                    "arguments": json.dumps(tool_call.arguments, ensure_ascii=False),
+                runtime_constants.TOOL_CALL_ID_PAYLOAD_FIELD: tool_call.id,
+                runtime_constants.TOOL_CALL_TYPE_FIELD: runtime_constants.TOOL_CALL_TYPE_FUNCTION,
+                runtime_constants.TOOL_CALL_FUNCTION_FIELD: {
+                    runtime_constants.TOOL_CALL_NAME_FIELD: tool_call.name,
+                    runtime_constants.TOOL_CALL_ARGUMENTS_FIELD: json.dumps(
+                        tool_call.arguments,
+                        ensure_ascii=False,
+                    ),
                 },
             }
         )
@@ -36,11 +40,14 @@ def format_tool_result_message(
     content = json.dumps(result, ensure_ascii=False)
     if compact_record is not None:
         content = json.dumps(
-            {"ok": result.get("ok", True), "compact_record": asdict(compact_record)},
+            {
+                runtime_constants.RESULT_OK_FIELD: result.get(runtime_constants.RESULT_OK_FIELD, True),
+                runtime_constants.RESULT_COMPACT_RECORD_FIELD: asdict(compact_record),
+            },
             ensure_ascii=False,
         )
     return {
-        "role": "tool",
-        "tool_call_id": tool_call_id,
-        "content": content,
+        runtime_constants.MESSAGE_ROLE_FIELD: runtime_constants.MESSAGE_ROLE_TOOL,
+        runtime_constants.TOOL_CALL_ID_FIELD: tool_call_id,
+        runtime_constants.MESSAGE_CONTENT_FIELD: content,
     }

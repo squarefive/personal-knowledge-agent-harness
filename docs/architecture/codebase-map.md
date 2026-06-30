@@ -36,7 +36,7 @@ last_updated: "2026-06-28"
 | `docs/` | 项目文档目录。 |
 | `docs/agents/` | Agent 稳定设计边界文档目录；当前边界文档为 `cloud-qa-knowledge-agent.md`。 |
 | `docs/architecture/` | 代码地图等架构说明文档目录。 |
-| `docs/guidelines/` | AI Coding 协作偏好和行为规约目录。 |
+| `docs/guidelines/` | AI Coding 协作偏好、行为规约和代码规范目录。 |
 | `docs/templates/` | Agent 开发上下文和代码地图模板目录。 |
 | `.github/workflows/` | GitHub Actions CI/CD workflow 目录。 |
 | `deploy/` | 单机 Docker Compose 部署底座、nginx HTTP 临时反代配置和服务器部署说明。 |
@@ -85,6 +85,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent bootstrap 公共入口。 |
+| `constants.py` | 定义 Agent bootstrap 配置默认值常量类。 |
 | `agent_component_factory.py` | 创建 Agent loop runner、Q&A、todo、memory tool handler 及其依赖。 |
 | `agent_runtime_config.py` | 从 `.env` 和环境变量读取运行配置。 |
 
@@ -97,6 +98,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent runtime 组件。 |
+| `constants.py` | 定义 Agent runtime 阈值、消息窗口、来源证据和耗时换算常量类。 |
 | `agent_loop_runner.py` | Agent loop 核心调用链。 |
 | `agent_llm_call_runner.py` | 单次 Agent LLM 调用和事件。 |
 | `agent_tool_call_runner.py` | 单次 tool call、权限、compact 和事件。 |
@@ -116,6 +118,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent context 组件。 |
+| `constants.py` | 定义 Agent turn context 选择相关常量类。 |
 | `agent_prompt_builder.py` | 构建运行时 system prompt。 |
 | `agent_turn_context_loader.py` | turn-start memory index 和相关 memory 加载。 |
 
@@ -128,6 +131,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 conversation session 组件。 |
+| `constants.py` | 定义 conversation session 标题、ID 校验和 summary 规格常量类。 |
 | `conversation_transcript_repository.py` | 文件型 transcript repository 遗留实现；不作为 cloud-only runtime 持久化来源。 |
 | `conversation_session_metadata_repository.py` | 文件型 metadata repository 遗留实现；不作为 cloud-only runtime 持久化来源。 |
 | `conversation_session_restorer.py` | 从 transcript 或 summary 恢复 runtime messages。 |
@@ -144,6 +148,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent profile memory 组件。 |
+| `constants.py` | 定义 Agent profile memory 类型和候选提取 marker 常量类。 |
 | `agent_memory_index_repository.py` | 文件型 memory index repository 遗留实现；不作为 cloud-only runtime 长期记忆来源。 |
 | `agent_memory_document_repository.py` | 文件型 memory document repository 遗留实现；不作为 cloud-only runtime 长期记忆来源。 |
 | `agent_memory_candidate_extractor.py` | 从 turn 结果中提取 memory candidates。 |
@@ -159,8 +164,11 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent tool handler。 |
+| `qa_knowledge_tools/constants.py` | 定义 Q&A tool 权重、阈值、limit 和 tool schema 常量类。 |
 | `qa_knowledge_tools/qa_knowledge_tool_handlers.py` | Q&A 保存、检索、读取、更新、删除、最近列表和语义索引维护工具。 |
+| `agent_memory_tools/constants.py` | 定义 Agent memory tool limit 和 tool schema 常量类。 |
 | `agent_memory_tools/agent_memory_tool_handlers.py` | Agent memory 读取工具 adapter。 |
+| `todo_tools/constants.py` | 定义 Todo tool 状态、limit 和 tool schema 常量类。 |
 | `todo_tools/todo_tool_handlers.py` | Todo 保存、查询和更新工具。 |
 
 ### QA Data Access
@@ -172,6 +180,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Q&A 数据访问组件。 |
+| `constants.py` | 定义遗留 Q&A 重复检测评分、阈值和分词常量类。 |
 | `qa_card_models.py` | 定义 Q&A card、关键词检索结果和语义检索命中数据结构。 |
 | `duplicate_detection.py` | 旧 Q&A 重复检测服务，负责候选召回、相似度打分和重复组构建。 |
 
@@ -195,6 +204,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出认证服务公共类型。 |
+| `constants.py` | 定义认证 purpose、TTL、ID 前缀和 LLM provider user id 校验常量类。 |
 | `auth_models.py` | 定义认证用户、验证码、登录态和认证结果数据结构。 |
 | `auth_service.py` | 定义认证仓储协议和验证码登录核心流程。 |
 
@@ -207,6 +217,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 PostgreSQL 基础设施公共入口。 |
+| `constants.py` | 定义 PostgreSQL repository 状态、limit、分类和 adapter 默认值常量类。 |
 | `auth_repository.py` | 实现邮箱验证码登录 AuthRepository Protocol 的 PostgreSQL 仓储。 |
 | `memory_repository.py` | 实现按 `user_id` 隔离的 PostgreSQL user-preference memory 读取仓储。 |
 | `postgres_pool.py` | 从 `database_url` 创建连接池并关闭连接池。 |
@@ -226,6 +237,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 tool runtime 公共类型和函数。 |
+| `constants.py` | 定义 tool runtime 权限行为、审批工具和展示字段常量类。 |
 | `tool_dispatcher.py` | 注册两个独立 handler，将 ToolCall 分发到具体方法并筛选展示字段。 |
 | `tool_models.py` | 定义 ToolCall 数据结构。 |
 | `tool_permission_policy.py` | 定义工具权限判断、审批请求和拒绝结果。 |
@@ -239,6 +251,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 LLM client。 |
+| `constants.py` | 定义 LLM client 默认模型、URL、timeout、重试和 context limit marker 常量类。 |
 | `deepseek_chat_client.py` | DeepSeek streaming chat 薄客户端和响应转换。 |
 | `llm_models.py` | 定义 LLMResponse 数据结构。 |
 | `qwen_embedding_client.py` | Qwen / DashScope embedding 薄客户端。 |
@@ -252,6 +265,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 SMTP 邮件发送公共类型。 |
+| `constants.py` | 定义邮件发送默认 timeout 常量类。 |
 | `smtp_email_sender.py` | 构造并发送邮箱验证码邮件，支持 SSL 和 STARTTLS。 |
 
 ### Security
@@ -263,6 +277,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 security 公共 helper。 |
+| `constants.py` | 定义 token、验证码和敏感键脱敏常量类。 |
 | `secrets.py` | 从环境变量或优先级更高的 `*_FILE` 文件读取 secret。 |
 | `token_hashing.py` | 生成随机 token、6 位验证码，并提供 token hash 与 constant-time 校验。 |
 | `log_redaction.py` | 对 mapping 中常见敏感键执行最小脱敏。 |
@@ -276,6 +291,7 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `__init__.py` | 导出 Agent observability 组件。 |
+| `constants.py` | 定义 Agent observability 日志路径、队列和 flush 默认值常量类。 |
 | `agent_event_jsonl_logger.py` | 异步写入 Agent 运行 JSONL 开发日志。 |
 
 ### Apps
@@ -287,12 +303,15 @@ last_updated: "2026-06-28"
 | 文件 | 作用 |
 |---|---|
 | `cli/cli_main.py` | 历史 CLI 持续交互入口和 `pka web` 子命令分发；不属于稳定 cloud-only runtime 入口。 |
+| `cli/constants.py` | 定义 CLI 命令、截断和事件展示默认值常量类。 |
 | `cli/cli_event_renderer.py` | 历史 CLI 事件渲染和长文本截断。 |
+| `web/constants.py` | 定义 Web 后端 cookie、session、approval、卡片 limit 和启动默认值常量类。 |
 | `web/web_app.py` | 创建 FastAPI app，提供流式聊天、session 管理和卡片浏览 API。 |
 | `web/cloud_dependencies.py` | 装配 Web 云端依赖，包括 PostgreSQL pool、AuthService、SMTP 邮件发送、用户绑定工具 factory 和会话仓储 facade。 |
 | `web/web_main.py` | Web Runtime 启动入口。 |
 | `web/static/index.html` | Web UI 页面结构，包括验证码登录门和登录后的工作台壳。 |
 | `web/static/styles.css` | Web UI 样式。 |
+| `web/static/constants.js` | 定义浏览器端断点、计时、limit 和时间换算常量对象。 |
 | `web/static/app.js` | 浏览器端认证门、聊天、session 和卡片浏览逻辑。 |
 
 ### Public Web Launcher
@@ -318,6 +337,7 @@ last_updated: "2026-06-28"
 | `architecture/codebase-map.md` | 当前代码目录和文件职责地图。 |
 | `guidelines/collaboration-preferences.md` | 用户协作偏好、计划、分支和提交规则。 |
 | `guidelines/ai-coding-behavior.md` | AI Coding 调研、修改和验证行为规约。 |
+| `guidelines/code-style.md` | 代码规范文档，记录常量类管理和命名规则。 |
 | `templates/agent-development-context.template.md` | Agent 开发上下文文档模板。 |
 | `templates/codebase-map.template.md` | 代码地图文档模板。 |
 
