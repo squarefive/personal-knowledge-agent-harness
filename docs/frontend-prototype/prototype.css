@@ -1,0 +1,32 @@
+@import url("../../src/personal_knowledge_agent/apps/web/static/styles.css");
+
+.prototype-panel {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 200;
+  width: min(280px, calc(100vw - 28px));
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgb(248 247 243 / 96%);
+  box-shadow: var(--shadow);
+}
+
+.prototype-panel label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.prototype-panel select {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+}
