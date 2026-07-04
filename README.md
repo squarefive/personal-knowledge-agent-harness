@@ -79,6 +79,26 @@ flowchart TD
 
 运行入口是已认证的 Web 服务。部署和服务器配置以 `deploy/` 为准；生产 secrets 必须由部署环境或受控 secret 机制注入，不使用生产明文 `.env`。
 
+## 前端原型
+
+前端原型位于 `docs/frontend-prototype/`，用于在修改真实 Web UI 前预览布局、交互状态和 mock 使用流程。
+
+启动方式：
+
+```bash
+python3 -m http.server 4173
+```
+
+打开：
+
+```text
+http://localhost:4173/docs/frontend-prototype/index.html
+```
+
+默认流程支持发送验证码、输入 6 位验证码登录、发送普通问题、触发保存审批、批准后刷新知识卡片。调试场景仍可通过 `?controls=1&scenario=chatWithSources` 打开。
+
+原型复用真实静态前端文件，但 `/api/*` 请求由 `docs/frontend-prototype/prototype.js` mock，不连接真实后端。
+
 ## 文档结构
 
 ```text
@@ -89,6 +109,7 @@ docs/guidelines/ai-coding-behavior.md
 docs/templates/agent-development-context.template.md
 docs/agents/cloud-qa-knowledge-agent.md
 docs/architecture/codebase-map.md
+docs/frontend-prototype/
 scripts/check-agent-doc-format.py
 ```
 
@@ -99,4 +120,5 @@ scripts/check-agent-doc-format.py
 - `docs/templates/agent-development-context.template.md`: Agent 边界文档结构模板，不保存任务计划。
 - `docs/agents/cloud-qa-knowledge-agent.md`: 云端个人 Q&A 知识库 Agent 的稳定设计边界。
 - `docs/architecture/codebase-map.md`: 当前代码目录和文件职责地图。
+- `docs/frontend-prototype/`: 前端原型静态资产和 mock API，用于预览 Web UI 布局、状态和交互流程。
 - `scripts/check-agent-doc-format.py`: Agent 开发上下文模板与具体 Agent 文档格式检查脚本。

@@ -19,6 +19,17 @@ installPrototypeControls();
 installMockFetch();
 installScenarioAutomation();
 
+function applyScenarioState(scenarioId) {
+  const scenario = prototypeScenarios[scenarioId];
+  if (!scenario) return;
+  prototypeState.scenarioId = scenarioId;
+  prototypeState.scenario = structuredClone(scenario);
+  prototypeState.authenticated = scenario.auth === "authenticated";
+  prototypeState.sessions = structuredClone(scenario.sessions || []);
+  prototypeState.cards = structuredClone(scenario.cards || []);
+  prototypeState.selectedCardId = scenario.selectedCardId || null;
+}
+
 function installPrototypeControls() {
   window.addEventListener("DOMContentLoaded", () => {
     const panel = document.querySelector("#prototypePanel");
@@ -68,14 +79,11 @@ async function routeMockApi(url, init) {
     return jsonResponse({ ok: true });
   }
   if (pathname === "/api/auth/verify-code" && method === "POST") {
-    prototypeState.authenticated = true;
-    prototypeState.scenario = structuredClone(prototypeScenarios.emptyWorkspace);
-    prototypeState.sessions = structuredClone(prototypeState.scenario.sessions || []);
-    prototypeState.cards = structuredClone(prototypeState.scenario.cards || []);
+    applyScenarioState("chatWithSources");
     return jsonResponse({ ok: true, user: prototypeData.users.primary });
   }
   if (pathname === "/api/auth/logout" && method === "POST") {
-    prototypeState.authenticated = false;
+    applyScenarioState("loggedOut");
     return jsonResponse({ ok: true });
   }
 
@@ -139,7 +147,10 @@ async function routeMockApi(url, init) {
   }
 
   if (pathname === "/api/chat/stream" && method === "POST") {
-    return streamChatResponse(parseJsonBody(init));
+    const body = parseJsonBody(init);
+    return shouldTriggerSaveApproval(body.message)
+      ? streamApprovalResponse(body)
+      : streamNormalAnswerResponse(body);
   }
 
   const approvalMatch = pathname.match(/^\/api\/approvals\/(.+)$/);
@@ -170,7 +181,44 @@ function historyMessagesForSession(sessionId) {
   });
 }
 
-function streamChatResponse(body) {
+function streamNormalAnswerResponse(body) {
+  const answer = prototypeData.normalAnswer;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const events = [
+        { event_type: "user_input_received" },
+        { event_type: "llm_call_started" },
+        { event_type: "llm_call_finished", content: "" },
+        { event_type: "prompt_usage_updated", prompt_usage_ratio: 0.45 },
+        {
+          event_type: "tool_call_started",
+          tool_name: "hybrid_search_qa_cards",
+          tool_args: { question: body.message || answer.userText },
+        },
+        {
+          event_type: "tool_call_finished",
+          tool_name: "hybrid_search_qa_cards",
+          output: { ok: true, card_ids: ["qa_medical_reimburse_001", "qa_identity_docs_002"] },
+        },
+        { event_type: "evidence_checked", source_count: answer.sourceCount },
+        { event_type: "answer_delta", turn: 0, text: answer.answer },
+        { event_type: "final_answer_generated", answer: answer.answer },
+      ];
+      for (const event of events) {
+        enqueueSse(controller, encoder, event);
+      }
+      rememberMockConversation(body.message || answer.userText, answer.answer, answer.steps);
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream; charset=utf-8" },
+  });
+}
+
+function streamApprovalResponse(body) {
   const approval = prototypeData.approvals.pendingSave;
   const approvalId = approval.approval_id;
   const encoder = new TextEncoder();
@@ -227,6 +275,7 @@ function resolveMockApproval(approvalId, status) {
   const encoder = new TextEncoder();
   enqueueSse(controller, encoder, { event_type: "permission_resolved", approval_id: approvalId, status });
   if (status === "approved") {
+    addSavedInvoiceCard();
     enqueueSse(controller, encoder, {
       event_type: "tool_call_finished",
       tool_name: "save_qa_card",
@@ -237,6 +286,11 @@ function resolveMockApproval(approvalId, status) {
       event_type: "final_answer_generated",
       answer: "已允许执行，我会继续完成保存流程。",
     });
+    rememberMockConversation(
+      prototypeData.generatedAnswer.userText,
+      "已允许执行，我会继续完成保存流程。",
+      ["识别保存意图", "等待用户审批", "保存 Q&A 卡片", "刷新知识卡片列表"],
+    );
   } else {
     enqueueSse(controller, encoder, {
       event_type: "tool_call_finished",
@@ -247,9 +301,40 @@ function resolveMockApproval(approvalId, status) {
       event_type: "final_answer_generated",
       answer: "已拒绝高风险操作，操作未执行。",
     });
+    rememberMockConversation(
+      prototypeData.generatedAnswer.userText,
+      "已拒绝高风险操作，操作未执行。",
+      ["识别保存意图", "等待用户审批", "用户拒绝保存"],
+    );
   }
   controller.close();
   prototypeState.streamControllers.delete(approvalId);
+}
+
+function shouldTriggerSaveApproval(message = "") {
+  const normalizedMessage = String(message).toLowerCase();
+  return ["保存", "写入", "q&a", "卡片"].some((keyword) => normalizedMessage.includes(keyword));
+}
+
+function addSavedInvoiceCard() {
+  const savedCard = structuredClone(prototypeData.cards.savedInvoice);
+  if (prototypeState.cards.some((card) => card.card_id === savedCard.card_id)) return;
+  prototypeState.cards = [savedCard, ...prototypeState.cards];
+}
+
+function rememberMockConversation(userText, answerText, steps) {
+  const sessionId = prototypeState.sessions[0]?.session_id || prototypeState.scenario.activeSessionId;
+  if (!sessionId) return;
+  const messages = prototypeData.messagesBySession[sessionId] || [];
+  messages.push({ role: "user", author: "你", text: userText });
+  messages.push({ role: "agent", author: "Agent", text: answerText, steps, sources: [] });
+  prototypeData.messagesBySession[sessionId] = messages;
+  const session = prototypeState.sessions.find((item) => item.session_id === sessionId);
+  if (session) {
+    session.updated_at = new Date().toISOString();
+    session.context_percent = Math.max(session.context_percent || 0, 45);
+    session.prompt_usage_ratio = (session.context_percent || 0) / 100;
+  }
 }
 
 function enqueueSse(controller, encoder, event) {
