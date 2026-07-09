@@ -74,6 +74,30 @@ Then open:
 http://124.223.210.44
 ```
 
+## Logs
+
+The app persists Agent event JSONL logs to the host through the Compose bind mount:
+
+```text
+deploy/logs/app/agent.log
+```
+
+Inside the container this path is `/app/.logs/agent.log`, which matches the default `AgentEventJsonlLogger` path. The host log directory survives app container restart and recreation as long as the server deployment directory is kept.
+
+Use Docker Compose logs for process stdout/stderr:
+
+```bash
+docker compose -f deploy/docker-compose.yml logs --tail=100 app
+```
+
+Use the persisted JSONL file for Agent event history:
+
+```bash
+tail -n 100 deploy/logs/app/agent.log
+```
+
+Runtime logs under `deploy/logs/` are server-local files and must not be committed.
+
 ## Backup
 
 For this single-host Compose deployment, run PostgreSQL backups through the `postgres` container so the database can stay private inside the Compose network:

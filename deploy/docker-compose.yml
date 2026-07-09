@@ -27,6 +27,8 @@ services:
         condition: service_healthy
     expose:
       - "8787"
+    volumes:
+      - ./logs/app:/app/.logs
 
   postgres:
     image: pgvector/pgvector:pg16
