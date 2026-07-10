@@ -1,6 +1,7 @@
 import pytest
 
 from personal_knowledge_agent.agent_bootstrap import load_config
+from personal_knowledge_agent.apps.cli import cli_main
 
 
 def test_load_config_reads_dotenv(tmp_path, monkeypatch):
@@ -35,6 +36,16 @@ def test_load_config_reads_dotenv(tmp_path, monkeypatch):
     assert config.qwen_embedding_base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
     assert config.qwen_embedding_model == "text-embedding-v4"
     assert config.qwen_embedding_dimensions == 1024
+
+
+def test_disabled_cli_points_to_cloud_web_entrypoint(capsys):
+    exit_code = cli_main.main([])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "本地 CLI Agent runtime 已移除" in captured.out
+    assert "pka web" in captured.out
+    assert "./run-web" in captured.out
 
 
 def test_load_config_reads_v04_embedding_settings(tmp_path, monkeypatch):

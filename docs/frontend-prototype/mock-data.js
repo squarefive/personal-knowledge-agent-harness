@@ -164,6 +164,22 @@ window.PKA_MOCK_DATA = {
       updated_at: "2026-06-30T08:15:00+08:00",
       sources: [{ name: "边界测试", detail: "manual", score: "100%" }],
     },
+    savedInvoice: {
+      card_id: "qa_e_invoice_print_008",
+      question: "电子发票是否必须打印？",
+      summary: "电子发票是否需要打印，应以医保窗口或保险公司的最新要求为准。",
+      answer:
+        "电子发票是否必须打印，取决于办理窗口或保险公司的要求。保存报销资料时，应同时保留电子版原件和提交渠道要求的纸质材料。",
+      category: "家庭事务",
+      source_type: "manual_qa",
+      keywords: ["电子发票", "打印", "医保", "报销"],
+      created_at: "2026-07-04T17:30:00+08:00",
+      updated_at: "2026-07-04T17:30:00+08:00",
+      sources: [
+        { name: "用户确认", detail: "原型审批流程", score: "事实源" },
+        { name: "保存工具", detail: "save_qa_card", score: "100%" },
+      ],
+    },
   },
 
   approvals: {
@@ -202,6 +218,14 @@ window.PKA_MOCK_DATA = {
     userText: "请帮我保存电子发票是否需要打印这条 Q&A。",
     steps: ["识别保存意图", "准备 save_qa_card 参数", "等待用户审批"],
     answer: "我可以帮你保存，但这个操作会写入长期知识库，需要你先确认。",
+  },
+
+  normalAnswer: {
+    userText: "医保报销材料有哪些需要保留？",
+    steps: ["理解问题", "检索 Q&A 知识库", "读取 2 张相关知识卡片", "核对来源后生成回答"],
+    answer:
+      "已保存的知识显示，医保报销通常需要保留医疗发票、费用明细、病历或诊断证明、身份证件和银行卡信息。不同地区可能要求补充材料，实际提交前应以办理窗口要求为准。",
+    sourceCount: 2,
   },
 
   errors: {

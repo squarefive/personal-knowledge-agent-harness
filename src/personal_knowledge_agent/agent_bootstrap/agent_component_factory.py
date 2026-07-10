@@ -107,20 +107,6 @@ def create_agent_components(
     return AgentComponents(agent=agent, tools=tools, todo_tools=todo_tools)
 
 
-def create_agent(
-    config: AgentConfig,
-    event_sink: Callable[[AgentEvent], None] | None = None,
-    approval_callback: Callable[[ApprovalRequest], bool] | None = None,
-    session_id: str = "default",
-) -> AgentLoopRunner:
-    return create_agent_components(
-        config,
-        event_sink=event_sink,
-        approval_callback=approval_callback,
-        session_id=session_id,
-    ).agent
-
-
 def _required_component(component: Any | None, name: str) -> Any:
     if component is None:
         raise ValueError(f"{name} is required for cloud-only Agent runtime")

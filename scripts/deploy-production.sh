@@ -7,11 +7,13 @@ cd "$repo_root"
 : "${APP_IMAGE_TAG:=latest}"
 
 backup_dir="deploy/backups"
+log_dir="deploy/logs/app"
 mkdir -p "$backup_dir"
 if [ ! -w "$backup_dir" ]; then
   echo "$backup_dir must be writable by the deploy user" >&2
   exit 2
 fi
+mkdir -p "$log_dir"
 
 scripts/backup-postgres-compose.sh --output-dir "$backup_dir" --keep 7
 APP_IMAGE_TAG="$APP_IMAGE_TAG" docker compose -f deploy/docker-compose.yml pull app

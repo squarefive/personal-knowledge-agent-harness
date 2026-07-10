@@ -1,6 +1,6 @@
 import pytest
 
-from personal_knowledge_agent.agent_bootstrap import AgentConfig, create_agent, create_agent_components
+from personal_knowledge_agent.agent_bootstrap import AgentConfig, create_agent_components
 from personal_knowledge_agent.agent_runtime import AgentLoopRunner
 from personal_knowledge_agent.agent_tools.qa_knowledge_tools import QAKnowledgeToolHandlers
 from personal_knowledge_agent.agent_tools.todo_tools import TodoToolHandlers
@@ -100,8 +100,3 @@ def test_create_agent_components_passes_llm_provider_user_id(tmp_path):
     )
 
     assert components.agent.llm.llm_provider_user_id == "llm_test_1"
-
-
-def test_create_agent_requires_cloud_runtime_dependencies(tmp_path):
-    with pytest.raises(ValueError, match="qa_store is required for cloud-only Agent runtime"):
-        create_agent(make_config(tmp_path))
